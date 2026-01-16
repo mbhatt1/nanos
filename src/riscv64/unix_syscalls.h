@@ -316,4 +316,27 @@
 #define SYS_openat2                      437
 #define SYS_pidfd_getfd                  438
 #define SYS_faccessat2                   439
+
+/* ============================================================
+ * Authority Kernel Syscalls (1024-1100)
+ * Secure agent runtime syscalls
+ * ============================================================ */
+#define SYS_ak_read             1024
+#define SYS_ak_alloc            1025
+#define SYS_ak_write            1026
+#define SYS_ak_delete           1027
+#define SYS_ak_query            1028
+#define SYS_ak_batch            1029
+#define SYS_ak_commit           1030
+#define SYS_ak_call             1031
+#define SYS_ak_spawn            1032
+#define SYS_ak_send             1033
+#define SYS_ak_recv             1034
+#define SYS_ak_respond          1035
+#define SYS_ak_assert           1036
+#define SYS_ak_inference        1037
+
+#define SYS_AK_BASE             1024
+#define SYS_AK_MAX              1100
+
 #define SYS_MAX                          440

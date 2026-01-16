@@ -5,6 +5,10 @@
 #include <drivers/console.h>
 #include <ltrace.h>
 
+#ifdef CONFIG_AK_ENABLED
+#include <agentic/ak_syscall.h>
+#endif
+
 //#define PF_DEBUG
 #ifdef PF_DEBUG
 #define pf_debug(x, ...) do {tprintf(sym(fault), 0, ss("tid %02d " x "\n"), \
@@ -692,6 +696,12 @@ process init_unix(kernel_heaps kh, tuple root, filesystem fs)
     register_clock_syscalls(linux_syscalls);
     register_timer_syscalls(linux_syscalls);
     register_other_syscalls(linux_syscalls);
+
+#ifdef CONFIG_AK_ENABLED
+    /* Initialize Authority Kernel subsystem */
+    ak_init(h);
+    msg_info("Authority Kernel initialized");
+#endif
 
     tuple coredumplimit = get(root, sym(coredumplimit));
     if (coredumplimit && is_string(coredumplimit)) {

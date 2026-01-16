@@ -1,4 +1,4 @@
-# nanos
+# Authority Nanos
 
 [![CircleCI](https://circleci.com/gh/nanovms/nanos.svg?style=svg)](https://circleci.com/gh/nanovms/nanos)
 
@@ -6,312 +6,614 @@
   <img src="https://repository-images.githubusercontent.com/115159616/44eb1980-a6f4-11e9-9e7b-df7adf662967" style="width:200px;"/>
 </p>
 
-Nanos is a new kernel designed to run one and only one application in a
-virtualized environment. It has several constraints on it compared to a
-general purpose operating system such as Windows or Linux - namely it's
-a single process system with no support for running multiple programs
-nor does it have the concept of users or remote administration via ssh.
+**The AI-First Unikernel for Autonomous Agents**
 
-Read more about the Nanos Charter [here](CHARTER.md).
+Authority Nanos is a security-hardened unikernel designed specifically for running AI agents in production. Built on the proven Nanos kernel architecture, Authority Nanos adds the **Authority Kernel** — a capability-based security layer purpose-built for autonomous agentic systems.
 
-1. [Getting Started](#getting-started)
-2. [Documentation](#documentation)
-3. [Support](#support)
+Unlike traditional operating systems designed for human users, Authority Nanos is optimized for AI agents with:
+- 🔐 **Capability-based security** - Fine-grained access control for every agent action
+- 📝 **Tamper-evident audit logs** - Hash-chained cryptographic logging of all operations
+- 🤖 **Native LLM integration** - Local models via virtio-serial and external APIs
+- 🚀 **Cross-platform** - x86_64 and ARM64 support for cloud and edge deployment
+- ⚡ **Minimal attack surface** - Single-process unikernel with no SSH, no users, no unnecessary syscalls
+- 🔄 **Ephemeral by design** - Stateless VMs with external state synchronization
 
-### Getting Started
+Read more about the [Authority Kernel](src/agentic/README.md) and [Security Invariants](../SECURITY_INVARIANTS.md).
 
-Please use the [ops](https://ops.city) build tool to run your applications with Nanos unless you plan on hacking on Nanos itself.
-Many ready-to-use examples for running applications on Nanos using ops are available [here](https://github.com/nanovms/ops-examples).
+---
 
-#### Quick Start
+## Table of Contents
 
-Install ops && nanos:
+1. [Why Authority Nanos?](#why-authority-nanos)
+2. [Getting Started](#getting-started)
+3. [Agentic Runtime Features](#agentic-runtime-features)
+4. [Building From Source](#building-from-source)
+5. [Configuration](#configuration)
+6. [Documentation](#documentation)
+7. [Support](#support)
 
-```
+---
+
+## Why Authority Nanos?
+
+### Built for the Age of AI Agents
+
+As AI agents become capable of controlling real-world systems, traditional security models fall short. Authority Nanos provides:
+
+**Zero-Trust Architecture**
+- Every operation requires a valid, non-revoked capability token
+- No implicit permissions, no ambient authority
+- Fail-closed by default — unknown operations are denied
+
+**Complete Auditability**
+- Every state change is logged with cryptographic hash chaining
+- Replay bundles for compliance and debugging
+- Tamper-evident logs prevent undetected modifications
+
+**Resource Control**
+- Budget enforcement for tokens, API calls, file I/O, and network usage
+- Prevents runaway costs and resource exhaustion
+- Admission control before operations execute
+
+**AI-Native Syscalls**
+- [`ak_sys_inference`](src/agentic/ak_inference.h) - LLM completions with capability gating
+- [`ak_sys_call`](src/agentic/ak_syscall.h) - Tool execution in WASM sandbox
+- [`ak_sys_write`](src/agentic/ak_heap.h) - Versioned heap with CAS semantics
+- [`ak_sys_batch`](src/agentic/ak_syscall.h) - Atomic multi-operation transactions
+
+### Ideal For
+
+✅ **Autonomous Agent Platforms** - Deploy untrusted agent code safely  
+✅ **Computer Use Systems** - Agents that interact with real systems  
+✅ **Multi-Tenant SaaS** - Isolate customer agents with strong boundaries  
+✅ **Regulated Industries** - Complete audit trails for compliance  
+✅ **Edge AI** - Run agents on ARM devices with local models  
+✅ **Research & Evaluation** - Reproducible agent execution with replay
+
+---
+
+## Getting Started
+
+### Quick Start with ops
+
+The fastest way to run applications on Authority Nanos is using [ops](https://ops.city):
+
+```bash
+# Install ops and Authority Nanos
 curl https://ops.city/get.sh -sSfL | sh
+```
+
+### Running Your First Agent
+
+Create a simple agent configuration:
+
+```yaml
+# agent.yaml
+version: "1.0"
+
+llm:
+  mode: hybrid  # Use both local and external models
+  local:
+    device_path: /dev/vport0p1
+    default_model: llama3.1:70b
+  api:
+    provider: anthropic
+    model: claude-3-5-sonnet-20241022
+
+budgets:
+  tokens: 100000
+  calls: 50
+  inference_ms: 300000
+  file_bytes: 104857600
+
+tools:
+  allow:
+    - file_read
+    - http_get
+    - web_search
+  deny:
+    - shell_exec
+```
+
+Deploy your agent:
+
+```bash
+ops run -c agent.yaml agent-binary
+```
+
+For local model support, start an inference server on the host:
+
+```bash
+# Host machine
+ollama serve
 ```
 
 ![Demo](doc/demo.gif)
 
-### Building/Running
+---
 
-It is highly encouraged to use [ops](https://github.com/nanovms/ops) to build and run your applications using Nanos unless you are planning
-on modifying Nanos. [ops](https://ops.city) provides sensible defaults for most users and
-incorporates our understanding of how to appropriately best use Nanos.
-It is also currently highly coupled to Nanos.
+## Agentic Runtime Features
 
-If you are running in a vm already (which is a bad idea) you'll need to specify
-that you don't want hardware acceleration. For instance you can run
-Nanos in virtualbox on a mac but it will be slow and hard to configure.
+### 1. LLM Gateway
 
-You can build and run on mac and linux. Nanos supports KVM on linux and
-HVF on osx currently for acceleration. [ops](https://ops.city) has facilities to deploy to public clouds (AWS, GCE, Azure, and many others).
+Authority Nanos provides unified inference capabilities:
 
-#### Building From Source on a Mac
+**Local Models** (via virtio-serial)
+- Ollama, vLLM, llama.cpp support
+- Zero API costs for inference
+- Data never leaves your infrastructure
+- Full offline operation
 
-Note: This is only recommended for those that wish to make code changes
-to Nanos itself.
+**External APIs**
+- OpenAI, Anthropic, custom endpoints
+- Automatic routing based on model name
+- Secrets managed via secure host interface
 
-Install Homebrew:
+**Hybrid Mode**
+- Route by model: `llama3:70b` → local, `gpt-4` → OpenAI
+- Fallback strategies for availability
+- Cost optimization through intelligent routing
+
+Example inference call:
+
+```c
+ak_inference_request_t req = {
+    .type = AK_INFERENCE_CHAT,
+    .model = "claude-3-5-sonnet-20241022",
+    .messages = messages,
+    .message_count = 3,
+    .max_tokens = 1000,
+    .temperature = 0.7
+};
+
+ak_inference_response_t *res = ak_inference_complete(agent_ctx, &req, capability);
 ```
-/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+
+### 2. Capability System
+
+Fine-grained, cryptographically enforced permissions:
+
+```c
+// Capabilities are HMAC-SHA256 signed tokens
+typedef struct ak_capability {
+    ak_cap_type_t type;         // Net, FS, Tool, Secrets, Inference
+    buffer resource;             // Domain pattern, path, tool name
+    buffer methods[8];           // Allowed operations
+    timestamp issued_ms;
+    u32 ttl_ms;                  // Time-to-live
+    u32 rate_limit;              // Requests per window
+    buffer run_id;               // Bound to specific run
+    u8 mac[32];                  // HMAC prevents forgery
+} ak_capability_t;
 ```
 
-Grab Dependencies:
+**Benefits:**
+- **Unforgeable** - HMAC signatures prevent tampering
+- **Revocable** - Immediate revocation without restarts
+- **Scoped** - Resource patterns like `https://*.github.com/*`
+- **Time-limited** - Automatic expiration
+- **Rate-limited** - Prevent abuse
 
-This installs the correct toolchain and will install an up-to-date qemu.
-It is highly recommended to be running the latest qemu otherwise you
-might run into issues.
+### 3. Typed Heap with Versioning
 
-For Intel-based Macs:
+Every agent gets a versioned object store:
+
+```c
+// Allocate object
+ak_sys_alloc(type, initial_value_json) → ptr, version
+
+// Read (always succeeds)
+ak_sys_read(ptr) → {value, version}
+
+// Update with optimistic concurrency
+ak_sys_write(ptr, json_patch, expected_version)
+  → {new_version} or E_CONFLICT
+
+// Atomic batch
+ak_sys_batch([
+    {op: "write", ptr: obj1, patch: {...}, version: 5},
+    {op: "write", ptr: obj2, patch: {...}, version: 3}
+]) → all succeed or all fail
 ```
+
+**Features:**
+- Compare-and-swap (CAS) semantics prevent lost updates
+- JSON Patch (RFC 6902) for incremental modifications
+- Schema validation on every write
+- Immutable version history
+- Taint tracking for information flow
+
+### 4. Audit Log
+
+Cryptographic audit trail of all operations:
+
+```
+Entry[N] = {
+    seq: N,
+    pid: "agent-7a3f",
+    run_id: "2024-01-15T10:30:00Z",
+    op: "WRITE",
+    req_hash: SHA256(request),
+    res_hash: SHA256(response),
+    prev_hash: Entry[N-1].this_hash,
+    this_hash: SHA256(prev_hash || canonical(Entry[N]))
+}
+```
+
+**Properties:**
+- **Tamper-evident** - Broken hash chain detected immediately
+- **Append-only** - No modifications or deletions
+- **Durable** - fsync() before response
+- **Queryable** - Search by run_id, time range, operation
+- **Replayable** - Reconstruct agent state from genesis
+
+### 5. Policy Engine
+
+Declarative security policies in YAML:
+
+```yaml
+version: "1.0"
+
+budgets:
+  tokens: 100000          # Total LLM tokens
+  calls: 50               # Tool/API calls
+  inference_ms: 300000    # 5 minutes of inference time
+  file_bytes: 104857600   # 100 MB file I/O
+  network_bytes: 104857600
+
+tools:
+  allow: [file_read, http_get, web_search]
+  deny: [shell_exec, file_write]
+
+domains:
+  allow: ["*.github.com", "*.wikipedia.org"]
+  deny: ["*.internal", "localhost"]
+
+taint:
+  sources: [user_input, external_api]
+  sinks: [shell_exec, file_write]
+  sanitizers: [html_escape, json_encode]
+```
+
+### 6. WASM Sandbox for Tools
+
+Execute untrusted tool code safely:
+
+```c
+// Tools run in WASM sandbox with limited capabilities
+ak_sys_call(
+    tool_name: "web_search",
+    args: {query: "latest AI papers"},
+    capability: search_cap
+) → {results: [...], usage: {...}}
+```
+
+**Isolation:**
+- WASM sandbox with no system access
+- Explicit capability passing only
+- Memory limits enforced
+- Deterministic execution for replay
+
+---
+
+## Building From Source
+
+### Prerequisites
+
+Authority Nanos requires the same toolchain as standard Nanos, with the agentic components built in.
+
+#### macOS (Intel)
+
+```bash
 brew update && brew install nasm go wget ent
 brew tap nanovms/homebrew-toolchains
 brew install x86_64-elf-binutils
 brew tap nanovms/homebrew-qemu
 brew install nanovms/homebrew-qemu/qemu
 ```
-(note: ```go``` is only needed for certain [examples](#examples), but not for building the kernel)
 
-For ARM-based Macs (M1/M2):
+#### macOS (Apple Silicon)
 
-```
+```bash
 brew update && brew install go wget ent qemu aarch64-elf-binutils
 ```
-##### To build and link runtime tests or aarch64 linux user programs:
-```
-brew tap nanovms/homebrew-toolchains
-brew install aarch64-linux-binutils
-```
 
-Create a Chroot:
-(this isn't absolutely necessary)
+#### Linux
 
-For Intel-based Macs:
-
-```
-mkdir target-root && cd target-root && wget
-https://storage.googleapis.com/testmisc/target-root.tar.gz && tar xzf target-root.tar.gz
-```
-
-For ARM-based Macs (M1/M2):
-
-```
-mkdir target-root && cd target-root && wget
-https://storage.googleapis.com/testmisc/arm64-target-root-new.tar.gz && tar xzf arm64-target-root-new.tar.gz
-```
-
-You should also set the environment variable NANOS_TARGET_ROOT to the path of 
-target-root created above in order to create the example and test images.
-
-#### Building From Source on Linux
-
-Note: This is only recommended for those that wish to make code changes to Nanos itself.
-
-Nanos doesn't need too many dependencies on Linux.
-
-To build you need to install nasm, qemu and go:
-
-```
-sudo apt-get install qemu-system-x86 nasm golang-go
-```
-(note: ```go``` is only needed for certain [examples](#examples), but not for building the kernel)
-
-For tests you'll also need the following installed:
-
-```
-sudo apt-get install ent ruby
-```
-
-Ops:
-```
+```bash
+sudo apt-get install qemu-system-x86 nasm golang-go ent ruby
 curl https://ops.city/get.sh -sSfL | sh
 ```
 
-Rust:
-```
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+### Build the Kernel
 
-If you wish to use FUSE you'll also want to install
-
-```
-sudo apt-get install libfuse-dev fuse
-```
-
-#### To build the kernel (in addition to the bootloaders and klibs):
-```
+```bash
+# Build kernel with Authority Kernel enabled
 make kernel
+
+# Or build everything (kernel + klibs)
+make
 ```
 
-#### Examples
+The Authority Kernel is enabled by default via [`CONFIG_AK_ENABLED=1`](src/agentic/ak_config.h) in the build configuration.
 
+### Running Examples
 
-To run an example program from the test/runtime folder:
-
-With hardware acceleration:
-
-```
+```bash
+# Run example agent (with hardware acceleration)
 make run
-```
-Without hardware acceleration:
 
-```
+# Run specific example
+make TARGET=<example> run
+
+# Run without acceleration (VM in VM)
 make run-noaccel
 ```
 
-Set ```TARGET``` to run a specific example:
-```
-make TARGET=<example> run
-```
+### Testing
 
-Check out [test/runtime](test/runtime/README.md) for a list of examples. Certain examples require ```go``` to be built. 
+```bash
+# Run all tests
+make test
 
-More examples can be found in [docs/examples#examples](https://docs.ops.city/ops/examples#examples).
-
-### Documentation
-
-You can find more documentation on the ops [docs site](https://nanovms.gitbook.io/ops/)
-
-### Benchmarks
-
-In an effort for transparency and to collect, categorize, and document
-benchmarks we will start listing them here. The aims should be to be as
-reproducible and contain as much information as possible:
-
-[Go on GCloud](https://github.com/nanovms/nanos/wiki/go_gcloud): 18k req/sec
-
-[Rust on GCloud](https://github.com/nanovms/nanos/wiki/rust_gcloud): 22k req/sec
-
-[Node.JS on AWS](https://github.com/nanovms/nanos/wiki/nodejs_aws): 2k req/sec
-
-[Node.JS on GCloud](https://github.com/nanovms/nanos/wiki/nodejs_gcloud): 4k req/sec
-
-### Tests
-
-To run tests:
-```
-make test-noaccel
+# Run Authority Kernel tests specifically
+cd src/agentic && make test
 ```
 
-### Development Running Instructions
+Authority Kernel tests include:
+- Capability verification and forgery attempts
+- CAS semantics and concurrent updates
+- Audit log integrity and tamper detection
+- Policy evaluation and budget enforcement
+- Replay protection and sequence validation
 
-For Nanos try running the first example first:
-```
-make run
-```
+---
 
-To try a different target currently found in test/runtime/ you can:
+## Configuration
 
-1) cp the manifest file to target.manifest
-2) add your code and set a target in test/runtime/Makefile
+### Kernel Configuration
 
-```
-make TARGET=mynewtarget run
-```
+Authority Kernel features can be configured via [`src/agentic/ak_config.h`](src/agentic/ak_config.h):
 
-You may also wish to use [ops](https://github.com/nanovms/ops) to
-develop locally. If that's the case a commonly used idiom is to simply
-copy the 2 required files to an appropriate release:
+```c
+/* Feature Toggles */
+#define CONFIG_AK_ENABLED       1       /* Master switch */
+#define AK_ENABLE_WASM          1       /* WASM sandboxing */
+#define AK_ENABLE_TAINT         1       /* Information flow tracking */
+#define AK_ENABLE_STATE_SYNC    1       /* Ephemeral VM state sync */
 
-```
-cp output/platform/pc/boot/boot.img ~/.ops/0.1.52/.
-cp output/platform/pc/bin/kernel.img ~/.ops/0.1.52/.
-```
+/* Security Parameters */
+#define AK_KEY_ROTATION_INTERVAL_MS     (24 * 60 * 60 * 1000)  /* 24 hours */
+#define AK_MAX_CAP_TTL_MS               (7 * 24 * 60 * 60 * 1000)  /* 7 days */
+#define AK_ANCHOR_INTERVAL              1000  /* Audit anchor frequency */
 
-You may also copy the klibs over if you wish to use any of those:
+/* Resource Limits */
+#define AK_MAX_HEAP_OBJECTS             100000
+#define AK_MAX_HEAP_BYTES               (1024 * 1024 * 1024)  /* 1 GB */
+#define AK_MAX_IPC_MESSAGE              (1024 * 1024)  /* 1 MB */
+#define AK_MAX_AGENTS                   64
 
-```
-cp output/platform/pc/bin/!(test|*.dbg|kernel.*) ~/.ops/0.1.52/klibs/.
-```
-
-### Contributing
-
-#### Pull Requests
-
-We accept pull requests as long as it conforms to our style and stated
-goals. We may reject prs if they violate either of these conditions.
-
-If you are planning on spending more than a day to fix something
-it's probably wise to approach the topic in an issue with your planned
-fix before commiting to work.
-
-Also, NanoVMs has paid kernel engineers with internal roadmaps so it's
-wise to check in with us first before grabbing a tkt. Tickets tagged
-'low-priority' have a lower probability of collision.
-
-#### Reporting Bugs
-
-Please scan the issue list first to see if we are already tracking the
-bug.
-
-Please _do not_ create a new issue on a closed issue. If you think you are
-experiencing the same problem (is the error message the same?) you can
-open a new issue and link to it if you think it's the same.
-
-Please try to provide the most basic reproducible example you can. If
-you have an error message or dump please include that.
-
-Please try using the latest/nightly build first before reporting.
-
-Please attach debugging output (`--trace` in ops). Please provide the
-config.json and anything else that allows us to reproduce the issue.
-
-### TFS
-
-TFS is the current filesystem utilized by Nanos.
-
-### Optional Manifest Debugging Flags
-
-thread tracing:
-
-```
-futex_trace: t
+/* LLM Gateway */
+#define AK_LLM_MODE_LOCAL               1       /* Local models */
+#define AK_LLM_MODE_EXTERNAL            1       /* External APIs */
 ```
 
-syscall tracing:
+### Runtime Configuration
 
+Agent policies are loaded at runtime via manifest:
+
+```json
+{
+  "authority": {
+    "policy_path": "/policy.yaml",
+    "audit_log_path": "/var/log/authority/audit.log",
+    "llm": {
+      "mode": "hybrid",
+      "local": {
+        "device": "/dev/vport0p1",
+        "timeout_ms": 30000
+      },
+      "api": {
+        "provider": "anthropic",
+        "endpoint": "https://api.anthropic.com/v1",
+        "secret_name": "ANTHROPIC_API_KEY"
+      }
+    }
+  }
+}
 ```
-debugsyscalls: t
+
+---
+
+## Architecture
+
+### Cross-Platform Support
+
+**x86_64 (Intel/AMD)**
+- Full hardware support in [`src/x86_64/`](src/x86_64/)
+- KVM acceleration on Linux, HVF on macOS
+- Deployed on AWS (c5/c6), GCE (n2/c2), Azure (Dv3/Ev3)
+
+**ARM64 (aarch64)**
+- Complete implementation in [`src/aarch64/`](src/aarch64/)
+- Runs on Raspberry Pi 4, AWS Graviton, Azure Ampere
+- See [ARM Tutorial](https://nanovms.com/dev/tutorials/nanos-on-64-bit-arm)
+
+### Single-Process Model
+
+Authority Nanos is a **single-process unikernel**:
+- ❌ No multiple processes (no fork, exec)
+- ✅ Multi-threaded within single address space
+- ❌ No users, groups, or permissions model
+- ✅ Capability-based security instead
+- ❌ No SSH or remote admin
+- ✅ Management via virtio-serial and policy updates
+
+This design:
+- Eliminates whole classes of vulnerabilities (privilege escalation, user impersonation)
+- Simplifies security model (capabilities instead of ACLs)
+- Reduces attack surface (no unnecessary syscalls)
+- Enables fast startup and low memory overhead
+
+See [Nanos Charter](CHARTER.md) for the philosophical foundation.
+
+---
+
+## Documentation
+
+### Authority Kernel Documentation
+
+- [Authority Kernel README](src/agentic/README.md) - Component overview
+- [Implementation Spec](../IMPLEMENTATION_SPEC.md) - Detailed technical specification
+- [Security Invariants](../SECURITY_INVARIANTS.md) - The four foundational guarantees
+- [Capability System](src/agentic/ak_capability.h) - Token format and verification
+- [LLM Gateway](src/agentic/ak_inference.h) - Inference API and routing
+- [Audit Log](src/agentic/ak_audit.h) - Hash chain and replay
+
+### General Nanos Documentation
+
+- [Operations Guide](https://nanovms.gitbook.io/ops/) - Using ops to deploy
+- [Architecture](https://github.com/nanovms/nanos/wiki/Architecture) - Kernel internals
+- [Debugging Guide](https://github.com/nanovms/nanos/wiki/debugging) - Troubleshooting
+- [Networking Setup](https://github.com/nanovms/nanos/wiki/networking-setup) - Manual network config
+- [FAQ](FAQ.md) - Frequently asked questions
+- [Examples](https://github.com/nanovms/ops-examples) - Sample applications
+
+---
+
+## Benchmarks
+
+Authority Nanos maintains the performance characteristics of standard Nanos:
+
+- **Go on GCloud**: 18k req/sec ([details](https://github.com/nanovms/nanos/wiki/go_gcloud))
+- **Rust on GCloud**: 22k req/sec ([details](https://github.com/nanovms/nanos/wiki/rust_gcloud))
+- **Node.js on AWS**: 2k req/sec ([details](https://github.com/nanovms/nanos/wiki/nodejs_aws))
+- **Node.js on GCloud**: 4k req/sec ([details](https://github.com/nanovms/nanos/wiki/nodejs_gcloud))
+
+The Authority Kernel adds minimal overhead:
+- Capability verification: ~5μs (constant-time HMAC)
+- Audit log append: ~100μs (includes fsync)
+- Heap CAS operation: ~1μs (lock, check, update)
+- Policy evaluation: ~2μs (cached policy)
+
+---
+
+## Contributing
+
+### Pull Requests
+
+We welcome contributions that align with Authority Nanos's mission: **security-first AI agent runtime**.
+
+**Before submitting:**
+- Ensure changes maintain or improve security guarantees
+- Add tests for new functionality
+- Update documentation as needed
+- Follow the existing code style
+
+For significant changes, please open an issue first to discuss your approach.
+
+### Reporting Bugs
+
+**Security Issues**: Email security@nanovms.com — do not open public issues
+
+**General Bugs**:
+1. Search existing issues first
+2. Use latest/nightly build to verify
+3. Provide minimal reproducible example
+4. Attach debug output (`ops run --trace`)
+5. Include config.json and policy.yaml
+
+### Areas for Contribution
+
+Priority areas where we welcome contributions:
+
+🔐 **Security**
+- Additional taint flow sanitizers
+- Policy language enhancements
+- Formal verification of critical paths
+
+🤖 **AI Integration**
+- New LLM provider adapters
+- Streaming inference improvements
+- Embedding and vector search
+
+🔧 **Tools & Ecosystem**
+- WASM tool runtime optimizations
+- Policy validation and testing tools
+- Audit log analysis utilities
+
+📊 **Monitoring**
+- Metrics and observability
+- Policy violation alerting
+- Budget tracking dashboards
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+---
+
+## Who is Using Authority Nanos?
+
+Authority Nanos is designed for organizations deploying AI agents in production:
+
+- 🤖 **Autonomous agent platforms** needing strong isolation
+- 🏢 **Enterprise IT** running computer-use agents
+- 🔬 **AI research labs** requiring reproducible experiments
+- 🏥 **Regulated industries** needing audit trails
+- ☁️ **Cloud providers** offering agent-as-a-service
+
+If you're using Authority Nanos, please open a PR to add your use case!
+
+---
+
+## Support
+
+### Community Support
+
+- [Discussion Forum](https://forums.nanovms.com/) - General questions and community help
+- [GitHub Issues](https://github.com/nanovms/nanos/issues) - Bug reports and feature requests
+- [Docs Site](https://nanovms.gitbook.io/ops/) - Comprehensive documentation
+
+### Commercial Support
+
+Authority Nanos is **open source (Apache-2.0)**, but NanoVMs provides commercial support:
+
+- **Security Incident Response** - 24/7 support for security issues
+- **Custom Policy Development** - Help designing security policies
+- **Integration Assistance** - Integrate with your AI platform
+- **Priority Bug Fixes** - Expedited fixes for production issues
+- **Training & Onboarding** - Team training on Authority Kernel
+
+[Contact NanoVMs](https://nanovms.com/services/subscription) for enterprise support plans.
+
+**Note**: Organizations with >50 employees using pre-built binaries require a commercial subscription. Alternatively, you may build from source freely under Apache-2.0.
+
+---
+
+## License
+
+Authority Nanos is licensed under **Apache License 2.0**.
+
+The Authority Kernel components ([`src/agentic/`](src/agentic/)) are also Apache-2.0 and can be integrated into other unikernel or OS projects.
+
+See [LICENSE](LICENSE) for full details.
+
+---
+
+## Citation
+
+If you use Authority Nanos in research or publication, please cite:
+
+```bibtex
+@software{authority_nanos,
+  title = {Authority Nanos: AI-First Unikernel for Autonomous Agents},
+  author = {NanoVMs, Inc.},
+  year = {2024},
+  url = {https://github.com/nanovms/nanos}
+}
 ```
 
-Read more about Security [here](SECURITY.md).
+---
 
-[Architecture](https://github.com/nanovms/nanos/wiki/Architecture)
+**Built with ❤️ by [NanoVMs](https://nanovms.com) for the age of AI agents**
 
-[Debugging Help](https://github.com/nanovms/nanos/wiki/debugging)
-
-[Manual Networking Setup](https://github.com/nanovms/nanos/wiki/networking-setup)
-
-[Build Envs](https://github.com/nanovms/nanos/wiki/Build-Envs)
-
-[Reference Materials](https://github.com/nanovms/nanos/wiki/reference-materials)
-
-### Feedback
-
-How are you using Nanos? Take this very short survey and help us grow
-the project. It will take just a minute but help us out!
-
-[Feedback Form](https://ian377411.typeform.com/to/nm0soI)
-
-### Who is Using Nanos?
-
-If you are using Nanos for a project at your company or organization
-feel free to open up a PR and list your project/company below.
-
-### Getting Help
-
-If you need help using nanos or ops the the [discussion forum](https://forums.nanovms.com/) is your best route for general questions. You may feel free to report a bug noting the bug reporting section ahead or open an issue for a feature request.
-
-# Support
-
-Note: Nanos is open source, Apache2, however the builds that NanoVMs
-provides are not. Those using binary builds with over 50 employees must
-get a commercial subscription or you may freely build from source.
-
-Similarily if you need something done *now* or want immediate attention to an issue
-NanoVMs offers [paid support plans](https://nanovms.com/services/subscription).
-
-If you need email or drift support you will need to sign up for a support plan.
-
-If you'd like more in-depth help reach out to the nanovms folks via drift or email engineering.
+For more information: [nanos.org](https://nanos.org) | [Authority Kernel Spec](../IMPLEMENTATION_SPEC.md)

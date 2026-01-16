@@ -93,8 +93,30 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/virtio/virtqueue.c \
 	$(SRCDIR)/virtio/scsi.c \
 	$(VDSO_OBJDIR)/vdso-image.c \
-	$(SRCS-lwip)
+	$(SRCS-lwip) \
+	$(SRCS-agentic)
 
+# ============================================================
+# Authority Kernel Sources
+# ============================================================
+SRCS-agentic= \
+	$(SRCDIR)/agentic/ak_capability.c \
+	$(SRCDIR)/agentic/ak_audit.c \
+	$(SRCDIR)/agentic/ak_heap.c \
+	$(SRCDIR)/agentic/ak_ipc.c \
+	$(SRCDIR)/agentic/ak_policy.c \
+	$(SRCDIR)/agentic/ak_syscall.c \
+	$(SRCDIR)/agentic/ak_nanos.c \
+	$(SRCDIR)/agentic/ak_wasm.c \
+	$(SRCDIR)/agentic/ak_wasm_host.c \
+	$(SRCDIR)/agentic/ak_inference.c \
+	$(SRCDIR)/agentic/ak_state.c \
+	$(SRCDIR)/agentic/ak_secrets.c \
+	$(SRCDIR)/agentic/ak_ed25519.c \
+	$(SRCDIR)/agentic/ak_sanitize.c \
+	$(SRCDIR)/agentic/ak_approval.c \
+	$(SRCDIR)/agentic/ak_lz4.c \
+	$(SRCDIR)/agentic/ak_pattern.c
 
 SRCS-lwip= \
 	$(LWIPDIR)/src/core/def.c \
@@ -148,8 +170,12 @@ INCLUDES=\
 	-I$(SRCDIR)/xen/public \
 	-I$(LWIPDIR)/src/include \
 	-I$(VDSO_OBJDIR) \
+	-I$(SRCDIR)/agentic \
 
 AFLAGS+=-I$(ARCHDIR) -march=rv64gc -mabi=lp64d
+
+CFLAGS+=-DCONFIG_AK_ENABLED
+CFLAGS+=-DCONFIG_SYSCALL_AGENTIC=1
 AFLAGS+=	-I$(OBJDIR)/
 
 OBJDUMPFLAGS=	-d -S

@@ -3,6 +3,11 @@
 #include <lwip.h>
 #include <storage.h>
 
+#ifdef CONFIG_AK_ENABLED
+#include <agentic/ak_syscall.h>
+#include <agentic/ak_config.h>
+#endif
+
 static buffer hostname;
 
 BSS_RO_AFTER_INIT static boolean do_missing_files;
@@ -2161,6 +2166,10 @@ sysreturn sched_yield()
 
 sysreturn exit_group(int status)
 {
+#ifdef CONFIG_AK_ENABLED
+    /* Shutdown Authority Kernel - flushes audit log, revokes capabilities */
+    ak_shutdown();
+#endif
     kernel_shutdown(status);
 }
 
@@ -2373,11 +2382,16 @@ void register_file_syscalls(struct syscall *map)
     register_syscall(map, chown, syscall_ignore);
     register_syscall(map, link, link);
     register_syscall(map, symlink, symlink);
+#if !defined(CONFIG_SYSCALL_AGENTIC) || !CONFIG_SYSCALL_AGENTIC
     register_syscall(map, inotify_init, inotify_init);
 #endif
+#endif
+#if !defined(CONFIG_SYSCALL_AGENTIC) || !CONFIG_SYSCALL_AGENTIC
+    /* inotify: File monitoring - not needed for AI agents (use typed heap) */
     register_syscall(map, inotify_init1, inotify_init1);
     register_syscall(map, inotify_add_watch, inotify_add_watch);
     register_syscall(map, inotify_rm_watch, inotify_rm_watch);
+#endif
     register_syscall(map, openat, openat);
     register_syscall(map, dup, dup);
     register_syscall(map, dup3, dup3);
@@ -2450,9 +2464,12 @@ void register_file_syscalls(struct syscall *map)
     register_syscall(map, umask, umask);
     register_syscall(map, statfs, statfs);
     register_syscall(map, fstatfs, fstatfs);
+#if !defined(CONFIG_SYSCALL_AGENTIC) || !CONFIG_SYSCALL_AGENTIC
+    /* io_uring: Async I/O - optional for AI agents (use sync I/O with threads) */
     register_syscall(map, io_uring_setup, io_uring_setup);
     register_syscall(map, io_uring_enter, io_uring_enter);
     register_syscall(map, io_uring_register, io_uring_register);
+#endif
     register_syscall(map, getcpu, getcpu);
 }
 
@@ -2536,6 +2553,21 @@ void syscall_handler(thread t)
 
     if (shutting_down & SHUTDOWN_ONGOING)
         goto out;
+
+#ifdef CONFIG_AK_ENABLED
+    /* Authority Kernel syscalls (1024-1100) */
+    if (call >= SYS_AK_BASE && call <= SYS_AK_MAX) {
+        t->syscall_complete = false;
+        context_reserve_refcount(ctx);
+        sysreturn rv = ak_syscall_handler(call,
+                                          arg0, f[SYSCALL_FRAME_ARG1], f[SYSCALL_FRAME_ARG2],
+                                          f[SYSCALL_FRAME_ARG3], f[SYSCALL_FRAME_ARG4], f[SYSCALL_FRAME_ARG5]);
+        assert(ctx->refcount.c > 1);
+        context_release_refcount(ctx);
+        set_syscall_return(t, rv);
+        goto out;
+    }
+#endif
 
     if (call >= sizeof(_linux_syscalls) / sizeof(_linux_syscalls[0])) {
         goto out;

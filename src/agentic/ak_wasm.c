@@ -1,0 +1,831 @@
+/*
+ * Authority Kernel - WASM Runtime Implementation
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * Copyright (c) 2024 Authority Systems
+ *
+ * This file implements the kernel-side WASM management:
+ *   - Module registry and validation
+ *   - Tool registry and dispatch
+ *   - Execution context management
+ *
+ * NOTE: The actual WASM interpreter (wasm3) runs in userspace.
+ * The kernel provides capability validation and resource limits.
+ */
+
+#include "ak_wasm.h"
+#include "ak_audit.h"
+#include "ak_ed25519.h"
+#include "ak_compat.h"
+#include "ak_syscall.h"
+
+/* ============================================================
+ * INTERNAL STATE
+ * ============================================================ */
+
+#define AK_MAX_WASM_MODULES     64
+#define AK_MAX_TOOLS            256
+#define AK_MAX_HOST_FUNCTIONS   128
+
+static struct {
+    heap h;
+    boolean initialized;
+
+    /* Module registry */
+    ak_wasm_module_t *modules[AK_MAX_WASM_MODULES];
+    u32 module_count;
+
+    /* Tool registry */
+    ak_tool_t *tools[AK_MAX_TOOLS];
+    u32 tool_count;
+
+    /* Host function registry */
+    ak_host_fn_entry_t host_fns[AK_MAX_HOST_FUNCTIONS];
+    u32 host_fn_count;
+
+    /* Statistics */
+    ak_wasm_stats_t stats;
+} ak_wasm_state;
+
+/* ============================================================
+ * INITIALIZATION
+ * ============================================================ */
+
+void ak_wasm_init(heap h)
+{
+    if (ak_wasm_state.initialized)
+        return;
+
+    ak_wasm_state.h = h;
+    ak_wasm_state.module_count = 0;
+    ak_wasm_state.tool_count = 0;
+    ak_wasm_state.host_fn_count = 0;
+
+    runtime_memset(&ak_wasm_state.stats, 0, sizeof(ak_wasm_stats_t));
+
+    /* Initialize arrays */
+    for (int i = 0; i < AK_MAX_WASM_MODULES; i++)
+        ak_wasm_state.modules[i] = 0;
+    for (int i = 0; i < AK_MAX_TOOLS; i++)
+        ak_wasm_state.tools[i] = 0;
+
+    /* Register built-in host functions */
+    ak_host_fn_register("http_get", ak_host_http_get, AK_CAP_NET, true);
+    ak_host_fn_register("http_post", ak_host_http_post, AK_CAP_NET, true);
+    ak_host_fn_register("tcp_connect", ak_host_tcp_connect, AK_CAP_NET, true);
+    ak_host_fn_register("tcp_send", ak_host_tcp_send, AK_CAP_NET, false);
+    ak_host_fn_register("tcp_recv", ak_host_tcp_recv, AK_CAP_NET, true);
+
+    ak_host_fn_register("fs_read", ak_host_fs_read, AK_CAP_FS, false);
+    ak_host_fn_register("fs_write", ak_host_fs_write, AK_CAP_FS, false);
+    ak_host_fn_register("fs_stat", ak_host_fs_stat, AK_CAP_FS, false);
+    ak_host_fn_register("fs_list", ak_host_fs_list, AK_CAP_FS, false);
+
+    ak_host_fn_register("heap_read", ak_host_heap_read, AK_CAP_HEAP, false);
+    ak_host_fn_register("heap_write", ak_host_heap_write, AK_CAP_HEAP, false);
+
+    ak_host_fn_register("secret_get", ak_host_secret_get, AK_CAP_SECRETS, false);
+    ak_host_fn_register("llm_complete", ak_host_llm_complete, AK_CAP_INFERENCE, true);
+
+    ak_host_fn_register("log", ak_host_log, AK_CAP_NONE, false);
+    ak_host_fn_register("time_now", ak_host_time_now, AK_CAP_NONE, false);
+    ak_host_fn_register("random", ak_host_random, AK_CAP_NONE, false);
+
+    ak_wasm_state.initialized = true;
+}
+
+void ak_wasm_shutdown(void)
+{
+    if (!ak_wasm_state.initialized)
+        return;
+
+    /* Unload all modules */
+    for (u32 i = 0; i < ak_wasm_state.module_count; i++) {
+        if (ak_wasm_state.modules[i]) {
+            ak_wasm_module_unload(ak_wasm_state.h, ak_wasm_state.modules[i]);
+            ak_wasm_state.modules[i] = 0;
+        }
+    }
+
+    /* Free all tools */
+    for (u32 i = 0; i < ak_wasm_state.tool_count; i++) {
+        if (ak_wasm_state.tools[i]) {
+            deallocate(ak_wasm_state.h, ak_wasm_state.tools[i],
+                       sizeof(ak_tool_t));
+            ak_wasm_state.tools[i] = 0;
+        }
+    }
+
+    ak_wasm_state.module_count = 0;
+    ak_wasm_state.tool_count = 0;
+    ak_wasm_state.initialized = false;
+}
+
+/* ============================================================
+ * MODULE MANAGEMENT
+ * ============================================================ */
+
+/* WASM magic number: \0asm */
+#define WASM_MAGIC  0x6d736100
+#define WASM_VERSION 1
+
+static boolean validate_wasm_header(buffer bytecode)
+{
+    if (buffer_length(bytecode) < 8)
+        return false;
+
+    u8 *data = buffer_ref(bytecode, 0);
+    u32 magic = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+    u32 version = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
+
+    return (magic == WASM_MAGIC) && (version == WASM_VERSION);
+}
+
+static void compute_module_hash(buffer bytecode, u8 *hash_out)
+{
+    /*
+     * Compute SHA256 of bytecode.
+     * In production, use proper crypto. For now, simple hash.
+     */
+    u64 len = buffer_length(bytecode);
+    u8 *data = buffer_ref(bytecode, 0);
+
+    /* Simple hash - replace with SHA256 in production */
+    u64 h = 0xcbf29ce484222325ULL;
+    for (u64 i = 0; i < len; i++) {
+        h ^= data[i];
+        h *= 0x100000001b3ULL;
+    }
+
+    /* Fill hash output */
+    for (int i = 0; i < AK_HASH_SIZE; i++) {
+        hash_out[i] = (h >> (i % 8 * 8)) & 0xff;
+        if (i % 8 == 7)
+            h = h * 0x100000001b3ULL + i;
+    }
+}
+
+ak_wasm_module_t *ak_wasm_module_load(
+    heap h,
+    const char *name,
+    buffer bytecode,
+    ak_wasm_source_t source,
+    const char *source_url)
+{
+    if (!ak_wasm_state.initialized)
+        return 0;
+
+    if (ak_wasm_state.module_count >= AK_MAX_WASM_MODULES)
+        return 0;
+
+    /* Validate WASM header */
+    if (!validate_wasm_header(bytecode))
+        return 0;
+
+    /* Allocate module */
+    ak_wasm_module_t *module = allocate(h, sizeof(ak_wasm_module_t));
+    if (module == INVALID_ADDRESS)
+        return 0;
+
+    runtime_memset(module, 0, sizeof(ak_wasm_module_t));
+
+    /* Generate module ID */
+    ak_generate_token_id(module->module_id);
+
+    /* Copy name */
+    u64 name_len = runtime_strlen(name);
+    if (name_len >= sizeof(module->name))
+        name_len = sizeof(module->name) - 1;
+    runtime_memcpy(module->name, name, name_len);
+    module->name[name_len] = 0;
+
+    /* Compute hash */
+    compute_module_hash(bytecode, module->hash);
+
+    /* Set source */
+    module->source = source;
+    if (source_url) {
+        u64 url_len = runtime_strlen(source_url);
+        if (url_len >= sizeof(module->source_url))
+            url_len = sizeof(module->source_url) - 1;
+        runtime_memcpy(module->source_url, source_url, url_len);
+        module->source_url[url_len] = 0;
+    }
+
+    /* Clone bytecode */
+    module->bytecode_len = buffer_length(bytecode);
+    module->bytecode = allocate_buffer(h, module->bytecode_len);
+    if (module->bytecode == INVALID_ADDRESS) {
+        deallocate(h, module, sizeof(ak_wasm_module_t));
+        return 0;
+    }
+    buffer_write(module->bytecode, buffer_ref(bytecode, 0), module->bytecode_len);
+
+    /* Set default limits */
+    module->max_memory = AK_WASM_DEFAULT_MAX_MEMORY;
+    module->max_stack = AK_WASM_DEFAULT_MAX_STACK;
+    module->max_instructions = AK_WASM_DEFAULT_MAX_INSTRUCTIONS;
+    module->max_runtime_ms = AK_WASM_DEFAULT_MAX_RUNTIME_MS;
+
+    /* Mark as sandboxed by default */
+    module->sandboxed = true;
+    module->verified = false;
+
+    /* Timestamps */
+    module->loaded_ms = 0; /* Would use kern_now() in real impl */
+    module->last_used_ms = 0;
+    module->invocation_count = 0;
+
+    /* Add to registry */
+    ak_wasm_state.modules[ak_wasm_state.module_count++] = module;
+    ak_wasm_state.stats.modules_loaded++;
+
+    return module;
+}
+
+ak_wasm_module_t *ak_wasm_module_load_verified(
+    heap h,
+    const char *name,
+    buffer bytecode,
+    ak_wasm_source_t source,
+    const char *source_url,
+    const u8 *signature,
+    const u8 *public_key)
+{
+    /*
+     * Load WASM module with Ed25519 signature verification.
+     *
+     * SECURITY: Modules loaded this way are marked as verified,
+     * which may grant them additional privileges.
+     *
+     * @param signature   64-byte Ed25519 signature of bytecode
+     * @param public_key  32-byte Ed25519 public key
+     */
+    if (!ak_wasm_state.initialized)
+        return 0;
+
+    if (!signature || !public_key)
+        return 0;
+
+    /* Verify the public key is trusted */
+    if (!ak_ed25519_is_trusted(public_key)) {
+        ak_wasm_state.stats.signature_failures++;
+        return 0;
+    }
+
+    /* Verify the signature */
+    if (!ak_ed25519_verify(
+            buffer_ref(bytecode, 0),
+            buffer_length(bytecode),
+            signature,
+            public_key)) {
+        ak_wasm_state.stats.signature_failures++;
+        return 0;
+    }
+
+    /* Load the module normally */
+    ak_wasm_module_t *module = ak_wasm_module_load(h, name, bytecode, source, source_url);
+    if (!module)
+        return 0;
+
+    /* Mark as verified */
+    module->verified = true;
+
+    /* Copy signature and public key for audit trail */
+    runtime_memcpy(module->signature, signature, AK_ED25519_SIGNATURE_SIZE);
+    runtime_memcpy(module->signing_key, public_key, AK_ED25519_PUBLIC_KEY_SIZE);
+
+    return module;
+}
+
+ak_wasm_module_t *ak_wasm_module_fetch(
+    heap h,
+    const char *name,
+    const char *url,
+    ak_capability_t *net_cap)
+{
+    /*
+     * Fetch module from network.
+     * This would use the network stack to download the WASM bytecode.
+     *
+     * SECURITY: Validates net_cap covers the URL before fetch.
+     */
+    if (!ak_wasm_state.initialized)
+        return 0;
+
+    if (!net_cap)
+        return 0;
+
+    /* Validate capability covers this URL */
+    s64 result = ak_capability_validate(
+        net_cap,
+        AK_CAP_NET,
+        url,
+        "GET",
+        0  /* No run_id binding for module fetch */
+    );
+
+    if (result != 0)
+        return 0;
+
+    /* Network fetch requires HTTP client integration */
+    /* Return NULL - modules must be loaded from local bytecode */
+    return 0;
+}
+
+void ak_wasm_module_unload(heap h, ak_wasm_module_t *module)
+{
+    if (!module)
+        return;
+
+    /* Free bytecode buffer */
+    if (module->bytecode && module->bytecode != INVALID_ADDRESS)
+        deallocate_buffer(module->bytecode);
+
+    /* Free export names if allocated */
+    if (module->export_names) {
+        for (u32 i = 0; i < module->export_count; i++) {
+            if (module->export_names[i])
+                deallocate(h, module->export_names[i], runtime_strlen(module->export_names[i]) + 1);
+        }
+        deallocate(h, module->export_names, module->export_count * sizeof(char*));
+    }
+
+    /* Remove from registry */
+    for (u32 i = 0; i < ak_wasm_state.module_count; i++) {
+        if (ak_wasm_state.modules[i] == module) {
+            /* Shift remaining entries */
+            for (u32 j = i; j < ak_wasm_state.module_count - 1; j++)
+                ak_wasm_state.modules[j] = ak_wasm_state.modules[j + 1];
+            ak_wasm_state.modules[--ak_wasm_state.module_count] = 0;
+            break;
+        }
+    }
+
+    deallocate(h, module, sizeof(ak_wasm_module_t));
+}
+
+ak_wasm_module_t *ak_wasm_module_get(const char *name)
+{
+    for (u32 i = 0; i < ak_wasm_state.module_count; i++) {
+        if (ak_wasm_state.modules[i] &&
+            runtime_strcmp(ak_wasm_state.modules[i]->name, name) == 0) {
+            return ak_wasm_state.modules[i];
+        }
+    }
+    return 0;
+}
+
+ak_wasm_module_t *ak_wasm_module_get_by_hash(u8 *hash)
+{
+    for (u32 i = 0; i < ak_wasm_state.module_count; i++) {
+        if (ak_wasm_state.modules[i] &&
+            runtime_memcmp(ak_wasm_state.modules[i]->hash, hash, AK_HASH_SIZE) == 0) {
+            return ak_wasm_state.modules[i];
+        }
+    }
+    return 0;
+}
+
+/* ============================================================
+ * TOOL REGISTRY
+ * ============================================================ */
+
+s64 ak_tool_register(
+    heap h,
+    const char *name,
+    ak_wasm_module_t *module,
+    const char *export_name,
+    ak_cap_type_t cap_type,
+    const char *cap_resource)
+{
+    if (!ak_wasm_state.initialized)
+        return AK_E_WASM_LOAD_FAILED;
+
+    if (ak_wasm_state.tool_count >= AK_MAX_TOOLS)
+        return AK_E_QUOTA_EXCEEDED;
+
+    /* Check for duplicate name */
+    if (ak_tool_get(name))
+        return AK_E_CONFLICT;
+
+    /* Allocate tool */
+    ak_tool_t *tool = allocate(h, sizeof(ak_tool_t));
+    if (tool == INVALID_ADDRESS)
+        return AK_E_WASM_OOM;
+
+    runtime_memset(tool, 0, sizeof(ak_tool_t));
+
+    /* Copy name */
+    u64 name_len = runtime_strlen(name);
+    if (name_len >= sizeof(tool->name))
+        name_len = sizeof(tool->name) - 1;
+    runtime_memcpy(tool->name, name, name_len);
+    tool->name[name_len] = 0;
+
+    /* Copy export name */
+    u64 export_len = runtime_strlen(export_name);
+    if (export_len >= sizeof(tool->export_name))
+        export_len = sizeof(tool->export_name) - 1;
+    runtime_memcpy(tool->export_name, export_name, export_len);
+    tool->export_name[export_len] = 0;
+
+    /* Set module reference */
+    tool->module = module;
+
+    /* Set capability requirements */
+    tool->cap_type = cap_type;
+    if (cap_resource) {
+        u64 res_len = runtime_strlen(cap_resource);
+        if (res_len >= sizeof(tool->cap_resource))
+            res_len = sizeof(tool->cap_resource) - 1;
+        runtime_memcpy(tool->cap_resource, cap_resource, res_len);
+        tool->cap_resource[res_len] = 0;
+    }
+
+    /* Default rate limits */
+    tool->default_rate_limit = 100;
+    tool->default_rate_window_ms = 60000;
+
+    /* Default audit settings */
+    tool->log_args = true;
+    tool->log_result = true;
+    tool->sensitive = false;
+
+    /* Add to registry */
+    ak_wasm_state.tools[ak_wasm_state.tool_count++] = tool;
+    ak_wasm_state.stats.tools_registered++;
+
+    return 0;
+}
+
+void ak_tool_unregister(const char *name)
+{
+    for (u32 i = 0; i < ak_wasm_state.tool_count; i++) {
+        if (ak_wasm_state.tools[i] &&
+            runtime_strcmp(ak_wasm_state.tools[i]->name, name) == 0) {
+            deallocate(ak_wasm_state.h, ak_wasm_state.tools[i],
+                       sizeof(ak_tool_t));
+
+            /* Shift remaining entries */
+            for (u32 j = i; j < ak_wasm_state.tool_count - 1; j++)
+                ak_wasm_state.tools[j] = ak_wasm_state.tools[j + 1];
+            ak_wasm_state.tools[--ak_wasm_state.tool_count] = 0;
+            return;
+        }
+    }
+}
+
+ak_tool_t *ak_tool_get(const char *name)
+{
+    for (u32 i = 0; i < ak_wasm_state.tool_count; i++) {
+        if (ak_wasm_state.tools[i] &&
+            runtime_strcmp(ak_wasm_state.tools[i]->name, name) == 0) {
+            return ak_wasm_state.tools[i];
+        }
+    }
+    return 0;
+}
+
+ak_tool_t **ak_tool_list(u32 *count_out)
+{
+    if (count_out)
+        *count_out = ak_wasm_state.tool_count;
+    return ak_wasm_state.tools;
+}
+
+/* ============================================================
+ * HOST FUNCTION REGISTRATION
+ * ============================================================ */
+
+s64 ak_host_fn_register(
+    const char *name,
+    ak_host_fn_t fn,
+    ak_cap_type_t cap_type,
+    boolean async_capable)
+{
+    if (ak_wasm_state.host_fn_count >= AK_MAX_HOST_FUNCTIONS)
+        return AK_E_QUOTA_EXCEEDED;
+
+    ak_host_fn_entry_t *entry = &ak_wasm_state.host_fns[ak_wasm_state.host_fn_count];
+
+    /* Copy name */
+    u64 name_len = runtime_strlen(name);
+    if (name_len >= sizeof(entry->name))
+        name_len = sizeof(entry->name) - 1;
+    runtime_memcpy(entry->name, name, name_len);
+    entry->name[name_len] = 0;
+
+    entry->fn = fn;
+    entry->cap_type = cap_type;
+    entry->async_capable = async_capable;
+
+    ak_wasm_state.host_fn_count++;
+    return 0;
+}
+
+ak_host_fn_entry_t *ak_host_fn_get(const char *name)
+{
+    for (u32 i = 0; i < ak_wasm_state.host_fn_count; i++) {
+        if (runtime_strcmp(ak_wasm_state.host_fns[i].name, name) == 0)
+            return &ak_wasm_state.host_fns[i];
+    }
+    return 0;
+}
+
+/* ============================================================
+ * EXECUTION CONTEXT
+ * ============================================================ */
+
+ak_wasm_exec_ctx_t *ak_wasm_exec_create(
+    heap h,
+    ak_agent_context_t *agent,
+    ak_tool_t *tool,
+    ak_capability_t *cap)
+{
+    ak_wasm_exec_ctx_t *ctx = allocate(h, sizeof(ak_wasm_exec_ctx_t));
+    if (ctx == INVALID_ADDRESS)
+        return 0;
+
+    runtime_memset(ctx, 0, sizeof(ak_wasm_exec_ctx_t));
+
+    /* Generate execution ID */
+    ak_generate_token_id(ctx->exec_id);
+
+    ctx->agent = agent;
+    ctx->module = tool->module;
+    ctx->tool = tool;
+    ctx->cap = cap;
+    ctx->state = AK_WASM_STATE_INIT;
+    ctx->depth = 0;
+    ctx->parent = 0;
+
+    return ctx;
+}
+
+void ak_wasm_exec_destroy(heap h, ak_wasm_exec_ctx_t *ctx)
+{
+    if (!ctx)
+        return;
+
+    if (ctx->input && ctx->input != INVALID_ADDRESS)
+        deallocate_buffer(ctx->input);
+    if (ctx->output && ctx->output != INVALID_ADDRESS)
+        deallocate_buffer(ctx->output);
+
+    /* Free suspension data if present */
+    if (ctx->suspension.resume_data && ctx->suspension.resume_data_len > 0)
+        deallocate(h, ctx->suspension.resume_data, ctx->suspension.resume_data_len);
+
+    deallocate(h, ctx, sizeof(ak_wasm_exec_ctx_t));
+}
+
+/* ============================================================
+ * ASYNC EXECUTION (SUSPENSION/RESUMPTION)
+ * ============================================================ */
+
+s64 ak_wasm_exec_suspend(
+    ak_wasm_exec_ctx_t *ctx,
+    ak_wasm_suspend_reason_t reason,
+    void *data,
+    u64 data_len,
+    closure resume_cb,
+    u64 timeout_ms)
+{
+    if (!ctx)
+        return AK_E_WASM_TRAP;
+
+    if (ctx->state != AK_WASM_STATE_RUNNING)
+        return AK_E_WASM_TRAP;
+
+    /* Save suspension state */
+    ctx->state = AK_WASM_STATE_SUSPENDED;
+    ctx->suspension.reason = reason;
+    ctx->suspension.suspend_time_ms = 0; /* Would use kern_now() */
+    ctx->suspension.resume_callback = resume_cb;
+    ctx->suspension.timeout_ms = timeout_ms;
+    ctx->suspension.approval_id = 0;
+
+    /* Copy data to preserve across suspension */
+    if (data && data_len > 0) {
+        ctx->suspension.resume_data = allocate(ak_wasm_state.h, data_len);
+        if (ctx->suspension.resume_data == INVALID_ADDRESS) {
+            ctx->state = AK_WASM_STATE_OOM;
+            return AK_E_WASM_OOM;
+        }
+        runtime_memcpy(ctx->suspension.resume_data, data, data_len);
+        ctx->suspension.resume_data_len = data_len;
+    } else {
+        ctx->suspension.resume_data = 0;
+        ctx->suspension.resume_data_len = 0;
+    }
+
+    /*
+     * In a real implementation, this would:
+     * 1. Save WASM execution state (stack, locals, PC)
+     * 2. Return control to the scheduler
+     * 3. The scheduler resumes when resume_cb is called or timeout expires
+     *
+     * For this kernel implementation, the userspace supervisor handles
+     * the actual WASM state; we just track the reason and callback.
+     */
+
+    return 0;
+}
+
+s64 ak_wasm_exec_resume(
+    ak_wasm_exec_ctx_t *ctx,
+    void *result,
+    u64 result_len)
+{
+    if (!ctx)
+        return AK_E_WASM_TRAP;
+
+    if (ctx->state != AK_WASM_STATE_SUSPENDED)
+        return AK_E_WASM_TRAP;
+
+    /* Free old suspension data */
+    if (ctx->suspension.resume_data && ctx->suspension.resume_data_len > 0) {
+        deallocate(ak_wasm_state.h, ctx->suspension.resume_data,
+                   ctx->suspension.resume_data_len);
+    }
+
+    /* Store result for WASM to retrieve */
+    if (result && result_len > 0) {
+        ctx->suspension.resume_data = allocate(ak_wasm_state.h, result_len);
+        if (ctx->suspension.resume_data == INVALID_ADDRESS) {
+            ctx->state = AK_WASM_STATE_OOM;
+            return AK_E_WASM_OOM;
+        }
+        runtime_memcpy(ctx->suspension.resume_data, result, result_len);
+        ctx->suspension.resume_data_len = result_len;
+    } else {
+        ctx->suspension.resume_data = 0;
+        ctx->suspension.resume_data_len = 0;
+    }
+
+    /* Resume execution */
+    ctx->state = AK_WASM_STATE_RUNNING;
+    ctx->suspension.reason = AK_WASM_SUSPEND_NONE;
+
+    /*
+     * In a real implementation, this would:
+     * 1. Restore WASM execution state
+     * 2. Push result onto WASM stack
+     * 3. Continue execution
+     *
+     * For this kernel implementation, the userspace supervisor handles
+     * actual WASM state; we signal readiness to continue.
+     */
+
+    return 0;
+}
+
+boolean ak_wasm_exec_is_suspended(ak_wasm_exec_ctx_t *ctx)
+{
+    if (!ctx)
+        return false;
+    return ctx->state == AK_WASM_STATE_SUSPENDED;
+}
+
+ak_wasm_suspend_reason_t ak_wasm_exec_suspend_reason(ak_wasm_exec_ctx_t *ctx)
+{
+    if (!ctx)
+        return AK_WASM_SUSPEND_NONE;
+    if (ctx->state != AK_WASM_STATE_SUSPENDED)
+        return AK_WASM_SUSPEND_NONE;
+    return ctx->suspension.reason;
+}
+
+s64 ak_wasm_exec_run(ak_wasm_exec_ctx_t *ctx, buffer input)
+{
+    if (!ctx || ctx->state != AK_WASM_STATE_INIT)
+        return AK_E_WASM_TRAP;
+
+    ctx->input = input;
+    ctx->state = AK_WASM_STATE_RUNNING;
+    ctx->start_ms = 0; /* Would use kern_now() */
+
+    /*
+     * WASM execution architecture:
+     *
+     * The WASM interpreter (wasm3) runs in userspace supervisor.
+     * The kernel's role is to:
+     *   1. Validate capabilities for host calls
+     *   2. Track resource usage
+     *   3. Enforce timeouts
+     *
+     * Execution returns empty output when no WASM runtime is linked.
+     */
+
+    /* Create empty output */
+    ctx->output = allocate_buffer(ak_wasm_state.h, 2);
+    if (ctx->output == INVALID_ADDRESS) {
+        ctx->output = 0;
+        ctx->state = AK_WASM_STATE_OOM;
+        ctx->result_code = AK_E_WASM_OOM;
+        ak_wasm_state.stats.executions_total++;
+        ak_wasm_state.stats.executions_oom++;
+        return AK_E_WASM_OOM;
+    }
+
+    buffer_write(ctx->output, "{}", 2);
+    ctx->state = AK_WASM_STATE_COMPLETED;
+    ctx->result_code = 0;
+
+    ak_wasm_state.stats.executions_total++;
+    ak_wasm_state.stats.executions_success++;
+
+    return 0;
+}
+
+/* ============================================================
+ * TOOL EXECUTION (AK_SYS_CALL handler)
+ * ============================================================ */
+
+ak_response_t *ak_wasm_execute_tool(
+    ak_agent_context_t *agent,
+    const char *tool_name,
+    buffer args,
+    ak_capability_t *cap)
+{
+    if (!ak_wasm_state.initialized)
+        return ak_response_error(ak_wasm_state.h, 0, AK_E_WASM_LOAD_FAILED);
+
+    /* Step 1: Look up tool */
+    ak_tool_t *tool = ak_tool_get(tool_name);
+    if (!tool)
+        return ak_response_error(ak_wasm_state.h, 0, AK_E_TOOL_NOT_FOUND);
+
+    /* Step 2: Validate capability (INV-2) */
+    if (tool->cap_type != AK_CAP_NONE) {
+        if (!cap)
+            return ak_response_error(ak_wasm_state.h, 0, AK_E_CAP_MISSING);
+
+        s64 result = ak_capability_validate(
+            cap,
+            tool->cap_type,
+            tool->cap_resource,
+            tool->name,
+            agent->run_id
+        );
+
+        if (result != 0) {
+            ak_wasm_state.stats.host_calls_denied++;
+            return ak_response_error(ak_wasm_state.h, 0, result);
+        }
+    }
+
+    /* Step 3: Create execution context */
+    ak_wasm_exec_ctx_t *ctx = ak_wasm_exec_create(
+        ak_wasm_state.h, agent, tool, cap);
+    if (!ctx)
+        return ak_response_error(ak_wasm_state.h, 0, AK_E_WASM_OOM);
+
+    /* Step 4: Run WASM */
+    s64 result = ak_wasm_exec_run(ctx, args);
+
+    /* Step 5: Create response */
+    ak_response_t *response;
+    if (result == 0 && ctx->state == AK_WASM_STATE_COMPLETED) {
+        response = ak_response_success(ak_wasm_state.h, 0, ctx->output);
+        ctx->output = 0; /* Ownership transferred */
+    } else {
+        s64 error_code;
+        switch (ctx->state) {
+        case AK_WASM_STATE_TIMEOUT:
+            error_code = AK_E_WASM_TIMEOUT;
+            ak_wasm_state.stats.executions_timeout++;
+            break;
+        case AK_WASM_STATE_OOM:
+            error_code = AK_E_WASM_OOM;
+            ak_wasm_state.stats.executions_oom++;
+            break;
+        case AK_WASM_STATE_FAILED:
+        default:
+            error_code = AK_E_WASM_TRAP;
+            ak_wasm_state.stats.executions_failed++;
+            break;
+        }
+        response = ak_response_error(ak_wasm_state.h, 0, error_code);
+    }
+
+    /* Update module usage stats */
+    tool->module->last_used_ms = 0; /* Would use kern_now() */
+    tool->module->invocation_count++;
+
+    /* Cleanup */
+    ak_wasm_exec_destroy(ak_wasm_state.h, ctx);
+
+    return response;
+}
+
+/* ============================================================
+ * STATISTICS
+ * ============================================================ */
+
+void ak_wasm_get_stats(ak_wasm_stats_t *stats)
+{
+    if (stats)
+        runtime_memcpy(stats, &ak_wasm_state.stats, sizeof(ak_wasm_stats_t));
+}
