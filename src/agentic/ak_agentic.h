@@ -31,6 +31,7 @@
 #include "ak_effects.h"
 #include "ak_wasm.h"
 #include "ak_inference.h"
+#include "ak_tool_registry.h"
 
 /* ============================================================
  * BUDGET TRACKING

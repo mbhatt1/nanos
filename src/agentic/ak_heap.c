@@ -1208,6 +1208,30 @@ s64 ak_heap_txn_commit(ak_heap_txn_t *txn)
     return 0;
 }
 
+/*
+ * FIX(BUG-009): Document ownership semantics.
+ *
+ * WARNING: This function FREES the transaction structure.
+ * After calling ak_heap_txn_rollback(), the txn pointer becomes INVALID.
+ * Caller MUST NOT use the txn pointer after this call returns.
+ *
+ * Ownership model:
+ *   - ak_heap_txn_begin() allocates and returns ownership to caller
+ *   - ak_heap_txn_commit() keeps txn allocated (caller must call rollback to free)
+ *   - ak_heap_txn_rollback() transfers ownership back and frees
+ *
+ * Correct usage:
+ *   ak_heap_txn_t *txn = ak_heap_txn_begin();
+ *   // ... do operations ...
+ *   if (error) {
+ *       ak_heap_txn_rollback(txn);
+ *       txn = NULL;  // CRITICAL: Clear pointer after rollback
+ *       return;
+ *   }
+ *   ak_heap_txn_commit(txn);
+ *   ak_heap_txn_rollback(txn);  // Always call to free resources
+ *   txn = NULL;
+ */
 void ak_heap_txn_rollback(ak_heap_txn_t *txn)
 {
     if (!txn)

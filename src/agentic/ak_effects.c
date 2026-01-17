@@ -1250,6 +1250,7 @@ static const char *ak_effect_op_name(ak_effect_op_t op)
     case AK_E_TOOL_CALL:      return "TOOL_CALL";
     case AK_E_WASM_INVOKE:    return "WASM_INVOKE";
     case AK_E_INFER:          return "INFER";
+    case AK_E_AGENT_SEND:     return "AGENT_SEND";
     default:                   return "UNKNOWN";
     }
 }
@@ -1685,6 +1686,28 @@ void ak_generate_suggestion(const ak_effect_req_t *req,
                 if (pos + model_len + 2 < max_len) {
                     runtime_memcpy(snippet + pos, model, model_len);
                     pos += model_len;
+                    snippet[pos++] = '"';
+                    snippet[pos] = '\0';
+                }
+            }
+            break;
+
+        case AK_E_AGENT_SEND:
+            runtime_strncpy(snippet,
+                "[[ipc.allow]]\nagent = \"", max_len);
+            {
+                u64 pos = runtime_strlen(snippet);
+                /* Extract agent from target: agent:<pid>:<msg_type> */
+                const char *agent = req->target;
+                if (runtime_strncmp(agent, "agent:", 6) == 0)
+                    agent += 6;
+                /* Find end of PID (before :msg_type) */
+                u64 agent_len = 0;
+                while (agent[agent_len] && agent[agent_len] != ':')
+                    agent_len++;
+                if (pos + agent_len + 2 < max_len) {
+                    runtime_memcpy(snippet + pos, agent, agent_len);
+                    pos += agent_len;
                     snippet[pos++] = '"';
                     snippet[pos] = '\0';
                 }

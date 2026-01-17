@@ -22,6 +22,7 @@
 #include "ak_policy.h"
 #include "ak_policy_v2.h"
 #include "ak_audit.h"
+#include "ak_tool_registry.h"
 
 /* ============================================================
  * MODULE STATE
@@ -114,6 +115,9 @@ void ak_agentic_init(heap h)
     /* Clear statistics */
     local_memzero(&ak_agentic_state.stats, sizeof(ak_agentic_stats_t));
 
+    /* Initialize the advanced tool registry */
+    ak_tool_registry_init(h);
+
     ak_agentic_state.initialized = true;
 
     ak_debug("ak_agentic: initialized");
@@ -129,6 +133,9 @@ void ak_agentic_shutdown(void)
         ak_agentic_state.native_tools[i].active = false;
     }
     ak_agentic_state.native_tool_count = 0;
+
+    /* Shutdown the advanced tool registry */
+    ak_tool_registry_shutdown();
 
     ak_agentic_state.initialized = false;
 
@@ -523,18 +530,21 @@ int ak_handle_tool_call(
     }
 
     /* Step 4: Look up and execute handler */
+    /* Try lookup chain: native handler -> advanced registry -> WASM tool */
     ak_tool_handler_t handler = ak_tool_handler_lookup(tool_name, version);
 
     if (handler) {
-        /* Native tool handler */
+        /* Native tool handler (simple API) */
         err = handler(args, args_len, result, result_len);
     } else {
-        /* Try WASM-based tool via ak_tool_get() */
-        ak_tool_t *wasm_tool = ak_tool_get(tool_name);
+        /* Try advanced tool registry (ak_tool_registry) */
+        ak_tool_def_t *reg_tool = ak_tool_lookup(tool_name, version);
 
-        if (wasm_tool && ctx->agent) {
-            /* Execute via WASM runtime */
+        if (reg_tool) {
+            /* Execute via advanced registry */
             buffer args_buf = NULL;
+            buffer result_buf = NULL;
+
             if (args && args_len > 0) {
                 args_buf = allocate_buffer(ak_agentic_state.h, args_len);
                 if (args_buf != INVALID_ADDRESS) {
@@ -542,32 +552,68 @@ int ak_handle_tool_call(
                 }
             }
 
-            ak_response_t *response = ak_wasm_execute_tool(
-                ctx->agent, tool_name, args_buf, NULL);
+            /* Invoke through registry (handles mock, validation, etc.) */
+            err = ak_tool_invoke(ctx, tool_name, version, args_buf, &result_buf);
 
-            if (response && response->status == AK_STATUS_OK && response->result) {
-                /* Copy result */
-                u64 res_len = buffer_length(response->result);
+            if (err == 0 && result_buf) {
+                /* Copy result to output buffer */
+                u64 res_len = buffer_length(result_buf);
                 if (result_len) {
                     if (res_len > *result_len)
                         res_len = *result_len;
                     if (result && res_len > 0) {
-                        local_memcpy(result, buffer_ref(response->result, 0), res_len);
+                        local_memcpy(result, buffer_ref(result_buf, 0), res_len);
                     }
                     *result_len = res_len;
                 }
-                err = 0;
-            } else {
-                err = response ? response->error_code : AK_E_TOOL_FAIL;
             }
 
             /* Cleanup */
             if (args_buf && args_buf != INVALID_ADDRESS)
                 deallocate_buffer(args_buf);
-            /* Response cleanup would be handled by caller */
+            if (result_buf && result_buf != INVALID_ADDRESS)
+                deallocate_buffer(result_buf);
         } else {
-            ak_agentic_state.stats.tool_calls_failed++;
-            return AK_E_TOOL_HANDLER_NOT_FOUND;
+            /* Try WASM-based tool via ak_tool_get() */
+            ak_tool_t *wasm_tool = ak_tool_get(tool_name);
+
+            if (wasm_tool && ctx->agent) {
+                /* Execute via WASM runtime */
+                buffer args_buf = NULL;
+                if (args && args_len > 0) {
+                    args_buf = allocate_buffer(ak_agentic_state.h, args_len);
+                    if (args_buf != INVALID_ADDRESS) {
+                        buffer_write(args_buf, args, args_len);
+                    }
+                }
+
+                ak_response_t *response = ak_wasm_execute_tool(
+                    ctx->agent, tool_name, args_buf, NULL);
+
+                if (response && response->status == AK_STATUS_OK && response->result) {
+                    /* Copy result */
+                    u64 res_len = buffer_length(response->result);
+                    if (result_len) {
+                        if (res_len > *result_len)
+                            res_len = *result_len;
+                        if (result && res_len > 0) {
+                            local_memcpy(result, buffer_ref(response->result, 0), res_len);
+                        }
+                        *result_len = res_len;
+                    }
+                    err = 0;
+                } else {
+                    err = response ? response->error_code : AK_E_TOOL_FAIL;
+                }
+
+                /* Cleanup */
+                if (args_buf && args_buf != INVALID_ADDRESS)
+                    deallocate_buffer(args_buf);
+                /* Response cleanup would be handled by caller */
+            } else {
+                ak_agentic_state.stats.tool_calls_failed++;
+                return AK_E_TOOL_HANDLER_NOT_FOUND;
+            }
         }
     }
 

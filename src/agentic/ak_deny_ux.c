@@ -736,22 +736,26 @@ u32 ak_record_count(void)
 
 u64 ak_record_export(char *buf, u64 buf_len)
 {
-    if (!buf || buf_len < 64 || !record_state.denials)
+    /* FIX(BUG-010): Require minimum buffer size to prevent underflow in remaining calculations */
+    if (!buf || buf_len < 256 || !record_state.denials)
         return 0;
 
     u64 pos = 0;
+    u64 remaining = buf_len - 1;  /* Reserve space for null terminator */
 
     /* Header */
     const char *header = "# Auto-generated policy suggestions\n"
                          "# Review carefully before using!\n\n";
     u64 header_len = runtime_strlen(header);
-    if (pos + header_len < buf_len) {
+    if (header_len < remaining) {
         runtime_memcpy(buf + pos, header, header_len);
         pos += header_len;
+        remaining -= header_len;
     }
 
     /* Group by operation type and generate suggestions */
-    for (u32 i = 0; i < record_state.count && pos < buf_len - 128; i++) {
+    /* FIX(BUG-010): Use remaining to prevent underflow; require 128 bytes headroom */
+    for (u32 i = 0; i < record_state.count && remaining > 128; i++) {
         ak_effect_req_t fake_req;
         ak_memzero(&fake_req, sizeof(fake_req));
         fake_req.op = record_state.denials[i].op;
@@ -762,11 +766,14 @@ u64 ak_record_export(char *buf, u64 buf_len)
         ak_generate_suggestion(&fake_req, suggestion, sizeof(suggestion));
 
         u64 suggest_len = runtime_strlen(suggestion);
-        if (pos + suggest_len + 2 < buf_len) {
+        /* FIX(BUG-010): Use remaining variable to prevent underflow */
+        if (suggest_len + 2 < remaining) {
             runtime_memcpy(buf + pos, suggestion, suggest_len);
             pos += suggest_len;
+            remaining -= suggest_len;
             buf[pos++] = '\n';
             buf[pos++] = '\n';
+            remaining -= 2;
         }
     }
 

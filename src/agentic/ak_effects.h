@@ -65,6 +65,7 @@ typedef enum ak_effect_op {
     AK_E_TOOL_CALL      = 0x0400,   /* Execute registered tool */
     AK_E_WASM_INVOKE    = 0x0401,   /* Run WASM module */
     AK_E_INFER          = 0x0402,   /* LLM inference request */
+    AK_E_AGENT_SEND     = 0x0403,   /* Send message to another agent */
 } ak_effect_op_t;
 
 /* ============================================================
