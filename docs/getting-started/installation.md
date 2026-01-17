@@ -43,17 +43,7 @@ This installs both the authority CLI and the Authority Nanos kernel.
 
 ### Prerequisites
 
-#### macOS (Intel)
-
-```bash
-brew update && brew install nasm go wget ent
-brew tap nanovms/homebrew-toolchains
-brew install x86_64-elf-binutils
-brew tap nanovms/homebrew-qemu
-brew install nanovms/homebrew-qemu/qemu
-```
-
-#### macOS (Apple Silicon)
+#### macOS (Apple Silicon - M1/M2/M3)
 
 ```bash
 brew update && brew install go wget ent qemu aarch64-elf-binutils
@@ -127,16 +117,19 @@ graph TB
 
 ### x86_64 (Intel/AMD)
 
-- Full hardware support
-- KVM acceleration on Linux
-- HVF acceleration on macOS
+- Full hardware support on Linux with KVM acceleration
 - Deployed on AWS (c5/c6), GCE (n2/c2), Azure (Dv3/Ev3)
+- Build with: `make kernel PLATFORM=pc`
 
 ### ARM64 (aarch64)
 
-- Complete implementation
-- Runs on Raspberry Pi 4, AWS Graviton, Azure Ampere
+- Complete implementation with HVF acceleration on macOS
+- Runs on Apple Silicon Macs (M1/M2/M3), Raspberry Pi 4, AWS Graviton, Azure Ampere
 - Build with: `make kernel PLATFORM=virt`
+
+::: warning macOS Intel (x86_64) Support
+macOS Intel builds are no longer actively tested in CI. For x86_64 development, use Linux with KVM acceleration.
+:::
 
 ## Directory Structure
 
