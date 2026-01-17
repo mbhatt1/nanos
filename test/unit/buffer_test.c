@@ -359,6 +359,9 @@ fail:
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     heap h = init_process_runtime();
     int failure = 0;
 

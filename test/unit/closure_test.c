@@ -42,6 +42,9 @@ closure_type(test1_type, void, void *self, boolean terminate);
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     heap h = init_process_runtime();
     u64 heap_occupancy = heap_allocated(h);
     test0_type f = closure(h, test0, TEST_L);

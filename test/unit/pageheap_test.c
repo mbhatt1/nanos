@@ -251,6 +251,9 @@ static void ph_test_multipage(heap h, void *mem_base, u64 mem_size)
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     heap h = init_process_runtime();
     const u64 mem_size = 512 * MB;
     void *mem_base = mmap(NULL, mem_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,

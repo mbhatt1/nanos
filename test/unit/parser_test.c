@@ -854,6 +854,9 @@ test_func TESTS[] = {
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     heap h = init_process_runtime();
     init(h);
 

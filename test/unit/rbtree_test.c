@@ -399,6 +399,9 @@ static boolean random_test(heap h)
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     heap h = init_process_runtime();
 
     if (!basic_test(h))

@@ -266,7 +266,10 @@ boolean basic_test()
 
 int main(int argc, char **argv)
 {
-    if (!basic_test()) 
+    (void)argc;
+    (void)argv;
+
+    if (!basic_test())
         goto fail;
 
     msg_debug("test passed\n");

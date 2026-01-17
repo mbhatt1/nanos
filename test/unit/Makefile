@@ -237,8 +237,8 @@ CFLAGS-ak_state_test.c=		$(TEST_CFLAGS)
 CFLAGS-ak_syscall_test.c=	$(TEST_CFLAGS)
 CFLAGS-ak_wasm_test.c=		$(TEST_CFLAGS)
 
-# Legacy tests - use relaxed flags (override -Werror, no strict warnings)
-LEGACY_TEST_CFLAGS= $(SYSTEM_INCLUDES) -Wall -Wno-error
+# Legacy tests - use strict warnings like AK tests
+LEGACY_TEST_CFLAGS= $(TEST_CFLAGS)
 CFLAGS-bitmap_test.c=		$(LEGACY_TEST_CFLAGS)
 CFLAGS-buffer_test.c=		$(LEGACY_TEST_CFLAGS)
 CFLAGS-closure_test.c=		$(LEGACY_TEST_CFLAGS)

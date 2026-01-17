@@ -243,6 +243,9 @@ static void basic_test(boolean multi)
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     setbuf(stdout, NULL);
     test_heap = init_process_runtime();
     basic_test(false);

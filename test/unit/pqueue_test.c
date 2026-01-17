@@ -370,6 +370,9 @@ static boolean reorder_test(heap h, int passes)
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     heap h = init_process_runtime();
 
     if (!basic_test(h))

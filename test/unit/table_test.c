@@ -293,6 +293,9 @@ static boolean preallocated_table_tests(heap h, u64 (*key_function)(void *x), u6
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     heap h = init_process_runtime();
 
     if (!basic_table_tests(h, identity_key, BASIC_ELEM_COUNT)) {

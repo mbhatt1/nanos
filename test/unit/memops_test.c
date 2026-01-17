@@ -104,6 +104,9 @@ static void test_memcmp(long *buf, unsigned long buf_size)
 
 int main(int argc, char *argv[])
 {
+    (void)argc;
+    (void)argv;
+
     long buf1[MEM_BUF_SIZE], buf2[MEM_BUF_SIZE];
 
     init_process_runtime();

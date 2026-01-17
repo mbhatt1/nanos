@@ -177,6 +177,9 @@ boolean preallocated_objcache_test(heap meta, heap parent, int objsize, boolean 
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     heap h = init_process_runtime();
     bytes mmapsize = TEST_PAGESIZE * 4; /* arbitrary */
 
