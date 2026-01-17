@@ -59,10 +59,11 @@ static boolean alloc_vec(heap h, u64 n, bytes s, vector v)
 
 static boolean dealloc_vec(heap h, bytes s, vector v)
 {
-    void * p;
     if (!validate(h))
         return false;
-    vector_foreach(v, p) {
+    u64 len = vector_length(v);
+    for (u64 i = 0; i < len; i++) {
+        void *p = vector_get(v, (int)i);
         if (!p)
             continue;
 

@@ -74,8 +74,9 @@ boolean basic_test(heap h)
 
     /* foreach - assuming it's meant to always be in order */
     long i = 0;
-    void *x;
-    vector_foreach(v, x) {
+    u64 vlen = vector_length(v);
+    for (u64 vi = 0; vi < vlen; vi++) {
+        void *x = vector_get(v, (int)vi);
         if ((long)x != i) {
             msg = "foreach: content mismatch";
             goto fail;
@@ -83,7 +84,7 @@ boolean basic_test(heap h)
         i++;
     }
 
-    if (i != n) {
+    if ((u64)i != vlen) {
         msg = "foreach: iterations doesn't match length";
         goto fail;
     }
@@ -126,7 +127,9 @@ boolean basic_test(heap h)
 
     deallocate_vector(v);
     v = allocate_vector(h, 1);
-    vector_foreach(v, x) {
+    vlen = vector_length(v);
+    for (u64 vi = 0; vi < vlen; vi++) {
+        (void)vector_get(v, (int)vi);
         msg = "foreach: body run on zero len";
         goto fail;
     }
