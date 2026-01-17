@@ -1,84 +1,51 @@
 # Security Invariants
 
-Authority Nanos enforces four foundational security invariants. These are not guidelines — they are properties that the implementation **MUST** preserve at all times.
+::: tip Formal Guarantees
+These four invariants MUST hold at ALL times. They are not guidelines—they are mathematical properties that the implementation MUST preserve.
+:::
 
-Any invariant violation is a **P0 security incident**.
+Authority Nanos enforces four foundational security invariants that provide mathematical guarantees about agent behavior. Any violation is a **P0 security incident**.
 
-## Invariant Overview
+## I. The Four Invariants
 
-```mermaid
-graph TB
-    subgraph "INV-1: No-Bypass"
-        NB1[All I/O through kernel]
-        NB2[No direct hardware access]
-        NB3[Namespace isolation]
-    end
-
-    subgraph "INV-2: Capability Required"
-        CAP1[HMAC-SHA256 verification]
-        CAP2[Scope matching]
-        CAP3[Revocation checking]
-    end
-
-    subgraph "INV-3: Budget Enforced"
-        BUD1[Pre-admission check]
-        BUD2[Atomic decrement]
-        BUD3[Hard limits only]
-    end
-
-    subgraph "INV-4: Log Commitment"
-        LOG1[Hash chain]
-        LOG2[fsync before respond]
-        LOG3[Tamper detection]
-    end
-
-    INV1[INV-1] --> G1[Containment]
-    INV2[INV-2] --> G1
-    INV2[INV-2] --> G2[Least Privilege]
-    INV3[INV-3] --> G3[Bounded Cost]
-    INV4[INV-4] --> G4[Complete Audit]
-
-    style INV1 fill:#e74c3c,color:#fff
-    style INV2 fill:#3498db,color:#fff
-    style INV3 fill:#9b59b6,color:#fff
-    style INV4 fill:#2ecc71,color:#fff
-    style G1 fill:#f39c12,color:#fff
-```
-
-## INV-1: No-Bypass Invariant
+### INV-1: No-Bypass Invariant
 
 > **Statement**: Agents cannot perform external IO except via kernel IPC.
 
-### Preconditions
-
-- Agent process is confined (namespaces + seccomp on Linux; ES framework on macOS)
-- Network namespace contains only loopback
-- Filesystem is read-only except designated scratch
-- Only allowed syscalls are in whitelist
-
-### Formal Definition
+#### Formal Definition
 
 ```
 ∀ agent A, ∀ IO operation O:
     O is external ⟹ O goes through kernel IPC channel
 ```
 
-### Enforcement Points
+#### Enforcement Mechanisms
 
-1. Seccomp-BPF filter blocks: `socket(AF_INET*)`, `execve`, `fork`, `ptrace`
-2. Network namespace isolation
-3. Mount namespace with pivot_root to isolated root
-4. File descriptor inheritance blocked
+| Layer | Mechanism | Blocks |
+|-------|-----------|--------|
+| **Syscall** | Seccomp-BPF filter | `socket(AF_INET*)`, `execve`, `fork`, `ptrace` |
+| **Network** | Namespace isolation | All except loopback |
+| **Filesystem** | Mount namespace | Write access outside scratch |
+| **Process** | FD inheritance blocking | Pre-existing connections |
 
-### Verification
+#### Verification
 
+::: danger Required
 Confinement escape tests MUST pass before any agent execution.
+:::
 
-## INV-2: Capability Invariant
+```bash
+# Test confinement
+authority test confinement
+```
+
+---
+
+### INV-2: Capability Invariant
 
 > **Statement**: Every effectful syscall must carry a valid, non-revoked capability whose scope subsumes the request.
 
-### Formal Definition
+#### Formal Definition
 
 ```
 ∀ syscall S where effect(S) = true:
@@ -86,32 +53,45 @@ Confinement escape tests MUST pass before any agent execution.
         valid(C) ∧ ¬revoked(C) ∧ scope(C) ⊇ resource(S)
 ```
 
-### Implementation Requirements
+#### Validation Requirements
 
-- **valid(C)**: HMAC-SHA256 verification passes
-- **¬revoked(C)**: Token ID not in revocation map R
-- **scope(C) ⊇ resource(S)**:
-  - C.type matches operation type
-  - C.resource pattern matches target resource
-  - C.methods includes requested method
-  - C.ttl not expired
-  - C.rate not exceeded
+**valid(C)**: HMAC-SHA256 verification passes
 
-### Enforcement Points
+```c
+bool verify_capability(capability_t *cap) {
+    // 1. Check HMAC signature
+    uint8_t expected_mac[32];
+    compute_hmac_sha256(cap->data, cap->len, secret_key, expected_mac);
+    if (memcmp(cap->mac, expected_mac, 32) != 0) return false;
+    
+    // 2. Check not revoked
+    if (is_revoked(cap->token_id)) return false;
+    
+    // 3. Check scope matches request
+    return scope_subsumes(cap, request);
+}
+```
 
-1. `capability_verify()` called BEFORE any syscall dispatch
-2. Revocation map checked synchronously (not eventual consistency)
-3. Scope matching is strict (deny if ambiguous)
+**¬revoked(C)**: Token ID not in revocation map
 
-### Verification
+**scope(C) ⊇ resource(S)**:
+- Capability type matches operation type
+- Resource pattern matches target resource  
+- Methods include requested method
+- TTL not expired
+- Rate limit not exceeded
 
-Capability forgery tests MUST fail to forge valid tokens.
+::: warning Strict Enforcement
+Capability verification is called BEFORE any syscall dispatch. Ambiguous cases are denied.
+:::
 
-## INV-3: Budget Invariant
+---
+
+### INV-3: Budget Invariant
 
 > **Statement**: Admission control rejects any operation that would exceed declared run budgets.
 
-### Formal Definition
+#### Formal Definition
 
 ```
 ∀ operation O with cost(O) = c:
@@ -124,32 +104,50 @@ Capability forgery tests MUST fail to forge valid tokens.
     If PRE fails: reject with E_BUDGET_EXCEEDED (no state change)
 ```
 
-### Budget Dimensions
+#### Budget Dimensions
 
-| Resource | Unit | Default Limit |
-|----------|------|---------------|
-| LLM Input Tokens | tokens | 1,000,000 |
-| LLM Output Tokens | tokens | 100,000 |
-| Tool Calls | count | 100 |
-| Wall Time | ms | 300,000 |
-| Heap Objects | count | 10,000 |
-| Blob Storage | bytes | 100 MB |
+| Resource | Unit | Default Limit | Enforcement |
+|----------|------|---------------|-------------|
+| **LLM Input Tokens** | tokens | 1,000,000 | Pre-call check |
+| **LLM Output Tokens** | tokens | 100,000 | Post-call decrement |
+| **Tool Calls** | count | 100 | Atomic counter |
+| **Wall Time** | ms | 300,000 | Deadline timer |
+| **Heap Objects** | count | 10,000 | Allocator hook |
+| **Blob Storage** | bytes | 100 MB | Quota system |
 
-### Enforcement Points
+#### Implementation
 
-1. Budget check BEFORE operation starts
-2. Atomic decrement-or-reject (no race conditions)
-3. No "soft limits" — hard enforcement only
+```c
+int check_budget(run_t *run, resource_type_t type, uint64_t cost) {
+    uint64_t current = atomic_load(&run->budget[type].used);
+    uint64_t limit = run->budget[type].limit;
+    
+    // Atomic test-and-set
+    uint64_t new_value = current + cost;
+    if (new_value > limit) {
+        return E_BUDGET_EXCEEDED;
+    }
+    
+    if (!atomic_compare_exchange(&run->budget[type].used, &current, new_value)) {
+        // Race detected, retry
+        return check_budget(run, type, cost);
+    }
+    
+    return 0;
+}
+```
 
-### Verification
+::: tip No Soft Limits
+Budget checks are hard enforcement only. No warnings, no grace periods—operations are rejected at the limit.
+:::
 
-Budget exhaustion tests MUST block at limit.
+---
 
-## INV-4: Log Commitment Invariant
+### INV-4: Log Commitment Invariant
 
 > **Statement**: Each committed transition appends a log entry whose hash chain validates from genesis to head.
 
-### Formal Definition
+#### Formal Definition
 
 ```
 ∀ state transition T from Σ to Σ':
@@ -163,72 +161,67 @@ Budget exhaustion tests MUST block at limit.
         AND: Response sent to agent only AFTER fsync(log)
 ```
 
-### Hash Chain Properties
-
-- **Append-only**: No deletions, no modifications
-- **Tamper-evident**: Any modification breaks chain
-- **Non-repudiation**: Agent cannot deny actions (req_hash proves request)
-
-### Enforcement Points
-
-1. Log write in same transaction as state mutation
-2. `fsync()` before response
-3. Crash recovery validates chain from genesis
-
-### Verification
-
-Log tamper tests MUST detect any bit flip.
-
-## Security Theorems
+#### Hash Chain Properties
 
 ```mermaid
-flowchart TB
-    subgraph "Adversary Classes"
-        ADV1[Class I<br/>Prompt Injection]
-        ADV2[Class II<br/>Model Poisoning]
-        ADV3[Class III<br/>Tool Escape]
-    end
-
-    subgraph "Attack Vectors"
-        DIRECT[Direct I/O]
-        NOCAP[Syscall w/o Cap]
-        FORGE[Forged Capability]
-    end
-
-    subgraph "Defenses"
-        INV1[INV-1: Confinement]
-        INV2[INV-2: Cap Check]
-        HMAC[HMAC Verification]
-    end
-
-    subgraph "Result"
-        BLOCK[BLOCKED]
-    end
-
-    ADV1 --> DIRECT
-    ADV2 --> NOCAP
-    ADV3 --> FORGE
-
-    DIRECT --> INV1 --> BLOCK
-    NOCAP --> INV2 --> BLOCK
-    FORGE --> HMAC --> BLOCK
-
-    style BLOCK fill:#27ae60,color:#fff
-    style ADV1 fill:#c0392b,color:#fff
-    style ADV2 fill:#c0392b,color:#fff
-    style ADV3 fill:#c0392b,color:#fff
+graph LR
+    Genesis[Genesis<br/>all zeros] --> E1[Entry 1<br/>hash₁]
+    E1 --> E2[Entry 2<br/>hash₂]
+    E2 --> E3[Entry 3<br/>hash₃]
+    E3 --> Head[Head<br/>hashₙ]
+    
+    style Genesis fill:#27ae60
+    style Head fill:#e74c3c
 ```
+
+**Properties**:
+- **Append-only**: No deletions, no modifications
+- **Tamper-evident**: Any modification breaks the chain
+- **Non-repudiation**: Agent cannot deny actions (req_hash proves request)
+
+#### Verification Algorithm
+
+```python
+def verify_chain(log):
+    """Verify hash chain from genesis to head"""
+    expected_hash = GENESIS_HASH  # All zeros
+    
+    for entry in log:
+        # Check prev_hash matches expected
+        if entry.prev_hash != expected_hash:
+            return False, f"Chain break at entry {entry.seq}"
+        
+        # Recompute this_hash
+        canonical = canonicalize(entry)
+        computed = sha256(entry.prev_hash + canonical)
+        
+        if entry.this_hash != computed:
+            return False, f"Hash mismatch at entry {entry.seq}"
+        
+        expected_hash = entry.this_hash
+    
+    return True, "Chain valid"
+```
+
+::: danger Synchronous Logging
+Log writes occur in the same transaction as state mutations. The agent receives a response ONLY AFTER `fsync()` completes.
+:::
+
+---
+
+## II. Security Theorems
 
 ### Theorem 1: Containment
 
 > Under adversary classes I-III, no side effects occur except through validated syscalls.
 
 **Adversary Classes**:
-- Class I: Arbitrary malicious inputs (prompt injection)
-- Class II: Compromised agent logic (model poisoning)
-- Class III: Tool runtime escape attempts
+- **Class I**: Arbitrary malicious inputs (prompt injection)
+- **Class II**: Compromised agent logic (model poisoning)
+- **Class III**: Tool runtime escape attempts
 
 **Proof Sketch**:
+
 ```
 Given: INV-1 (no bypass) + INV-2 (capability required)
 Assume: Side effect E occurs outside kernel validation
@@ -245,11 +238,14 @@ Case 3: E via forged capability
 ∴ No such E exists. QED.
 ```
 
+---
+
 ### Theorem 2: Audit Completeness
 
 > Every state-changing operation produces a corresponding log entry whose hash commits to all prior entries.
 
 **Proof Sketch**:
+
 ```
 Given: INV-4 (log commitment)
 
@@ -270,11 +266,14 @@ For any state Σ at time t:
 ∴ Audit trail is complete and tamper-evident. QED.
 ```
 
+---
+
 ### Theorem 3: Budget Enforcement
 
 > Resource consumption is bounded by declared budgets; exceeding operations rejected pre-execution.
 
 **Proof Sketch**:
+
 ```
 Given: INV-3 (budget invariant)
 
@@ -288,16 +287,95 @@ Given: INV-3 (budget invariant)
     ∴ Total resource consumption ≤ B. QED.
 ```
 
-## Verification Matrix
+---
 
-| Invariant | Test Category | Pass Criteria |
-|-----------|---------------|---------------|
-| INV-1 | Confinement | 0 escape paths |
-| INV-2 | Capability | 0 forgeries, 0 bypasses |
-| INV-3 | Budget | 0 overruns |
-| INV-4 | Audit | 0 undetected tampering |
+## III. The Six Guarantees
 
-**Continuous Verification**:
+| # | Guarantee | Invariant Basis | Enforcement |
+|---|-----------|-----------------|-------------|
+| **G1** | Containment | INV-1, INV-2 | Confinement + Capabilities |
+| **G2** | Least Privilege | INV-2 | Capability scope checking |
+| **G3** | Audit | INV-4 | Hash-chained log |
+| **G4** | Replay | INV-4 | Deterministic from log |
+| **G5** | Bounded Cost | INV-3 | Pre-execution admission |
+| **G6** | Injection Resistance | INV-2 + Taint | Capability + taint validation |
+
+---
+
+## IV. Verification Matrix
+
+| Invariant | Test Category | Pass Criteria | Test Command |
+|-----------|---------------|---------------|--------------|
+| **INV-1** | Confinement | 0 escape paths | `authority test confinement` |
+| **INV-2** | Capability | 0 forgeries, 0 bypasses | `authority test capabilities` |
+| **INV-3** | Budget | 0 overruns | `authority test budgets` |
+| **INV-4** | Audit | 0 undetected tampering | `authority test audit` |
+
+::: tip Continuous Verification
 - Every commit runs invariant tests
 - Every PR requires security review
 - Every release requires penetration test
+:::
+
+---
+
+## V. Zero-Tolerance Policies
+
+### Policy 1: No Security TODOs
+
+**Rule**: Code containing `TODO` comments on security-critical paths MUST NOT be merged.
+
+**Rationale**: TODOs become permanent. Security gaps are exploitable.
+
+### Policy 2: No Soft Failures
+
+**Rule**: Security checks MUST hard-fail. No "log and continue" on security violations.
+
+**Rationale**: Soft failures allow bypass. Attackers find edge cases.
+
+### Policy 3: No Ambient Authority
+
+**Rule**: Every privileged operation MUST require explicit capability.
+
+**Rationale**: Ambient authority (implicit permissions) enables confused deputy attacks.
+
+### Policy 4: No Exception Paths
+
+**Rule**: Security validation MUST occur on ALL code paths, including error handlers.
+
+**Rationale**: Exception handlers are often less tested and more vulnerable.
+
+### Policy 5: Fail Closed
+
+**Rule**: On any ambiguity or error in security validation, DENY.
+
+**Rationale**: Fail-open creates exploitable windows. Unknown = untrusted.
+
+---
+
+## VI. Incident Response
+
+### If Invariant Violation Detected
+
+1. **IMMEDIATE**: Halt all agent execution
+2. **CONTAIN**: Revoke all active capabilities
+3. **INVESTIGATE**: Audit log forensics
+4. **REMEDIATE**: Patch with invariant proof
+5. **VERIFY**: Full test suite before restart
+
+### Severity Classification
+
+| Severity | Definition | Response Time |
+|----------|------------|---------------|
+| **P0** | Invariant violation in production | < 1 hour |
+| **P1** | Invariant violation in staging | < 4 hours |
+| **P2** | Test failure on invariant | < 24 hours |
+| **P3** | Potential invariant weakness | < 1 week |
+
+---
+
+::: danger Security Contact
+For security vulnerabilities, contact: security@nanovms.com (private disclosure)
+:::
+
+*This document is normative. All Authority Kernel implementations MUST comply.*
