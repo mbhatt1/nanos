@@ -1,0 +1,1 @@
+{"fs":{"read":["/path/with spaces/**","/path/with\\\"quotes/**","/path/with\\\\backslash/**"]}}

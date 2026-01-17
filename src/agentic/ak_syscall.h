@@ -43,6 +43,17 @@ void ak_init(heap h);
  */
 void ak_shutdown(void);
 
+/*
+ * Main syscall handler for Authority Kernel syscalls (1024-1100).
+ *
+ * Called from the main syscall dispatcher when call number is in AK range.
+ * Dispatches to appropriate handler based on syscall number.
+ *
+ * Returns: sysreturn (0 on success, negative errno on failure)
+ */
+sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
+                             u64 arg3, u64 arg4, u64 arg5);
+
 /* ============================================================
  * AGENT CONTEXT MANAGEMENT
  * ============================================================ */

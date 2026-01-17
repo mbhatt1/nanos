@@ -104,7 +104,7 @@
 
 /* Signature size (bytes) */
 #ifndef AK_SIG_SIZE
-#define AK_SIG_SIZE                     32
+#define AK_SIG_SIZE                     64  /* Ed25519 signature size */
 #endif
 
 /* ============================================================

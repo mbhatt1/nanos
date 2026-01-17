@@ -4,9 +4,15 @@ override ARCH=$(HOST_ARCH)
 override CROSS_COMPILE=
 ifeq ($(shell uname -s),Darwin)
 override CC=cc
+# Darwin doesn't have epoll - define early for all targets including sanitizers
+PLATFORM_FLAGS=	-DNO_EPOLL
 endif
 
 PROGRAMS= \
+	ak_effects_test \
+	ak_negative_test \
+	ak_pattern_test \
+	ak_policy_test \
 	bitmap_test \
 	buffer_test \
 	closure_test \
@@ -26,6 +32,28 @@ PROGRAMS= \
 	udp_test \
 	vector_test
 SKIP_TEST=	network_test udp_test
+
+# Authority Kernel unit tests
+# These tests run on the host without booting the unikernel
+
+SRCS-ak_effects_test= \
+	$(CURDIR)/ak_effects_test.c \
+	$(RUNTIME)\
+	$(SRCDIR)/unix_process/unix_process_runtime.c
+
+# Negative/edge case tests - standalone, no runtime dependencies
+SRCS-ak_negative_test= \
+	$(CURDIR)/ak_negative_test.c
+
+SRCS-ak_pattern_test= \
+	$(CURDIR)/ak_pattern_test.c \
+	$(RUNTIME)\
+	$(SRCDIR)/unix_process/unix_process_runtime.c
+
+SRCS-ak_policy_test= \
+	$(CURDIR)/ak_policy_test.c \
+	$(RUNTIME)\
+	$(SRCDIR)/unix_process/unix_process_runtime.c
 
 SRCS-bitmap_test= \
 	$(CURDIR)/bitmap_test.c \
@@ -133,20 +161,64 @@ SRCS-vector_test= \
 	$(SRCDIR)/unix_process/unix_process_runtime.c
 
 
+# Standard includes for runtime sources (non-test files)
 CFLAGS+=	-O3 \
 		-I$(ARCHDIR) \
 		-I$(SRCDIR) \
 		-I$(SRCDIR)/http \
 		-I$(SRCDIR)/runtime \
 		-I$(SRCDIR)/unix_process \
-		-I$(SRCDIR)/unix \
+		-I$(SRCDIR)/unix
 #CFLAGS+=	-DENABLE_MSG_DEBUG -DID_HEAP_DEBUG
+
+# Strict warning flags for test source files only (applied per-file)
+# These flags catch bugs in test code without breaking on runtime headers
+# We use -isystem to treat runtime headers as system headers (suppresses warnings from them)
+STRICT_WARN_FLAGS= -Wall -Wextra -Werror -Wshadow -Wconversion -Wsign-conversion \
+		   -Wformat=2 -Wundef -Wpointer-arith -Wstrict-prototypes -Wvla
+
+# System include flags to suppress warnings from runtime headers in test files
+SYSTEM_INCLUDES= -isystem $(ARCHDIR) -isystem $(SRCDIR) -isystem $(SRCDIR)/http \
+		 -isystem $(SRCDIR)/runtime -isystem $(SRCDIR)/unix_process -isystem $(SRCDIR)/unix
+
+# Combined flags for test files: suppress runtime header warnings + strict warnings for test code
+TEST_CFLAGS= $(SYSTEM_INCLUDES) $(STRICT_WARN_FLAGS)
+
+# Apply strict warnings to test source files
+CFLAGS-ak_effects_test.c=	$(TEST_CFLAGS)
+CFLAGS-ak_negative_test.c=	$(TEST_CFLAGS)
+CFLAGS-ak_pattern_test.c=	$(TEST_CFLAGS)
+CFLAGS-ak_policy_test.c=	$(TEST_CFLAGS)
+CFLAGS-bitmap_test.c=		$(TEST_CFLAGS)
+CFLAGS-buffer_test.c=		$(TEST_CFLAGS)
+CFLAGS-closure_test.c=		$(TEST_CFLAGS)
+CFLAGS-id_heap_test.c=		$(TEST_CFLAGS)
+CFLAGS-memops_test.c=		$(TEST_CFLAGS)
+CFLAGS-network_test.c=		$(TEST_CFLAGS)
+CFLAGS-objcache_test.c=		$(TEST_CFLAGS)
+CFLAGS-pageheap_test.c=		$(TEST_CFLAGS)
+CFLAGS-parser_test.c=		$(TEST_CFLAGS)
+CFLAGS-pqueue_test.c=		$(TEST_CFLAGS)
+CFLAGS-queue_test.c=		$(TEST_CFLAGS)
+CFLAGS-range_test.c=		$(TEST_CFLAGS)
+CFLAGS-random_test.c=		$(TEST_CFLAGS)
+CFLAGS-rbtree_test.c=		$(TEST_CFLAGS)
+CFLAGS-table_test.c=		$(TEST_CFLAGS)
+CFLAGS-tuple_test.c=		$(TEST_CFLAGS)
+CFLAGS-udp_test.c=		$(TEST_CFLAGS)
+CFLAGS-vector_test.c=		$(TEST_CFLAGS)
 
 CLEANDIRS+=	$(OBJDIR)/test
 
-# gcov support
+# gcov support (can be disabled for sanitizer builds via DISABLE_GCOV=1)
+ifndef DISABLE_GCOV
 CFLAGS+=	-fprofile-arcs -ftest-coverage
 LDFLAGS+=	-fprofile-arcs
+endif
+
+# Extra flags for sanitizer builds (passed from sanitizer targets)
+CFLAGS+=	$(EXTRA_CFLAGS)
+LDFLAGS+=	$(EXTRA_LDFLAGS)
 GCDAFILES=	$(sort $(foreach p,$(PROGRAMS),$(patsubst %.o,%.gcda,$(OBJS-$p))))
 GCOVFILES=	$(sort $(foreach p,$(PROGRAMS),$(patsubst %.o,%.gcno,$(OBJS-$p))))
 GCOVFILES+=	$(GCDAFILES) $(OBJDIR)/gcov-tests.info
@@ -172,8 +244,46 @@ pre-clean:
 gcov-clean:
 	$(Q) $(RM) $(GCOVFILES)
 
+# Sanitizer targets for host tests
+# These require clang and are useful for catching memory errors, undefined behavior, and data races
+# We use recursive make to pass sanitizer flags cleanly through the build system
+
+.PHONY: asan tsan msan sanitizer-clean
+
+# AddressSanitizer + UndefinedBehaviorSanitizer
+# Detects: buffer overflows, use-after-free, memory leaks, undefined behavior
+asan:
+	$(Q) $(MAKE) clean
+	$(Q) $(MAKE) test \
+		EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1" \
+		EXTRA_LDFLAGS="-fsanitize=address,undefined" \
+		DISABLE_GCOV=1 \
+		TEST_CFLAGS=
+
+# ThreadSanitizer
+# Detects: data races, deadlocks
+tsan:
+	$(Q) $(MAKE) clean
+	$(Q) $(MAKE) test \
+		EXTRA_CFLAGS="-fsanitize=thread -g -O1" \
+		EXTRA_LDFLAGS="-fsanitize=thread" \
+		DISABLE_GCOV=1 \
+		TEST_CFLAGS=
+
+# MemorySanitizer (Linux only, requires instrumented libc)
+# Detects: uninitialized memory reads
+msan:
+	$(Q) $(MAKE) clean
+	$(Q) $(MAKE) test \
+		EXTRA_CFLAGS="-fsanitize=memory -fno-omit-frame-pointer -g -O1" \
+		EXTRA_LDFLAGS="-fsanitize=memory" \
+		DISABLE_GCOV=1 \
+		TEST_CFLAGS=
+
+sanitizer-clean:
+	$(Q) $(MAKE) clean
+
 include ../../rules.mk
 
-ifeq ($(UNAME_s),Darwin)
-CFLAGS+=	-DNO_EPOLL
-endif
+# Add platform-specific flags to CFLAGS (defined early for Darwin)
+CFLAGS+=	$(PLATFORM_FLAGS)

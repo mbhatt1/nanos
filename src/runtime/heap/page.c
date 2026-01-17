@@ -19,7 +19,7 @@ typedef struct pageheap_range {
     struct rmnode n;
     u64 inited;
 } *pageheap_range;
-build_assert(offsetof(pageheap_range, n) == 0);
+build_assert(build_offsetof(struct pageheap_range, n) == 0);
 
 typedef struct page_list_elem {
     u16 prev, next;
@@ -46,7 +46,7 @@ static struct page_heap {
     struct list areas[PAGEHEAP_MAX_ORDER + 1];
     struct spinlock lock;
 } page_heap;
-build_assert(offsetof(struct page_heap *, h) == 0);
+build_assert(build_offsetof(struct page_heap, h) == 0);
 
 #define pageheap_header_size(page_count) \
     pad(sizeof(struct pageheap_area) + sizeof(struct page_list_elem) * (page_count), PAGESIZE)

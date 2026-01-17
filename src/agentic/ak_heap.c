@@ -198,10 +198,13 @@ static void save_version(u64 ptr, u64 version, buffer value)
     /* Clone value */
     u64 len = buffer_length(value);
     entry->value = allocate_buffer(ak_heap_state.h, len);
-    if (entry->value) {
-        buffer_write(entry->value, buffer_ref(value, 0), len);
-        ak_heap_state.bytes_versions += len;
+    /* FIX(BUG-020): Check allocation before inserting entry */
+    if (!entry->value || entry->value == INVALID_ADDRESS) {
+        deallocate(ak_heap_state.h, entry, sizeof(ak_version_entry_t));
+        return;  /* Don't insert entry with NULL value */
     }
+    buffer_write(entry->value, buffer_ref(value, 0), len);
+    ak_heap_state.bytes_versions += len;
 
     /* Insert at head (newest first) */
     entry->next = hist->entries;
@@ -375,7 +378,13 @@ s64 ak_heap_write(
     obj->version++;
     obj->modified_ms = current_time_ms();
 
-    ak_heap_state.bytes_used = ak_heap_state.bytes_used - old_len + new_len;
+    /* Defensive underflow check for bytes_used accounting */
+    if (ak_heap_state.bytes_used >= old_len) {
+        ak_heap_state.bytes_used = ak_heap_state.bytes_used - old_len + new_len;
+    } else {
+        /* Recovery from accounting corruption: just set to new_len */
+        ak_heap_state.bytes_used = new_len;
+    }
 
     if (new_version_out)
         *new_version_out = obj->version;
@@ -463,25 +472,32 @@ u64 *ak_heap_list_by_type(heap h, u64 type_hash, u64 *count_out)
         return NULL;
     }
 
+    /* Overflow check for allocation size */
+    if (count > UINT64_MAX / sizeof(u64)) {
+        *count_out = 0;
+        return NULL;
+    }
+
     /* Allocate result array */
     u64 *result = allocate(h, count * sizeof(u64));
-    if (!result) {
+    if (!result || result == INVALID_ADDRESS) {
         *count_out = 0;
         return NULL;
     }
 
     /* Second pass: collect pointers */
+    /* FIX(BUG-008): Add bounds check for TOCTOU defense */
     u64 idx = 0;
-    for (u64 i = 0; i < ak_heap_state.object_capacity; i++) {
+    for (u64 i = 0; i < ak_heap_state.object_capacity && idx < count; i++) {
         ak_heap_object_t *obj = ak_heap_state.objects[i];
-        while (obj) {
+        while (obj && idx < count) {
             if (obj->type_hash == type_hash && !obj->deleted)
                 result[idx++] = obj->ptr;
             obj = obj->next;
         }
     }
 
-    *count_out = count;
+    *count_out = idx;  /* Return actual count */
     return result;
 }
 
@@ -507,18 +523,26 @@ u64 *ak_heap_list_by_run(heap h, u8 *run_id, u64 *count_out)
         return NULL;
     }
 
+    /* Overflow check for allocation size */
+    if (count > UINT64_MAX / sizeof(u64)) {
+        *count_out = 0;
+        return NULL;
+    }
+
     /* Allocate result array */
     u64 *result = allocate(h, count * sizeof(u64));
-    if (!result) {
+    if (!result || result == INVALID_ADDRESS) {
         *count_out = 0;
         return NULL;
     }
 
     /* Second pass: collect pointers */
+    /* FIX(BUG-023): Add bounds check to prevent buffer overflow if heap
+     * is modified between first and second pass (TOCTOU defense) */
     u64 idx = 0;
-    for (u64 i = 0; i < ak_heap_state.object_capacity; i++) {
+    for (u64 i = 0; i < ak_heap_state.object_capacity && idx < count; i++) {
         ak_heap_object_t *obj = ak_heap_state.objects[i];
-        while (obj) {
+        while (obj && idx < count) {
             if (!obj->deleted &&
                 runtime_memcmp(obj->owner_run_id, run_id, AK_TOKEN_ID_SIZE) == 0)
                 result[idx++] = obj->ptr;
@@ -526,7 +550,7 @@ u64 *ak_heap_list_by_run(heap h, u8 *run_id, u64 *count_out)
         }
     }
 
-    *count_out = count;
+    *count_out = idx;  /* Return actual count collected */
     return result;
 }
 
@@ -570,8 +594,14 @@ u64 *ak_heap_list_versions(heap h, u64 ptr, u64 *count_out)
         return NULL;
     }
 
+    /* Overflow check for allocation size */
+    if (hist->count > UINT64_MAX / sizeof(u64)) {
+        *count_out = 0;
+        return NULL;
+    }
+
     u64 *result = allocate(h, hist->count * sizeof(u64));
-    if (!result) {
+    if (!result || result == INVALID_ADDRESS) {
         *count_out = 0;
         return NULL;
     }
@@ -632,12 +662,15 @@ void ak_heap_register_schema(u64 type_hash, buffer schema_json)
     /* Check if already registered */
     ak_schema_entry_t *existing = find_schema(type_hash);
     if (existing) {
-        /* Replace existing schema */
-        deallocate_buffer(existing->schema_json);
+        /* FIX(BUG-021): Allocate new buffer BEFORE freeing old one */
         u64 len = buffer_length(schema_json);
-        existing->schema_json = allocate_buffer(ak_heap_state.h, len);
-        if (existing->schema_json)
-            buffer_write(existing->schema_json, buffer_ref(schema_json, 0), len);
+        buffer new_buf = allocate_buffer(ak_heap_state.h, len);
+        if (!new_buf || new_buf == INVALID_ADDRESS)
+            return;  /* Keep old schema if alloc fails */
+        buffer_write(new_buf, buffer_ref(schema_json, 0), len);
+        /* Only deallocate old after new succeeded */
+        deallocate_buffer(existing->schema_json);
+        existing->schema_json = new_buf;
         return;
     }
 
@@ -960,6 +993,22 @@ s64 ak_heap_restore(buffer snapshot)
      */
 
     return 0;
+}
+
+buffer ak_heap_serialize_object(heap h, u64 ptr)
+{
+    /*
+     * Serialize a single object to JSON format.
+     * Used for incremental state sync.
+     *
+     * TODO: Implement proper object serialization
+     */
+    (void)ptr;
+    buffer result = allocate_buffer(h, 64);
+    if (!result || result == INVALID_ADDRESS)
+        return NULL;
+    bprintf(result, "{\"ptr\":%ld}", ptr);
+    return result;
 }
 
 /* ============================================================

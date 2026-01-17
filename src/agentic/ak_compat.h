@@ -53,17 +53,33 @@
 #endif
 
 /* ============================================================
+ * NULL AND LIMITS COMPATIBILITY
+ * ============================================================ */
+
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
+#ifndef UINT64_MAX
+#define UINT64_MAX (~0ULL)
+#endif
+
+#ifndef UINT32_MAX
+#define UINT32_MAX (~0U)
+#endif
+
+/* ============================================================
  * ADDRESS VALIDATION
  * ============================================================ */
 
 /* Check for invalid address */
 #ifndef ak_is_invalid_address
-#define ak_is_invalid_address(p) ((p) == INVALID_ADDRESS || (p) == NULL)
+#define ak_is_invalid_address(p) ((p) == INVALID_ADDRESS || (p) == 0)
 #endif
 
 /* Check for valid address */
 #ifndef ak_is_valid_address
-#define ak_is_valid_address(p)   ((p) != INVALID_ADDRESS && (p) != NULL)
+#define ak_is_valid_address(p)   ((p) != INVALID_ADDRESS && (p) != 0)
 #endif
 
 /* ============================================================
@@ -92,9 +108,8 @@ static inline int runtime_strncmp(const char *s1, const char *s2, u64 n)
     return 0;
 }
 
-/* Override runtime_strcmp to work with const char * */
-#undef runtime_strcmp
-static inline int runtime_strcmp(const char *s1, const char *s2)
+/* String comparison using const char* - wraps runtime_strcmp */
+static inline int ak_strcmp(const char *s1, const char *s2)
 {
     if (!s1 || !s2) return s1 ? 1 : (s2 ? -1 : 0);
     while (*s1 && (*s1 == *s2)) {
@@ -107,7 +122,7 @@ static inline int runtime_strcmp(const char *s1, const char *s2)
 /* String copy with length limit */
 static inline char *runtime_strncpy(char *dest, const char *src, u64 n)
 {
-    if (!dest) return NULL;
+    if (!dest) return 0;
     if (!src) {
         if (n > 0) dest[0] = '\0';
         return dest;
@@ -260,6 +275,34 @@ static inline void *allocate_zero(heap h, bytes len)
 
 #ifndef EACCES
 #define EACCES      13
+#endif
+
+#ifndef ECONNREFUSED
+#define ECONNREFUSED 111
+#endif
+
+#ifndef ENETUNREACH
+#define ENETUNREACH 101
+#endif
+
+#ifndef ENOSPC
+#define ENOSPC      28
+#endif
+
+#ifndef EIO
+#define EIO         5
+#endif
+
+#ifndef EAFNOSUPPORT
+#define EAFNOSUPPORT 97
+#endif
+
+#ifndef EBADF
+#define EBADF       9
+#endif
+
+#ifndef ENOTDIR
+#define ENOTDIR     20
 #endif
 
 /* ============================================================
@@ -434,6 +477,58 @@ static inline int ak_buffer_byte(buffer b, bytes i)
 
 #ifndef unlikely
 #define unlikely(x)             __builtin_expect(!!(x), 0)
+#endif
+
+/* ============================================================
+ * SAFE ARITHMETIC HELPERS
+ * ============================================================
+ * These macros help prevent integer overflow bugs.
+ */
+
+/* Check if multiplication would overflow (for unsigned types) */
+#ifndef AK_MUL_WOULD_OVERFLOW
+#define AK_MUL_WOULD_OVERFLOW(a, b) \
+    ((b) != 0 && (a) > UINT64_MAX / (b))
+#endif
+
+/* Check if addition would overflow (for unsigned types) */
+#ifndef AK_ADD_WOULD_OVERFLOW
+#define AK_ADD_WOULD_OVERFLOW(a, b) \
+    ((a) > UINT64_MAX - (b))
+#endif
+
+/* Safe multiplication - returns 0 on overflow, 1 on success */
+#ifndef AK_SAFE_MUL
+#define AK_SAFE_MUL(a, b, result) \
+    (AK_MUL_WOULD_OVERFLOW((a), (b)) ? 0 : ((result) = (a) * (b), 1))
+#endif
+
+/* Safe addition - returns 0 on overflow, 1 on success */
+#ifndef AK_SAFE_ADD
+#define AK_SAFE_ADD(a, b, result) \
+    (AK_ADD_WOULD_OVERFLOW((a), (b)) ? 0 : ((result) = (a) + (b), 1))
+#endif
+
+/* Safe multiplication check for allocation sizes */
+#ifndef ak_safe_alloc_size
+static inline boolean ak_safe_alloc_size(u64 count, u64 elem_size, u64 *result)
+{
+    if (elem_size != 0 && count > UINT64_MAX / elem_size)
+        return false;
+    *result = count * elem_size;
+    return true;
+}
+#endif
+
+/* Safe add for buffer sizes */
+#ifndef ak_safe_add_size
+static inline boolean ak_safe_add_size(u64 a, u64 b, u64 *result)
+{
+    if (a > UINT64_MAX - b)
+        return false;
+    *result = a + b;
+    return true;
+}
 #endif
 
 #endif /* AK_COMPAT_H */

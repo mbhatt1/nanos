@@ -139,7 +139,7 @@ typedef struct ak_wasm_suspension {
     u64 suspend_time_ms;
     void *resume_data;          /* Data to pass on resume */
     u64 resume_data_len;
-    closure resume_callback;     /* Called when resume data is available */
+    void *resume_callback;       /* Called when resume data is available (closure) */
     u64 timeout_ms;             /* 0 = no timeout */
     u64 approval_id;            /* If waiting for approval */
 } ak_wasm_suspension_t;
@@ -397,7 +397,7 @@ s64 ak_wasm_exec_suspend(
     ak_wasm_suspend_reason_t reason,
     void *data,
     u64 data_len,
-    closure resume_cb,
+    void *resume_cb,  /* closure */
     u64 timeout_ms
 );
 
@@ -481,6 +481,14 @@ s64 ak_host_llm_complete(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
 s64 ak_host_log(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
 s64 ak_host_time_now(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
 s64 ak_host_random(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
+
+/* Streaming operations (require AK_CAP_NET for stream capability) */
+s64 ak_host_stream_create(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
+s64 ak_host_stream_send(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
+s64 ak_host_stream_send_token(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
+s64 ak_host_stream_stats(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
+s64 ak_host_stream_close(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
+s64 ak_host_stream_set_stop(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result);
 
 /* ============================================================
  * RESOURCE LIMITS

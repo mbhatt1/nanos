@@ -162,10 +162,24 @@ void ak_audit_post_anchor_remote(ak_anchor_t *anchor, const char *url);
  * ============================================================ */
 
 /*
- * Flush all pending writes to disk.
+ * Open the audit log file for persistent storage.
+ *
+ * MUST be called after filesystem is initialized.
+ * Returns 0 on success, negative error code on failure.
+ *
+ * INV-4 CRITICAL: If this fails, audit log will be in-memory only
+ * and INV-4 guarantees are weakened (no crash recovery).
+ */
+s64 ak_audit_open_storage(void);
+
+/*
+ * Flush all pending writes to disk and wait for fsync.
  *
  * Called automatically on append(), but can be called
  * explicitly for checkpointing.
+ *
+ * INV-4 CRITICAL: This function blocks until fsync completes.
+ * Response to agent MUST NOT be sent until this returns.
  */
 void ak_audit_sync(void);
 
@@ -178,6 +192,8 @@ typedef struct ak_audit_stats {
     u64 anchor_count;
     u64 last_anchor_seq;
     u64 last_sync_ms;
+    u64 disk_bytes_written;     /* Total bytes written to disk */
+    boolean storage_enabled;    /* Whether persistent storage is active */
 } ak_audit_stats_t;
 
 void ak_audit_get_stats(ak_audit_stats_t *stats);

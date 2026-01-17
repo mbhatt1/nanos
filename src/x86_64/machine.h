@@ -1,3 +1,6 @@
+#ifndef __X86_64_MACHINE_H__
+#define __X86_64_MACHINE_H__
+
 #ifdef BOOT
 
 #if !defined(UEFI)
@@ -255,3 +258,5 @@ static inline __attribute__((always_inline)) void kern_pause(void)
 struct arch_vdso_dat {
     u8 platform_has_rdtscp;
 };
+
+#endif /* __X86_64_MACHINE_H__ */

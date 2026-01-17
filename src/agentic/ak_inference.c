@@ -18,6 +18,9 @@
 
 #include "ak_inference.h"
 #include "ak_audit.h"
+#include "ak_compat.h"
+#include "ak_policy.h"
+#include "ak_syscall.h"
 
 /* ============================================================
  * INTERNAL STATE
@@ -192,7 +195,7 @@ void ak_inference_init(heap h, ak_llm_config_t *config)
         return;
 
     ak_inf_state.h = h;
-    runtime_memset(&ak_inf_state.stats, 0, sizeof(ak_inference_stats_t));
+    runtime_memset((u8 *)&ak_inf_state.stats, 0, sizeof(ak_inference_stats_t));
 
     if (config) {
         runtime_memcpy(&ak_inf_state.config, config, sizeof(ak_llm_config_t));
@@ -234,7 +237,7 @@ void ak_inference_shutdown(void)
         return;
 
     /* Clear sensitive data */
-    runtime_memset(ak_inf_state.api_key_resolved, 0,
+    runtime_memset((u8 *)ak_inf_state.api_key_resolved, 0,
                    sizeof(ak_inf_state.api_key_resolved));
     ak_inf_state.api_key_valid = false;
 
@@ -291,7 +294,7 @@ ak_llm_mode_t ak_inference_route(const char *model)
     /* Hybrid mode: route based on model name */
     if (ak_inf_state.config.mode == AK_LLM_HYBRID) {
         for (u32 i = 0; i < ak_inf_state.config.local_model_count; i++) {
-            if (runtime_strcmp(model, ak_inf_state.config.local_models[i]) == 0)
+            if (ak_strcmp(model, ak_inf_state.config.local_models[i]) == 0)
                 return AK_LLM_LOCAL;
         }
         return AK_LLM_EXTERNAL;
@@ -346,7 +349,7 @@ static ak_inference_response_t *virtio_request(buffer request_json)
                                             sizeof(ak_inference_response_t));
     if (res == INVALID_ADDRESS)
         return 0;
-    runtime_memset(res, 0, sizeof(ak_inference_response_t));
+    runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
 
     if (!ak_inf_state.local_connected || ak_inf_state.local_fd < 0) {
         res->success = false;
@@ -389,7 +392,7 @@ ak_inference_response_t *ak_local_inference_request(ak_inference_request_t *req)
                                             sizeof(ak_inference_response_t));
     if (res == INVALID_ADDRESS)
         return 0;
-    runtime_memset(res, 0, sizeof(ak_inference_response_t));
+    runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
 
     if (!ak_inf_state.local_connected || ak_inf_state.local_fd < 0) {
         res->success = false;
@@ -648,7 +651,7 @@ ak_inference_response_t *ak_parse_api_response(heap h, ak_llm_provider_t provide
     if (res == INVALID_ADDRESS)
         return 0;
 
-    runtime_memset(res, 0, sizeof(ak_inference_response_t));
+    runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
 
     if (!response || buffer_length(response) == 0) {
         res->success = false;
@@ -712,7 +715,7 @@ ak_inference_response_t *ak_external_inference_request(
     if (res == INVALID_ADDRESS)
         return 0;
 
-    runtime_memset(res, 0, sizeof(ak_inference_response_t));
+    runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
 
     if (!ak_inf_state.api_configured || !api_config) {
         res->success = false;
@@ -779,7 +782,7 @@ ak_inference_response_t *ak_inference_complete(
         res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
         if (res == INVALID_ADDRESS)
             return 0;
-        runtime_memset(res, 0, sizeof(ak_inference_response_t));
+        runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
         res->success = false;
         res->error_code = AK_E_LLM_NOT_CONFIGURED;
         return res;
@@ -791,7 +794,7 @@ ak_inference_response_t *ak_inference_complete(
         res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
         if (res == INVALID_ADDRESS)
             return 0;
-        runtime_memset(res, 0, sizeof(ak_inference_response_t));
+        runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
         res->success = false;
         res->error_code = AK_E_CAP_MISSING;
         return res;
@@ -804,7 +807,7 @@ ak_inference_response_t *ak_inference_complete(
         res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
         if (res == INVALID_ADDRESS)
             return 0;
-        runtime_memset(res, 0, sizeof(ak_inference_response_t));
+        runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
         res->success = false;
         res->error_code = cap_result;
         return res;
@@ -813,13 +816,12 @@ ak_inference_response_t *ak_inference_complete(
     /* Check budget (INV-3: Budget Enforcement) */
     if (agent->budget) {
         u32 estimated_tokens = req->max_tokens > 0 ? req->max_tokens : 1024;
-        if (agent->budget->used[AK_RESOURCE_LLM_TOKENS_OUT] + estimated_tokens >
-            agent->budget->limits[AK_RESOURCE_LLM_TOKENS_OUT]) {
+        if (!ak_budget_check(agent->budget, AK_RESOURCE_LLM_TOKENS_OUT, estimated_tokens)) {
             ak_inf_state.stats.budget_exceeded++;
             res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
             if (res == INVALID_ADDRESS)
                 return 0;
-            runtime_memset(res, 0, sizeof(ak_inference_response_t));
+            runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
             res->success = false;
             res->error_code = AK_E_BUDGET_EXCEEDED;
             return res;
@@ -841,7 +843,7 @@ ak_inference_response_t *ak_inference_complete(
         res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
         if (res == INVALID_ADDRESS)
             return 0;
-        runtime_memset(res, 0, sizeof(ak_inference_response_t));
+        runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
         res->success = false;
         res->error_code = AK_E_LLM_NOT_CONFIGURED;
         return res;
@@ -853,8 +855,8 @@ ak_inference_response_t *ak_inference_complete(
         ak_inf_state.stats.tokens_out_total += res->usage.completion_tokens;
 
         if (agent->budget) {
-            agent->budget->used[AK_RESOURCE_LLM_TOKENS_IN] += res->usage.prompt_tokens;
-            agent->budget->used[AK_RESOURCE_LLM_TOKENS_OUT] += res->usage.completion_tokens;
+            ak_budget_commit(agent->budget, AK_RESOURCE_LLM_TOKENS_IN, res->usage.prompt_tokens);
+            ak_budget_commit(agent->budget, AK_RESOURCE_LLM_TOKENS_OUT, res->usage.completion_tokens);
         }
     } else {
         ak_inf_state.stats.requests_failed++;
@@ -890,7 +892,7 @@ ak_inference_response_t *ak_inference_embed(
     if (res == INVALID_ADDRESS)
         return 0;
 
-    runtime_memset(res, 0, sizeof(ak_inference_response_t));
+    runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
 
     /* Validate capability */
     if (!cap) {
@@ -909,8 +911,8 @@ ak_inference_response_t *ak_inference_embed(
 
     /* Build embedding request */
     ak_inference_request_t emb_req;
-    runtime_memset(&emb_req, 0, sizeof(ak_inference_request_t));
-    emb_req.type = AK_INFERENCE_EMBED;
+    runtime_memset((u8 *)&emb_req, 0, sizeof(ak_inference_request_t));
+    emb_req.type = AK_INFERENCE_EMBEDDING;
     emb_req.prompt = text;
     if (model)
         runtime_memcpy(emb_req.model, model, runtime_strlen(model) + 1);
@@ -953,7 +955,7 @@ ak_response_t *ak_handle_inference(ak_agent_context_t *ctx, ak_request_t *req)
 
     /* Parse inference request from JSON args */
     ak_inference_request_t inf_req;
-    runtime_memset(&inf_req, 0, sizeof(ak_inference_request_t));
+    runtime_memset((u8 *)&inf_req, 0, sizeof(ak_inference_request_t));
 
     inf_req.type = AK_INFERENCE_CHAT;
     inf_req.max_tokens = 1024;

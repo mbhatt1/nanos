@@ -1,3 +1,6 @@
+#ifndef __NANOS_RUNTIME_H__
+#define __NANOS_RUNTIME_H__
+
 #include <predef.h>
 #include <config.h>
 
@@ -82,6 +85,10 @@ void print_frame_trace_from_here();
 #endif
 
 #define build_assert(x) _Static_assert((x), "build assertion failure")
+
+/* Constant-expression compatible offsetof for use in build_assert with struct types.
+ * Note: For pointer typedefs like 'typedef struct foo {} *foo;', use the struct name directly. */
+#define build_offsetof(__t, __e) __builtin_offsetof(__t, __e)
 
 #define string_literal(s)           (char []){s}
 #define assert_string_literal(s)    (void)string_literal(s)
@@ -345,3 +352,5 @@ static inline void deallocate_closure(void *p)
 #if !defined(BOOT) && !defined(KERNEL)
 #include <unix_process_runtime.h>
 #endif
+
+#endif /* __NANOS_RUNTIME_H__ */

@@ -116,7 +116,7 @@ ak_policy_t *ak_policy_load(heap h, buffer yaml_data)
     if (!policy)
         return NULL;
 
-    runtime_memset(policy, 0, sizeof(ak_policy_t));
+    runtime_memset((u8 *)policy, 0, sizeof(ak_policy_t));
     policy->h = h;
     runtime_memcpy(policy->version, AK_POLICY_VERSION, runtime_strlen(AK_POLICY_VERSION));
 
@@ -152,7 +152,7 @@ ak_policy_t *ak_policy_load(heap h, buffer yaml_data)
     /* Initialize versioning */
     ak_policy_version_t *ver = allocate(h, sizeof(ak_policy_version_t));
     if (ver) {
-        runtime_memset(ver, 0, sizeof(ak_policy_version_t));
+        runtime_memset((u8 *)ver, 0, sizeof(ak_policy_version_t));
         ver->version_number = 1;
         ver->activated_ms = now(CLOCK_ID_MONOTONIC) / MILLION;
         runtime_memcpy(ver->hash, policy->policy_hash, AK_HASH_SIZE);
@@ -275,7 +275,7 @@ ak_budget_tracker_t *ak_budget_create(heap h, u8 *run_id, ak_policy_t *policy)
     if (!tracker)
         return NULL;
 
-    runtime_memset(tracker, 0, sizeof(ak_budget_tracker_t));
+    runtime_memset((u8 *)tracker, 0, sizeof(ak_budget_tracker_t));
 
     if (run_id)
         runtime_memcpy(tracker->run_id, run_id, AK_TOKEN_ID_SIZE);
@@ -492,7 +492,7 @@ boolean ak_policy_check_tool(ak_policy_t *policy, const char *tool_name)
     while (rule) {
         if (rule->name) {
             /* Exact match */
-            if (runtime_strcmp(rule->name, tool_name) == 0)
+            if (ak_strcmp(rule->name, tool_name) == 0)
                 return rule->allow;
 
             /* Glob pattern match */
@@ -607,7 +607,7 @@ boolean ak_policy_is_source(ak_policy_t *policy, const char *name)
     ak_taint_rule_t *rule = policy->taint_rules;
     while (rule) {
         if (rule->type == AK_TAINT_RULE_SOURCE &&
-            rule->name && runtime_strcmp(rule->name, name) == 0)
+            rule->name && ak_strcmp(rule->name, name) == 0)
             return true;
         rule = rule->next;
     }
@@ -622,7 +622,7 @@ boolean ak_policy_is_sink(ak_policy_t *policy, const char *name)
     ak_taint_rule_t *rule = policy->taint_rules;
     while (rule) {
         if (rule->type == AK_TAINT_RULE_SINK &&
-            rule->name && runtime_strcmp(rule->name, name) == 0)
+            rule->name && ak_strcmp(rule->name, name) == 0)
             return true;
         rule = rule->next;
     }
@@ -637,7 +637,7 @@ boolean ak_policy_is_sanitizer(ak_policy_t *policy, const char *name)
     ak_taint_rule_t *rule = policy->taint_rules;
     while (rule) {
         if (rule->type == AK_TAINT_RULE_SANITIZER &&
-            rule->name && runtime_strcmp(rule->name, name) == 0)
+            rule->name && ak_strcmp(rule->name, name) == 0)
             return true;
         rule = rule->next;
     }
@@ -836,7 +836,7 @@ ak_policy_t *ak_policy_default(heap h)
     if (!policy)
         return NULL;
 
-    runtime_memset(policy, 0, sizeof(ak_policy_t));
+    runtime_memset((u8 *)policy, 0, sizeof(ak_policy_t));
     policy->h = h;
     runtime_memcpy(policy->version, AK_POLICY_VERSION, runtime_strlen(AK_POLICY_VERSION));
 
@@ -883,7 +883,7 @@ ak_policy_t *ak_policy_default(heap h)
     /* Initialize versioning */
     ak_policy_version_t *ver = allocate(h, sizeof(ak_policy_version_t));
     if (ver) {
-        runtime_memset(ver, 0, sizeof(ak_policy_version_t));
+        runtime_memset((u8 *)ver, 0, sizeof(ak_policy_version_t));
         ver->version_number = 1;
         ver->activated_ms = now(CLOCK_ID_MONOTONIC) / MILLION;
         runtime_memcpy(ver->hash, policy->policy_hash, AK_HASH_SIZE);
@@ -902,7 +902,7 @@ ak_policy_t *ak_policy_permissive(heap h)
     if (!policy)
         return NULL;
 
-    runtime_memset(policy, 0, sizeof(ak_policy_t));
+    runtime_memset((u8 *)policy, 0, sizeof(ak_policy_t));
     policy->h = h;
     runtime_memcpy(policy->version, AK_POLICY_VERSION, runtime_strlen(AK_POLICY_VERSION));
 
@@ -925,7 +925,7 @@ ak_policy_t *ak_policy_permissive(heap h)
     /* Initialize versioning */
     ak_policy_version_t *ver = allocate(h, sizeof(ak_policy_version_t));
     if (ver) {
-        runtime_memset(ver, 0, sizeof(ak_policy_version_t));
+        runtime_memset((u8 *)ver, 0, sizeof(ak_policy_version_t));
         ver->version_number = 1;
         ver->activated_ms = now(CLOCK_ID_MONOTONIC) / MILLION;
         runtime_memcpy(ver->hash, policy->policy_hash, AK_HASH_SIZE);
@@ -1012,7 +1012,7 @@ ak_policy_result_t ak_policy_upgrade(
     if (!new_ver)
         return AK_POLICY_ERROR_PARSE;
 
-    runtime_memset(new_ver, 0, sizeof(ak_policy_version_t));
+    runtime_memset((u8 *)new_ver, 0, sizeof(ak_policy_version_t));
     new_ver->version_number = new_version;
     new_ver->activated_ms = now(CLOCK_ID_MONOTONIC) / MILLION;
 

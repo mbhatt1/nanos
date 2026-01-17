@@ -25,6 +25,8 @@
 #include "ak_audit.h"
 #include "ak_compress.h"
 #include "ak_compat.h"
+#include "ak_syscall.h"
+#include "ak_heap.h"
 
 /* ============================================================
  * INTERNAL STATE
@@ -111,8 +113,14 @@ static void compute_merkle_root(u8 *hashes, u32 count, u8 *root_out)
         return;
     }
 
+    /* Overflow check for allocation size */
+    if (count > UINT64_MAX / AK_HASH_SIZE) {
+        runtime_memset(root_out, 0, AK_HASH_SIZE);
+        return;
+    }
+
     /* Allocate two buffers for ping-pong computation to avoid in-place overwrites */
-    u32 max_level_size = count * AK_HASH_SIZE;
+    u64 max_level_size = (u64)count * AK_HASH_SIZE;
     u8 *buf_a = allocate(ak_state.h, max_level_size);
     u8 *buf_b = allocate(ak_state.h, max_level_size);
 
@@ -149,7 +157,7 @@ static void compute_merkle_root(u8 *hashes, u32 count, u8 *root_out)
             }
 
             /* Hash the pair into the next buffer (not current) */
-            buffer pair_buf = wrap_buffer_cstring(ak_state.h, (char *)combined);
+            buffer pair_buf = alloca_wrap_buffer(combined, AK_HASH_SIZE * 2);
             if (pair_buf && pair_buf != INVALID_ADDRESS) {
                 compute_hash(pair_buf, &next[i * AK_HASH_SIZE]);
             } else {
@@ -181,9 +189,9 @@ void ak_state_init(heap h, ak_storage_config_t *config)
         return;
 
     ak_state.h = h;
-    runtime_memset(&ak_state.stats, 0, sizeof(ak_state_stats_t));
-    runtime_memset(&ak_state.hydration, 0, sizeof(ak_hydration_status_t));
-    runtime_memset(ak_state.dirty_bitmap, 0, sizeof(ak_state.dirty_bitmap));
+    runtime_memset((u8 *)&ak_state.stats, 0, sizeof(ak_state_stats_t));
+    runtime_memset((u8 *)&ak_state.hydration, 0, sizeof(ak_hydration_status_t));
+    runtime_memset((u8 *)ak_state.dirty_bitmap, 0, sizeof(ak_state.dirty_bitmap));
     ak_state.dirty_count = 0;
     ak_state.virtio_fd = -1;
 
@@ -204,7 +212,7 @@ void ak_state_init(heap h, ak_storage_config_t *config)
     ak_state.backend_connected = false;
 
     /* Initialize genesis anchor */
-    runtime_memset(&ak_state.latest_anchor, 0, sizeof(ak_state_anchor_t));
+    runtime_memset((u8 *)&ak_state.latest_anchor, 0, sizeof(ak_state_anchor_t));
     ak_state.latest_anchor.timestamp_ms = get_timestamp_ms();
     ak_state.latest_anchor.sequence = 0;
 
@@ -290,7 +298,7 @@ s64 ak_state_hydrate(ak_heap_t *heap)
         buffer value = ak_backend_get(ptrs[i]);
         if (value && value != INVALID_ADDRESS) {
             /* Restore object to typed heap */
-            s64 result = ak_heap_restore(heap, ptrs[i], value);
+            s64 result = ak_heap_restore(value);
             if (result == 0) {
                 bytes_loaded += buffer_length(value);
                 objects_loaded++;
@@ -322,8 +330,12 @@ boolean ak_state_verify_integrity(void)
     if (count == 0)
         return true;
 
+    /* Overflow check for allocation size */
+    if (count > UINT64_MAX / AK_HASH_SIZE)
+        return false;
+
     /* Allocate hash array */
-    u8 *hashes = allocate(ak_state.h, count * AK_HASH_SIZE);
+    u8 *hashes = allocate(ak_state.h, (u64)count * AK_HASH_SIZE);
     if (hashes == INVALID_ADDRESS)
         return false;
 
@@ -434,7 +446,7 @@ u64 *ak_state_get_dirty_list(u32 *count_out)
 ak_sync_result_t ak_state_sync(void)
 {
     ak_sync_result_t result;
-    runtime_memset(&result, 0, sizeof(ak_sync_result_t));
+    runtime_memset((u8 *)&result, 0, sizeof(ak_sync_result_t));
 
     if (!ak_state.initialized) {
         result.status = AK_SYNC_FAILED;
@@ -458,7 +470,7 @@ ak_sync_result_t ak_state_sync(void)
 ak_sync_result_t ak_state_sync_objects(u64 *ptrs, u32 count)
 {
     ak_sync_result_t result;
-    runtime_memset(&result, 0, sizeof(ak_sync_result_t));
+    runtime_memset((u8 *)&result, 0, sizeof(ak_sync_result_t));
 
     if (!ptrs || count == 0) {
         result.status = AK_SYNC_COMPLETED;
@@ -569,7 +581,7 @@ s64 ak_state_emit_anchor(void)
         return AK_E_STATE_NOT_FOUND;
 
     ak_state_anchor_t anchor;
-    runtime_memset(&anchor, 0, sizeof(ak_state_anchor_t));
+    runtime_memset((u8 *)&anchor, 0, sizeof(ak_state_anchor_t));
 
     anchor.timestamp_ms = get_timestamp_ms();
     anchor.sequence = ++ak_state.anchor_sequence;
@@ -583,19 +595,22 @@ s64 ak_state_emit_anchor(void)
     u64 *ptrs = ak_state_get_dirty_list(&count);
 
     if (count > 0 && ptrs) {
-        u8 *hashes = allocate(ak_state.h, count * AK_HASH_SIZE);
-        if (hashes != INVALID_ADDRESS) {
-            for (u32 i = 0; i < count; i++) {
-                buffer value = ak_heap_serialize_object(ak_state.h, ptrs[i]);
-                if (value && value != INVALID_ADDRESS) {
-                    compute_hash(value, &hashes[i * AK_HASH_SIZE]);
-                    deallocate_buffer(value);
-                } else {
-                    runtime_memset(&hashes[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
+        /* Overflow check for allocation size */
+        if (count <= UINT64_MAX / AK_HASH_SIZE) {
+            u8 *hashes = allocate(ak_state.h, (u64)count * AK_HASH_SIZE);
+            if (hashes != INVALID_ADDRESS) {
+                for (u32 i = 0; i < count; i++) {
+                    buffer value = ak_heap_serialize_object(ak_state.h, ptrs[i]);
+                    if (value && value != INVALID_ADDRESS) {
+                        compute_hash(value, &hashes[i * AK_HASH_SIZE]);
+                        deallocate_buffer(value);
+                    } else {
+                        runtime_memset(&hashes[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
+                    }
                 }
+                compute_merkle_root(hashes, count, anchor.heap_root);
+                deallocate(ak_state.h, hashes, (u64)count * AK_HASH_SIZE);
             }
-            compute_merkle_root(hashes, count, anchor.heap_root);
-            deallocate(ak_state.h, hashes, count * AK_HASH_SIZE);
         }
     }
 
@@ -610,7 +625,7 @@ s64 ak_state_emit_anchor(void)
         buffer anchor_buf = allocate_buffer(ak_state.h, sizeof(ak_state_anchor_t));
         if (anchor_buf != INVALID_ADDRESS) {
             buffer_write(anchor_buf, &anchor, sizeof(ak_state_anchor_t));
-            ak_backend_put(anchor.sequence | 0xANCH0000000000ULL, anchor_buf, anchor.heap_root);
+            ak_backend_put(anchor.sequence | 0xA0C40000000000ULL, anchor_buf, anchor.heap_root);
             deallocate_buffer(anchor_buf);
         }
     }

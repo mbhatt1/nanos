@@ -1,0 +1,1 @@
+{"net":{"connect":["ip:*:443","ip:*:80","dns:*.example.com:*"]}}

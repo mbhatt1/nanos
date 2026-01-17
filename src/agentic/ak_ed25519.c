@@ -32,8 +32,8 @@ static struct {
 
 typedef s64 gf[16];
 
-static const u8 _0[16] = {0};
-static const u8 _9[32] = {9};
+static const u8 __attribute__((unused)) _0[16] = {0};
+static const u8 __attribute__((unused)) _9[32] = {9};
 
 static const gf gf0 = {0};
 static const gf gf1 = {1};
@@ -60,7 +60,7 @@ static const gf I = {
 
 static u64 L64(u64 x, int c) { return (x << c) | ((x & 0xffffffffffffffff) >> (64 - c)); }
 
-static u32 ld32(const u8 *x)
+static u32 __attribute__((unused)) ld32(const u8 *x)
 {
     u32 u = x[3];
     u = (u << 8) | x[2];
@@ -76,7 +76,7 @@ static u64 dl64(const u8 *x)
     return u;
 }
 
-static void st32(u8 *x, u32 u)
+static void __attribute__((unused)) st32(u8 *x, u32 u)
 {
     for (int i = 0; i < 4; i++) {
         x[i] = u;
@@ -260,7 +260,7 @@ static u64 K[80] = {
 
 static void hashblock(u64 *x, const u8 *m)
 {
-    u64 a, b, c, d, e, f, g, h, t;
+    u64 a, b, c, d, e, f, g, h;
     u64 w[80];
 
     for (int i = 0; i < 16; i++)
@@ -477,8 +477,8 @@ void ak_ed25519_init(heap h)
     ed25519_state.h = h;
     ed25519_state.count = 0;
     ed25519_state.initialized = true;
-    runtime_memset(ed25519_state.keys, 0, sizeof(ed25519_state.keys));
-    runtime_memset(ed25519_state.names, 0, sizeof(ed25519_state.names));
+    runtime_memset((u8 *)ed25519_state.keys, 0, sizeof(ed25519_state.keys));
+    runtime_memset((u8 *)ed25519_state.names, 0, sizeof(ed25519_state.names));
 }
 
 boolean ak_ed25519_verify(const u8 *message, u64 message_len,
@@ -493,6 +493,10 @@ boolean ak_ed25519_verify(const u8 *message, u64 message_len,
         return false;
 
     if (!message || !signature || !public_key)
+        return false;
+
+    /* Overflow check: message_len + 64 */
+    if (message_len > UINT64_MAX - 64)
         return false;
 
     if (unpackneg(q, public_key))

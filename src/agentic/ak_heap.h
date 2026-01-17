@@ -280,6 +280,13 @@ buffer ak_heap_snapshot(heap h);
  */
 s64 ak_heap_restore(buffer snapshot);
 
+/*
+ * Serialize a single heap object.
+ *
+ * Returns buffer containing serialized object, or NULL on failure.
+ */
+buffer ak_heap_serialize_object(heap h, u64 ptr);
+
 /* ============================================================
  * TRANSACTION SUPPORT (for BATCH)
  * ============================================================ */

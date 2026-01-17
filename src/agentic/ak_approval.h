@@ -58,7 +58,7 @@ typedef struct ak_approval_request {
     buffer reviewer_note;       /* Optional note from reviewer */
 
     /* Callback */
-    closure on_decision;        /* Called when decision is made */
+    void *on_decision;  /* closure */        /* Called when decision is made */
     void *callback_data;        /* Data for callback */
 
     /* Linkage for pending queue */
@@ -101,7 +101,7 @@ ak_approval_request_t *ak_approval_request(
  */
 void ak_approval_set_callback(
     ak_approval_request_t *request,
-    closure cb,
+    void *cb,  /* closure */
     void *data
 );
 
@@ -164,7 +164,7 @@ s64 ak_approval_deny(u64 request_id, const char *reviewer_id, buffer note);
  * @param run_id        Run ID to query (NULL for all)
  * @param cb            Callback for each pending request
  */
-void ak_approval_list_pending(u8 *run_id, closure cb);
+void ak_approval_list_pending(u8 *run_id, void *cb /* closure */);
 
 /*
  * Get approval request by ID.
@@ -198,6 +198,6 @@ void ak_approval_set_default_timeout(u64 timeout_ms);
  *
  * @param cb            Callback closure
  */
-void ak_approval_set_notify_callback(closure cb);
+void ak_approval_set_notify_callback(void *cb /* closure */);
 
 #endif /* AK_APPROVAL_H */

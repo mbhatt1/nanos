@@ -17,9 +17,12 @@
 #ifndef AK_TYPES_H
 #define AK_TYPES_H
 
-#include <kernel.h>
+/* Include runtime.h instead of kernel.h to avoid duplicate definitions.
+ * The agentic code primarily needs buffer, heap, and basic types from runtime. */
+#include <runtime.h>
 #include "ak_config.h"
 #include "ak_compat.h"
+#include "ak_assert.h"
 
 /* Base syscall number for AK syscalls */
 #define AK_SYS_BASE             1024
@@ -105,6 +108,12 @@
 #define AK_E_LOG_FULL           (-4404)
 #define AK_E_LOG_CORRUPT        (-4405)
 
+/* IPC errors (4500-4599) */
+#define AK_E_IPC_INVALID        (-4500)  /* Invalid IPC frame */
+#define AK_E_SEQ_GAP            (-4501)  /* Sequence number gap */
+#define AK_E_POLICY_DENIED      (-4502)  /* Policy denied */
+#define AK_E_TIMEOUT            (-4503)  /* Operation timeout */
+
 /* ============================================================
  * FRAME CONSTANTS
  * ============================================================ */
@@ -117,11 +126,20 @@
  * CRYPTOGRAPHIC CONSTANTS
  * ============================================================ */
 
+/* Cryptographic sizes - defined in ak_config.h, with fallback defaults here */
+#ifndef AK_HASH_SIZE
 #define AK_HASH_SIZE            32      /* SHA-256 */
+#endif
+#ifndef AK_MAC_SIZE
 #define AK_MAC_SIZE             32      /* HMAC-SHA256 */
+#endif
+#ifndef AK_KEY_SIZE
 #define AK_KEY_SIZE             32      /* 256-bit keys */
+#endif
+#ifndef AK_TOKEN_ID_SIZE
 #define AK_TOKEN_ID_SIZE        16      /* 128-bit token IDs */
-#define AK_SIG_SIZE             64      /* Ed25519 signature */
+#endif
+/* AK_SIG_SIZE defined in ak_config.h */
 
 /* ============================================================
  * CAPABILITY TYPES
@@ -136,6 +154,9 @@ typedef enum ak_cap_type {
     AK_CAP_SPAWN    = 5,    /* Agent spawning */
     AK_CAP_HEAP     = 6,    /* Heap object access */
     AK_CAP_INFERENCE = 7,   /* LLM access */
+    AK_CAP_LLM      = 7,    /* Alias for INFERENCE */
+    AK_CAP_IPC      = 8,    /* Inter-process communication */
+    AK_CAP_ANY      = 254,  /* Wildcard - matches any type */
     AK_CAP_ADMIN    = 255,  /* Administrative (dangerous) */
 } ak_cap_type_t;
 
@@ -161,13 +182,19 @@ typedef enum ak_taint {
  * ============================================================ */
 
 typedef enum ak_resource_type {
+    AK_RESOURCE_TOKENS,
+    AK_RESOURCE_CALLS,
+    AK_RESOURCE_INFERENCE_MS,
+    AK_RESOURCE_FILE_BYTES,
+    AK_RESOURCE_NETWORK_BYTES,
+    AK_RESOURCE_HEAP_BYTES,
+    AK_RESOURCE_HEAP_OBJECTS,
+    AK_RESOURCE_BLOB_BYTES,
+    AK_RESOURCE_WALL_TIME_MS,
+    AK_RESOURCE_NET_BYTES_OUT,
     AK_RESOURCE_LLM_TOKENS_IN,
     AK_RESOURCE_LLM_TOKENS_OUT,
     AK_RESOURCE_TOOL_CALLS,
-    AK_RESOURCE_WALL_TIME_MS,
-    AK_RESOURCE_HEAP_OBJECTS,
-    AK_RESOURCE_BLOB_BYTES,
-    AK_RESOURCE_NET_BYTES_OUT,
     AK_RESOURCE_COUNT,  /* Number of resource types */
 } ak_resource_type_t;
 
@@ -198,6 +225,7 @@ typedef struct ak_policy ak_policy_t;
 typedef struct ak_channel ak_channel_t;
 typedef struct ak_seq_tracker ak_seq_tracker_t;
 typedef struct ak_budget ak_budget_bud_t;
+typedef struct ak_budget_tracker ak_budget_tracker_t;
 
 /* ============================================================
  * CAPABILITY STRUCTURE
@@ -402,7 +430,7 @@ struct ak_agent_context {
     table network_rules;        /* Firewall rules */
 
     /* Resources (INV-3) */
-    struct ak_budget *budget;
+    ak_budget_tracker_t *budget;
 
     /* Sequencing (INV-2 anti-replay) */
     struct ak_seq_tracker *seq_tracker;
@@ -449,7 +477,7 @@ typedef struct ak_anchor {
     u8 signature[AK_SIG_SIZE];  /* Ed25519 signature */
 } ak_anchor_t;
 
-#define AK_ANCHOR_INTERVAL  10000   /* Every 10k entries */
+/* AK_ANCHOR_INTERVAL defined in ak_config.h */
 
 /* ============================================================
  * GENESIS HASH
@@ -460,5 +488,54 @@ typedef struct ak_anchor {
     "\x00\x00\x00\x00\x00\x00\x00\x00" \
     "\x00\x00\x00\x00\x00\x00\x00\x00" \
     "\x00\x00\x00\x00\x00\x00\x00\x00"
+
+/* ============================================================
+ * COMPILE-TIME ASSERTIONS
+ * ============================================================
+ * Verify critical constants and structure layouts.
+ */
+
+/* Verify hash/key sizes are reasonable */
+AK_STATIC_ASSERT(AK_HASH_SIZE == 32, "AK_HASH_SIZE must be 32 bytes for SHA-256");
+AK_STATIC_ASSERT(AK_MAC_SIZE == 32, "AK_MAC_SIZE must be 32 bytes for HMAC-SHA256");
+AK_STATIC_ASSERT(AK_KEY_SIZE == 32, "AK_KEY_SIZE must be 32 bytes");
+AK_STATIC_ASSERT(AK_TOKEN_ID_SIZE == 16, "AK_TOKEN_ID_SIZE must be 16 bytes");
+AK_STATIC_ASSERT(AK_SIG_SIZE == 64, "AK_SIG_SIZE must be 64 bytes for Ed25519");
+
+/* Verify syscall number ranges */
+AK_STATIC_ASSERT(AK_SYS_MIN == 1024, "AK syscalls must start at 1024");
+AK_STATIC_ASSERT(AK_SYS_MAX > AK_SYS_MIN, "AK_SYS_MAX must be greater than AK_SYS_MIN");
+
+/* Verify resource type count is bounded */
+AK_STATIC_ASSERT(AK_RESOURCE_COUNT <= 16, "Too many resource types");
+
+/* Verify frame size limits */
+AK_STATIC_ASSERT(AK_MAX_FRAME_SIZE >= AK_MIN_FRAME_SIZE, "Invalid frame size limits");
+AK_STATIC_ASSERT(AK_FRAME_HEADER_SIZE == 4, "Frame header must be 4 bytes");
+
+/* ============================================================
+ * INVARIANT DOCUMENTATION
+ * ============================================================
+ *
+ * INV-1: No-Bypass
+ *   - All effectful operations MUST go through AK syscalls
+ *   - Enforced by: ak_posix_route.c interception
+ *   - Checked by: syscall audit in ak_effects.c
+ *
+ * INV-2: Capability
+ *   - Every effectful syscall must carry valid capability
+ *   - Enforced by: ak_capability_validate() in syscall path
+ *   - Checked by: AK_ASSERT_INV2_HAS_CAP()
+ *
+ * INV-3: Budget
+ *   - Resource usage must not exceed limits
+ *   - Enforced by: ak_budget_check() before operation
+ *   - Checked by: AK_ASSERT_INV3_BUDGET()
+ *
+ * INV-4: Log Commitment
+ *   - All operations are hash-chained in audit log
+ *   - Enforced by: ak_audit_log() after each operation
+ *   - Checked by: AK_ASSERT_INV4_LOG_CHAIN()
+ */
 
 #endif /* AK_TYPES_H */

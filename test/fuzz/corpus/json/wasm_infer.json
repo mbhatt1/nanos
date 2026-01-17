@@ -1,0 +1,10 @@
+{
+  "wasm": {
+    "modules": ["calculator.wasm", "encoder.wasm"],
+    "hostcalls": ["fs_read", "net_fetch"]
+  },
+  "infer": {
+    "models": ["gpt-4", "claude-*"],
+    "max_tokens": 100000
+  }
+}

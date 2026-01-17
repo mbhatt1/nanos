@@ -56,6 +56,22 @@ void ak_key_rotate(void);
 /*
  * Create new capability token.
  *
+ * PRECONDITIONS:
+ *   - h must be valid heap
+ *   - resource must be non-NULL, null-terminated string
+ *   - methods may be NULL (no method restrictions)
+ *   - ttl_ms > 0
+ *   - run_id may be NULL (unbound capability)
+ *
+ * POSTCONDITIONS:
+ *   - Returns valid capability with MAC computed
+ *   - capability->type == type
+ *   - capability->ttl_ms <= AK_MAX_CAP_TTL_MS
+ *
+ * RETURNS:
+ *   - Valid capability on success
+ *   - NULL on failure (allocation, resource too long)
+ *
  * SECURITY: Caller must have authority to grant these permissions.
  * Use ak_capability_delegate() for child tokens.
  */
@@ -103,12 +119,21 @@ void ak_capability_destroy(heap h, ak_capability_t *cap);
 /*
  * Verify capability integrity (HMAC check).
  *
+ * PRECONDITIONS:
+ *   - cap may be NULL (returns AK_E_CAP_MISSING)
+ *
+ * POSTCONDITIONS:
+ *   - Returns 0 only if MAC is valid AND TTL not expired
+ *   - On failure, capability MUST NOT be used for authorization
+ *
  * Returns:
  *   0               - Valid
+ *   AK_E_CAP_MISSING - cap is NULL
  *   AK_E_CAP_INVALID - MAC verification failed (forged/corrupted)
  *   AK_E_CAP_EXPIRED - TTL exceeded or key retired
  *
  * SECURITY: Uses constant-time comparison to prevent timing attacks.
+ * INV-2: This is the first step in capability validation.
  */
 s64 ak_capability_verify(ak_capability_t *cap);
 
@@ -254,7 +279,7 @@ boolean ak_capability_subsumed(ak_capability_t *parent, ak_capability_t *child);
  * Patterns:
  *   "*"           - Match anything
  *   "*.github.com" - Suffix match
- *   "/tmp/*"      - Prefix match
+ *   "/tmp/..."    - Prefix match (use * for glob)
  *   "exact"       - Exact match
  *
  * SECURITY: Fails-closed on malformed patterns.

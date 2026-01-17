@@ -254,8 +254,8 @@ u32 ak_policy_version_count(ak_policy_t *policy);
  * BUDGET CHECKING (INV-3)
  * ============================================================ */
 
-/* Runtime budget tracker */
-typedef struct ak_budget_tracker {
+/* Runtime budget tracker (typedef in ak_types.h) */
+struct ak_budget_tracker {
     u8 run_id[AK_TOKEN_ID_SIZE];
 
     /* Committed costs */
@@ -275,8 +275,7 @@ typedef struct ak_budget_tracker {
 
     /* Limits from policy */
     ak_budget_limits_t limits;
-
-} ak_budget_tracker_t;
+};
 
 /*
  * Create budget tracker for a run.

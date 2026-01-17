@@ -122,7 +122,7 @@ static const u32 crc32c_table[256] = {
     0xBE2DA0A5, 0x4C4623A6, 0x5F16D052, 0xAD7D5351,
 };
 
-static u32 crc32c(const u8 *data, u64 len)
+static u32 __attribute__((unused)) crc32c(const u8 *data, u64 len)
 {
     u32 crc = 0xFFFFFFFF;
     while (len--) {
@@ -164,7 +164,7 @@ ak_ipc_channel_t *ak_ipc_channel_create(heap h, u8 *agent_id, int fd)
     else
         runtime_memset(ch->agent_id, 0, AK_TOKEN_ID_SIZE);
 
-    runtime_memset(&ch->stats, 0, sizeof(ak_ipc_stats_t));
+    ak_memzero(&ch->stats, sizeof(ak_ipc_stats_t));
 
     ch->recv_buf = allocate_buffer(h, 4096);
     ch->recv_offset = 0;
@@ -826,20 +826,20 @@ u16 ak_string_to_op(const char *str)
 {
     if (!str) return 0;
 
-    if (runtime_strcmp(str, "READ") == 0)       return AK_SYS_READ;
-    if (runtime_strcmp(str, "ALLOC") == 0)      return AK_SYS_ALLOC;
-    if (runtime_strcmp(str, "WRITE") == 0)      return AK_SYS_WRITE;
-    if (runtime_strcmp(str, "DELETE") == 0)     return AK_SYS_DELETE;
-    if (runtime_strcmp(str, "QUERY") == 0)      return AK_SYS_QUERY;
-    if (runtime_strcmp(str, "BATCH") == 0)      return AK_SYS_BATCH;
-    if (runtime_strcmp(str, "COMMIT") == 0)     return AK_SYS_COMMIT;
-    if (runtime_strcmp(str, "CALL") == 0)       return AK_SYS_CALL;
-    if (runtime_strcmp(str, "SPAWN") == 0)      return AK_SYS_SPAWN;
-    if (runtime_strcmp(str, "SEND") == 0)       return AK_SYS_SEND;
-    if (runtime_strcmp(str, "RECV") == 0)       return AK_SYS_RECV;
-    if (runtime_strcmp(str, "RESPOND") == 0)    return AK_SYS_RESPOND;
-    if (runtime_strcmp(str, "ASSERT") == 0)     return AK_SYS_ASSERT;
-    if (runtime_strcmp(str, "INFERENCE") == 0)  return AK_SYS_INFERENCE;
+    if (ak_strcmp(str, "READ") == 0)       return AK_SYS_READ;
+    if (ak_strcmp(str, "ALLOC") == 0)      return AK_SYS_ALLOC;
+    if (ak_strcmp(str, "WRITE") == 0)      return AK_SYS_WRITE;
+    if (ak_strcmp(str, "DELETE") == 0)     return AK_SYS_DELETE;
+    if (ak_strcmp(str, "QUERY") == 0)      return AK_SYS_QUERY;
+    if (ak_strcmp(str, "BATCH") == 0)      return AK_SYS_BATCH;
+    if (ak_strcmp(str, "COMMIT") == 0)     return AK_SYS_COMMIT;
+    if (ak_strcmp(str, "CALL") == 0)       return AK_SYS_CALL;
+    if (ak_strcmp(str, "SPAWN") == 0)      return AK_SYS_SPAWN;
+    if (ak_strcmp(str, "SEND") == 0)       return AK_SYS_SEND;
+    if (ak_strcmp(str, "RECV") == 0)       return AK_SYS_RECV;
+    if (ak_strcmp(str, "RESPOND") == 0)    return AK_SYS_RESPOND;
+    if (ak_strcmp(str, "ASSERT") == 0)     return AK_SYS_ASSERT;
+    if (ak_strcmp(str, "INFERENCE") == 0)  return AK_SYS_INFERENCE;
 
     return 0;
 }

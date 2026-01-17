@@ -61,7 +61,7 @@ void ak_wasm_init(heap h)
     ak_wasm_state.tool_count = 0;
     ak_wasm_state.host_fn_count = 0;
 
-    runtime_memset(&ak_wasm_state.stats, 0, sizeof(ak_wasm_stats_t));
+    runtime_memset((u8 *)&ak_wasm_state.stats, 0, sizeof(ak_wasm_stats_t));
 
     /* Initialize arrays */
     for (int i = 0; i < AK_MAX_WASM_MODULES; i++)
@@ -187,7 +187,7 @@ ak_wasm_module_t *ak_wasm_module_load(
     if (module == INVALID_ADDRESS)
         return 0;
 
-    runtime_memset(module, 0, sizeof(ak_wasm_module_t));
+    runtime_memset((u8 *)module, 0, sizeof(ak_wasm_module_t));
 
     /* Generate module ID */
     ak_generate_token_id(module->module_id);
@@ -369,7 +369,7 @@ ak_wasm_module_t *ak_wasm_module_get(const char *name)
 {
     for (u32 i = 0; i < ak_wasm_state.module_count; i++) {
         if (ak_wasm_state.modules[i] &&
-            runtime_strcmp(ak_wasm_state.modules[i]->name, name) == 0) {
+            ak_strcmp(ak_wasm_state.modules[i]->name, name) == 0) {
             return ak_wasm_state.modules[i];
         }
     }
@@ -414,7 +414,7 @@ s64 ak_tool_register(
     if (tool == INVALID_ADDRESS)
         return AK_E_WASM_OOM;
 
-    runtime_memset(tool, 0, sizeof(ak_tool_t));
+    runtime_memset((u8 *)tool, 0, sizeof(ak_tool_t));
 
     /* Copy name */
     u64 name_len = runtime_strlen(name);
@@ -463,7 +463,7 @@ void ak_tool_unregister(const char *name)
 {
     for (u32 i = 0; i < ak_wasm_state.tool_count; i++) {
         if (ak_wasm_state.tools[i] &&
-            runtime_strcmp(ak_wasm_state.tools[i]->name, name) == 0) {
+            ak_strcmp(ak_wasm_state.tools[i]->name, name) == 0) {
             deallocate(ak_wasm_state.h, ak_wasm_state.tools[i],
                        sizeof(ak_tool_t));
 
@@ -480,7 +480,7 @@ ak_tool_t *ak_tool_get(const char *name)
 {
     for (u32 i = 0; i < ak_wasm_state.tool_count; i++) {
         if (ak_wasm_state.tools[i] &&
-            runtime_strcmp(ak_wasm_state.tools[i]->name, name) == 0) {
+            ak_strcmp(ak_wasm_state.tools[i]->name, name) == 0) {
             return ak_wasm_state.tools[i];
         }
     }
@@ -527,7 +527,7 @@ s64 ak_host_fn_register(
 ak_host_fn_entry_t *ak_host_fn_get(const char *name)
 {
     for (u32 i = 0; i < ak_wasm_state.host_fn_count; i++) {
-        if (runtime_strcmp(ak_wasm_state.host_fns[i].name, name) == 0)
+        if (ak_strcmp(ak_wasm_state.host_fns[i].name, name) == 0)
             return &ak_wasm_state.host_fns[i];
     }
     return 0;
@@ -547,7 +547,7 @@ ak_wasm_exec_ctx_t *ak_wasm_exec_create(
     if (ctx == INVALID_ADDRESS)
         return 0;
 
-    runtime_memset(ctx, 0, sizeof(ak_wasm_exec_ctx_t));
+    runtime_memset((u8 *)ctx, 0, sizeof(ak_wasm_exec_ctx_t));
 
     /* Generate execution ID */
     ak_generate_token_id(ctx->exec_id);
@@ -589,7 +589,7 @@ s64 ak_wasm_exec_suspend(
     ak_wasm_suspend_reason_t reason,
     void *data,
     u64 data_len,
-    closure resume_cb,
+    void *resume_cb,  /* closure */
     u64 timeout_ms)
 {
     if (!ctx)

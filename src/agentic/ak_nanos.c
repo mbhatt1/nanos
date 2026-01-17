@@ -128,14 +128,22 @@ s64 ak_syscall_handler(
     if (!res_buf || res_max == 0)
         return -EINVAL;
 
+    /* SECURITY FIX (S0-1): Validate user-space pointers before copy */
+    if (!validate_user_memory(req_buf, req_len, false))  /* read access */
+        return -EFAULT;
+    if (!validate_user_memory(res_buf, res_max, true))   /* write access */
+        return -EFAULT;
+
     /* Create buffer from user memory */
     buffer req_data = allocate_buffer(ctx->heap, req_len);
     if (!req_data)
         return -ENOMEM;
 
-    /* Copy from user space */
-    /* SECURITY: This copy validates the pointer */
-    runtime_memcpy(buffer_ref(req_data, 0), req_buf, req_len);
+    /* Copy from user space - now safe after validation */
+    if (!copy_from_user(buffer_ref(req_data, 0), req_buf, req_len)) {
+        deallocate_buffer(req_data);
+        return -EFAULT;
+    }
     buffer_produce(req_data, req_len);
 
     /* Parse request */
@@ -183,8 +191,12 @@ s64 ak_syscall_handler(
         if (copy_len > res_max)
             copy_len = res_max;
 
-        /* Copy to user space */
-        runtime_memcpy(res_buf, buffer_ref(res_json, 0), copy_len);
+        /* SECURITY FIX (S0-1): Use validated copy to user space */
+        if (!copy_to_user(res_buf, buffer_ref(res_json, 0), copy_len)) {
+            deallocate_buffer(res_json);
+            ak_response_destroy(ctx->heap, res);
+            return -EFAULT;
+        }
 
         /* Return bytes written on success */
         if (result == 0)

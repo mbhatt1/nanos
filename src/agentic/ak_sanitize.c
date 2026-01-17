@@ -23,6 +23,10 @@ buffer ak_sanitize_html(heap h, buffer input)
     if (len == 0)
         return allocate_buffer(h, 0);
 
+    /* Overflow check: worst case expansion (all & -> &amp;, 6x) */
+    if (len > UINT64_MAX / 6)
+        return 0;
+
     /* Allocate with worst case expansion (all & -> &amp;, 5x) */
     buffer out = allocate_buffer(h, len * 6);
     if (out == INVALID_ADDRESS)
@@ -68,6 +72,10 @@ buffer ak_sanitize_sql(heap h, buffer input)
     u64 len = buffer_length(input);
     if (len == 0)
         return allocate_buffer(h, 0);
+
+    /* Overflow check: worst case expansion (all ' -> '', 2x) */
+    if (len > UINT64_MAX / 2)
+        return 0;
 
     /* Allocate with worst case expansion (all ' -> '', 2x) */
     buffer out = allocate_buffer(h, len * 2);
@@ -151,6 +159,10 @@ buffer ak_sanitize_url(heap h, buffer input)
     if (len == 0)
         return allocate_buffer(h, 0);
 
+    /* Overflow check: worst case expansion (all %XX, 3x) */
+    if (len > UINT64_MAX / 3)
+        return 0;
+
     /* Allocate with worst case expansion (all %XX, 3x) */
     buffer out = allocate_buffer(h, len * 3);
     if (out == INVALID_ADDRESS)
@@ -198,8 +210,21 @@ buffer ak_sanitize_cmd(heap h, buffer input)
             quote_count++;
     }
 
-    /* Each ' becomes '\'' (4 chars), plus 2 for outer quotes */
-    buffer out = allocate_buffer(h, len + quote_count * 3 + 2);
+    /* Overflow checks for allocation size calculation:
+     * Each ' becomes '\'' (4 chars), plus 2 for outer quotes
+     * Total: len + quote_count * 3 + 2
+     */
+    if (quote_count > UINT64_MAX / 3)
+        return 0;
+    u64 extra = quote_count * 3;
+    if (len > UINT64_MAX - extra)
+        return 0;
+    u64 size_needed = len + extra;
+    if (size_needed > UINT64_MAX - 2)
+        return 0;
+    size_needed += 2;
+
+    buffer out = allocate_buffer(h, size_needed);
     if (out == INVALID_ADDRESS)
         return 0;
 

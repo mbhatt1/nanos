@@ -114,7 +114,7 @@ buffer ak_compress_lz4(heap h, buffer input)
 
     /* Hash table for finding matches */
     u32 hash_table[LZ4_HASHTABLESIZE];
-    runtime_memset(hash_table, 0, sizeof(hash_table));
+    runtime_memset((u8 *)hash_table, 0, sizeof(hash_table));
 
     const u8 *anchor = src;
     const u8 *ip = src;
@@ -301,6 +301,9 @@ buffer ak_decompress_lz4_sized(heap h, buffer compressed, u64 original_size)
                 if (src >= src_end)
                     goto error;
                 s = *src++;
+                /* Overflow check: prevent wrap-around */
+                if (lit_len > UINT64_MAX - s)
+                    goto error;
                 lit_len += s;
             } while (s == 255);
         }
@@ -336,6 +339,9 @@ buffer ak_decompress_lz4_sized(heap h, buffer compressed, u64 original_size)
                 if (src >= src_end)
                     goto error;
                 s = *src++;
+                /* Overflow check: prevent wrap-around */
+                if (match_len > UINT64_MAX - s)
+                    goto error;
                 match_len += s;
             } while (s == 255);
         }
@@ -374,7 +380,14 @@ error:
 u64 ak_compress_bound(u64 input_size)
 {
     /* LZ4 worst case: input_size + (input_size / 255) + 16 */
-    return input_size + (input_size / 255) + 16;
+    u64 extra = input_size / 255;
+    /* Overflow check: saturate to UINT64_MAX on overflow */
+    if (input_size > UINT64_MAX - extra)
+        return UINT64_MAX;
+    u64 sum = input_size + extra;
+    if (sum > UINT64_MAX - 16)
+        return UINT64_MAX;
+    return sum + 16;
 }
 
 boolean ak_compress_worthwhile(u64 input_size)

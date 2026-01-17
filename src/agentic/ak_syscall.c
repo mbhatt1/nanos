@@ -85,7 +85,15 @@ static u64 ak_json_extract_u64(buffer json, const char *key)
 
             u64 value = 0;
             while (j < len && data[j] >= '0' && data[j] <= '9') {
-                value = value * 10 + (data[j] - '0');
+                u64 digit = data[j] - '0';
+                /* FIX(BUG-051): Check for overflow before multiplication */
+                if (value > (UINT64_MAX - digit) / 10) {
+                    value = UINT64_MAX;  /* Saturate instead of wrap */
+                    /* Skip remaining digits */
+                    while (j < len && data[j] >= '0' && data[j] <= '9') j++;
+                    return value;
+                }
+                value = value * 10 + digit;
                 j++;
             }
             return value;
@@ -149,7 +157,7 @@ void ak_init(heap h)
         return;
 
     ak_state.h = h;
-    runtime_memset(&ak_state.stats, 0, sizeof(ak_dispatch_stats_t));
+    runtime_memset((u8 *)&ak_state.stats, 0, sizeof(ak_dispatch_stats_t));
 
     /* Initialize subsystems */
     ak_keys_init(h);
@@ -189,10 +197,11 @@ void ak_shutdown(void)
 ak_agent_context_t *ak_context_create(heap h, u8 *pid, ak_policy_t *policy)
 {
     ak_agent_context_t *ctx = allocate(h, sizeof(ak_agent_context_t));
-    if (!ctx)
+    /* BUG-A9-004 FIX: Check for both NULL and INVALID_ADDRESS */
+    if (!ctx || ctx == INVALID_ADDRESS)
         return NULL;
 
-    runtime_memset(ctx, 0, sizeof(ak_agent_context_t));
+    runtime_memset((u8 *)ctx, 0, sizeof(ak_agent_context_t));
 
     if (pid)
         runtime_memcpy(ctx->pid, pid, AK_TOKEN_ID_SIZE);
@@ -207,9 +216,20 @@ ak_agent_context_t *ak_context_create(heap h, u8 *pid, ak_policy_t *policy)
 
     /* Create budget tracker */
     ctx->budget = ak_budget_create(h, ctx->run_id, ctx->policy);
+    /* BUG-A9-005 FIX: Check budget creation success */
+    if (!ctx->budget) {
+        deallocate(h, ctx, sizeof(ak_agent_context_t));
+        return NULL;
+    }
 
     /* Create sequence tracker */
     ctx->seq_tracker = ak_seq_tracker_create(h, ctx->pid, ctx->run_id);
+    /* BUG-A9-005 FIX: Check seq_tracker creation success, cleanup budget on failure */
+    if (!ctx->seq_tracker) {
+        ak_budget_destroy(h, ctx->budget);
+        deallocate(h, ctx, sizeof(ak_agent_context_t));
+        return NULL;
+    }
 
     ctx->heap = h;
 
@@ -251,15 +271,28 @@ void ak_context_new_run(ak_agent_context_t *ctx, u8 *run_id_out)
     /* Generate new run_id */
     ak_generate_token_id(ctx->run_id);
 
-    /* Reset budget tracker */
+    /* FIX(BUG-052): Create new objects first, only destroy old ones on success */
+    /* Create new budget tracker */
+    ak_budget_tracker_t *new_budget = ak_budget_create(ctx->heap, ctx->run_id, ctx->policy);
+    if (!new_budget)
+        return;  /* Keep old budget if new creation fails */
+
+    /* Create new sequence tracker */
+    ak_seq_tracker_t *new_seq_tracker = ak_seq_tracker_create(ctx->heap, ctx->pid, ctx->run_id);
+    if (!new_seq_tracker) {
+        /* Cleanup new budget, keep old objects */
+        ak_budget_destroy(ctx->heap, new_budget);
+        return;
+    }
+
+    /* Both succeeded - now safe to destroy old objects and swap in new ones */
     if (ctx->budget)
         ak_budget_destroy(ctx->heap, ctx->budget);
-    ctx->budget = ak_budget_create(ctx->heap, ctx->run_id, ctx->policy);
+    ctx->budget = new_budget;
 
-    /* Reset sequence tracker */
     if (ctx->seq_tracker)
         ak_seq_tracker_destroy(ctx->heap, ctx->seq_tracker);
-    ctx->seq_tracker = ak_seq_tracker_create(ctx->heap, ctx->pid, ctx->run_id);
+    ctx->seq_tracker = new_seq_tracker;
 
     if (run_id_out)
         runtime_memcpy(run_id_out, ctx->run_id, AK_TOKEN_ID_SIZE);
@@ -761,6 +794,10 @@ ak_response_t *ak_handle_commit(ak_agent_context_t *ctx, ak_request_t *req)
 
 ak_response_t *ak_handle_call(ak_agent_context_t *ctx, ak_request_t *req)
 {
+    /* FIX(BUG-054): Fail-closed when context or budget is NULL */
+    if (!ctx || !ctx->budget)
+        return ak_response_error(ak_state.h, req, AK_E_BUDGET_EXCEEDED);
+
     if (!req->args)
         return ak_response_error(ctx->heap, req, -EINVAL);
 
@@ -776,7 +813,7 @@ ak_response_t *ak_handle_call(ak_agent_context_t *ctx, ak_request_t *req)
     }
 
     /* Check tool is allowed by policy */
-    if (!ak_policy_check_tool(ctx->policy, tool_name))
+    if (!ctx->policy || !ak_policy_check_tool(ctx->policy, tool_name))
         return ak_response_error(ctx->heap, req, AK_E_POLICY_DENIED);
 
     /* Check call budget */
@@ -784,21 +821,23 @@ ak_response_t *ak_handle_call(ak_agent_context_t *ctx, ak_request_t *req)
         return ak_response_error(ctx->heap, req, AK_E_BUDGET_EXCEEDED);
 
     /* Execute tool via WASM runtime */
-    ak_response_t *wasm_result = ak_wasm_execute_tool(ctx, req->cap, tool_name, req->args);
-    if (wasm_result)
+    ak_response_t *wasm_result = ak_wasm_execute_tool(ctx, tool_name, req->args, req->cap);
+    if (wasm_result) {
+        /* FIX(BUG-053): Only commit budget on successful execution */
+        ak_budget_commit(ctx->budget, AK_RESOURCE_CALLS, 1);
         return wasm_result;
+    }
 
-    /* If WASM execution failed, return error */
+    /* If WASM execution failed, return error WITHOUT consuming budget */
     buffer result = allocate_buffer(ctx->heap, 64);
     if (!result)
         return ak_response_error(ctx->heap, req, -ENOMEM);
 
     buffer_write(result, "{\"error\":\"Tool execution failed\"}", 33);
 
-    /* Commit call budget */
-    ak_budget_commit(ctx->budget, AK_RESOURCE_CALLS, 1);
+    /* FIX(BUG-053): Do NOT commit budget on failure - removed ak_budget_commit call */
 
-    return ak_response_success(ctx->heap, req, result);
+    return ak_response_error(ctx->heap, req, AK_E_TOOL_FAILED);
 }
 
 /* ak_handle_inference is implemented in ak_inference.c */
@@ -862,6 +901,10 @@ static void ak_agent_registry_remove(u8 *agent_id)
 
 ak_response_t *ak_handle_spawn(ak_agent_context_t *ctx, ak_request_t *req)
 {
+    /* FIX(BUG-054): Fail-closed when context or budget is NULL */
+    if (!ctx || !ctx->budget)
+        return ak_response_error(ak_state.h, req, AK_E_BUDGET_EXCEEDED);
+
     /*
      * SPAWN: Create child agent
      *
@@ -884,7 +927,7 @@ ak_response_t *ak_handle_spawn(ak_agent_context_t *ctx, ak_request_t *req)
     if (!child)
         return ak_response_error(ctx->heap, req, -ENOMEM);
 
-    runtime_memset(child, 0, sizeof(ak_agent_context_t));
+    runtime_memset((u8 *)child, 0, sizeof(ak_agent_context_t));
 
     /* Generate unique child ID */
     ak_generate_token_id(child->pid);
@@ -922,8 +965,12 @@ ak_response_t *ak_handle_spawn(ak_agent_context_t *ctx, ak_request_t *req)
 
     /* Build result with child ID */
     buffer result = allocate_buffer(ctx->heap, 128);
-    if (!result)
+    if (!result) {
+        /* BUG-A9-001 FIX: Clean up child context on allocation failure */
+        ak_agent_registry_remove(child->pid);
+        ak_context_destroy(ctx->heap, child);
         return ak_response_error(ctx->heap, req, -ENOMEM);
+    }
 
     char child_hex[AK_TOKEN_ID_SIZE * 2 + 1];
     ak_hex_encode(child->pid, AK_TOKEN_ID_SIZE, child_hex);
@@ -1001,9 +1048,12 @@ ak_response_t *ak_handle_send(ak_agent_context_t *ctx, ak_request_t *req)
     /* Copy payload */
     if (req->args) {
         msg->payload = allocate_buffer(ctx->heap, buffer_length(req->args));
-        if (msg->payload) {
-            buffer_write(msg->payload, buffer_ref(req->args, 0), buffer_length(req->args));
+        /* BUG-A9-003 FIX: Check for allocation failure */
+        if (!msg->payload || msg->payload == INVALID_ADDRESS) {
+            deallocate(ctx->heap, msg, sizeof(ak_message_t));
+            return ak_response_error(ctx->heap, req, -ENOMEM);
         }
+        buffer_write(msg->payload, buffer_ref(req->args, 0), buffer_length(req->args));
     } else {
         msg->payload = NULL;
     }
@@ -1019,8 +1069,19 @@ ak_response_t *ak_handle_send(ak_agent_context_t *ctx, ak_request_t *req)
     inbox->count++;
 
     buffer result = allocate_buffer(ctx->heap, 32);
-    if (!result)
+    if (!result) {
+        /* BUG-A9-002 FIX: Clean up enqueued message on allocation failure */
+        /* Dequeue the message we just added */
+        if (inbox->tail == msg)
+            inbox->tail = NULL;
+        if (inbox->head == msg)
+            inbox->head = msg->next;
+        inbox->count--;
+        if (msg->payload)
+            deallocate_buffer(msg->payload);
+        deallocate(ctx->heap, msg, sizeof(ak_message_t));
         return ak_response_error(ctx->heap, req, -ENOMEM);
+    }
 
     buffer_write(result, "{\"sent\":true,\"queued\":", 22);
     char count_buf[16];
@@ -1259,7 +1320,7 @@ void ak_handle_agent_crash(ak_agent_context_t *ctx)
     ak_audit_log_lifecycle(ctx->pid, ctx->run_id, AK_LIFECYCLE_CRASH);
 
     /* Cleanup pending transactions */
-    ak_heap_txn_rollback_all(ctx->run_id);
+    /* Note: transaction cleanup handled by heap subsystem */
 }
 
 void ak_handle_agent_timeout(ak_agent_context_t *ctx)
@@ -1298,8 +1359,8 @@ s64 ak_grant_capability(
         return -ENOMEM;
 
     /* Store in context's capability set */
-    if (ctx->caps && ctx->cap_count < ctx->cap_max) {
-        ctx->caps[ctx->cap_count++] = cap;
+    if (ctx->delegated_caps) {
+        table_set(ctx->delegated_caps, cap->tid, cap);
     }
 
     return 0;
@@ -1319,4 +1380,123 @@ void ak_revoke_run(ak_agent_context_t *ctx)
         return;
 
     ak_revocation_revoke_run(ctx->run_id, "run_revoked");
+}
+
+/* ============================================================
+ * SYSCALL HANDLER (called from main kernel syscall dispatcher)
+ * ============================================================ */
+
+/*
+ * Main syscall handler for Authority Kernel syscalls (1024-1100).
+ *
+ * Syscall convention:
+ *   arg0: agent_id pointer (u8[16]) or 0 to use current
+ *   arg1: request buffer pointer
+ *   arg2: request buffer length
+ *   arg3: response buffer pointer (output)
+ *   arg4: response buffer length
+ *   arg5: flags (reserved)
+ *
+ * Returns bytes written to response buffer, or negative errno.
+ */
+sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
+                             u64 arg3, u64 arg4, u64 arg5)
+{
+    /* Validate syscall range */
+    if (call < AK_SYS_BASE || call > AK_SYS_INFERENCE)
+        return -ENOSYS;
+
+    /* Get or create agent context */
+    /* For now, use a simple global context - production would use per-process */
+    static ak_agent_context_t *current_ctx = 0;
+    if (!current_ctx) {
+        if (!ak_state.h)
+            return -EAGAIN;  /* AK not initialized */
+        u8 default_pid[AK_TOKEN_ID_SIZE] = {0};
+        current_ctx = ak_context_create(ak_state.h, default_pid, 0);
+        if (!current_ctx)
+            return -ENOMEM;
+    }
+
+    /* Build request from syscall arguments */
+    ak_request_t req;
+    ak_memzero(&req, sizeof(req));
+    req.op = (u16)(call - AK_SYS_BASE);
+    req.seq = current_ctx->last_seq++;
+
+    /* arg1/arg2 contain the request data (if any) */
+    if (arg1 && arg2 > 0) {
+        req.args = alloca_wrap_buffer((void *)arg1, arg2);
+    }
+
+    /* Dispatch based on syscall */
+    ak_response_t *resp = 0;
+    switch (call) {
+    case AK_SYS_READ:
+        resp = ak_handle_read(current_ctx, &req);
+        break;
+    case AK_SYS_ALLOC:
+        resp = ak_handle_alloc(current_ctx, &req);
+        break;
+    case AK_SYS_WRITE:
+        resp = ak_handle_write(current_ctx, &req);
+        break;
+    case AK_SYS_DELETE:
+        resp = ak_handle_delete(current_ctx, &req);
+        break;
+    case AK_SYS_CALL:
+        resp = ak_handle_call(current_ctx, &req);
+        break;
+    case AK_SYS_BATCH:
+        resp = ak_handle_batch(current_ctx, &req);
+        break;
+    case AK_SYS_COMMIT:
+        resp = ak_handle_commit(current_ctx, &req);
+        break;
+    case AK_SYS_QUERY:
+        resp = ak_handle_query(current_ctx, &req);
+        break;
+    case AK_SYS_SPAWN:
+        resp = ak_handle_spawn(current_ctx, &req);
+        break;
+    case AK_SYS_SEND:
+        resp = ak_handle_send(current_ctx, &req);
+        break;
+    case AK_SYS_RECV:
+        resp = ak_handle_recv(current_ctx, &req);
+        break;
+    case AK_SYS_ASSERT:
+        resp = ak_handle_assert(current_ctx, &req);
+        break;
+    case AK_SYS_RESPOND:
+        resp = ak_handle_respond(current_ctx, &req);
+        break;
+    case AK_SYS_INFERENCE:
+        /* Inference handler would go here */
+        return -ENOSYS;
+    default:
+        return -ENOSYS;
+    }
+
+    if (!resp)
+        return -EFAULT;
+
+    /* Copy response to user buffer */
+    sysreturn result = resp->status;
+    if (resp->result && arg3 && arg4 > 0) {
+        u64 copy_len = buffer_length(resp->result);
+        if (copy_len > arg4)
+            copy_len = arg4;
+        ak_memcpy((void *)arg3, buffer_ref(resp->result, 0), copy_len);
+        result = (sysreturn)copy_len;
+    }
+
+    /* Clean up response */
+    if (resp->result)
+        deallocate_buffer(resp->result);
+    if (resp->error_msg)
+        deallocate_buffer(resp->error_msg);
+    deallocate(current_ctx->heap, resp, sizeof(ak_response_t));
+
+    return result;
 }
