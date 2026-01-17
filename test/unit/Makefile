@@ -50,9 +50,38 @@ SRCS-ak_effects_test= \
 	$(RUNTIME)\
 	$(SRCDIR)/unix_process/unix_process_runtime.c
 
-# Negative/edge case tests - standalone, no runtime dependencies
+# Standalone Authority Kernel tests - no runtime dependencies
+# These use mock implementations for standalone testing
+
+SRCS-ak_approval_test= \
+	$(CURDIR)/ak_approval_test.c
+
+SRCS-ak_audit_test= \
+	$(CURDIR)/ak_audit_test.c
+
+SRCS-ak_capability_test= \
+	$(CURDIR)/ak_capability_test.c
+
+SRCS-ak_crypto_test= \
+	$(CURDIR)/ak_crypto_test.c
+
+SRCS-ak_ipc_test= \
+	$(CURDIR)/ak_ipc_test.c
+
+SRCS-ak_multiprocess_test= \
+	$(CURDIR)/ak_multiprocess_test.c
+
 SRCS-ak_negative_test= \
 	$(CURDIR)/ak_negative_test.c
+
+SRCS-ak_state_test= \
+	$(CURDIR)/ak_state_test.c
+
+SRCS-ak_syscall_test= \
+	$(CURDIR)/ak_syscall_test.c
+
+SRCS-ak_wasm_test= \
+	$(CURDIR)/ak_wasm_test.c
 
 SRCS-ak_pattern_test= \
 	$(CURDIR)/ak_pattern_test.c \
@@ -194,10 +223,19 @@ SYSTEM_INCLUDES= -isystem $(ARCHDIR) -isystem $(SRCDIR) -isystem $(SRCDIR)/http 
 TEST_CFLAGS= $(SYSTEM_INCLUDES) $(STRICT_WARN_FLAGS)
 
 # Apply strict warnings to test source files
+CFLAGS-ak_approval_test.c=	$(TEST_CFLAGS)
+CFLAGS-ak_audit_test.c=		$(TEST_CFLAGS)
+CFLAGS-ak_capability_test.c=	$(TEST_CFLAGS)
+CFLAGS-ak_crypto_test.c=	$(TEST_CFLAGS)
 CFLAGS-ak_effects_test.c=	$(TEST_CFLAGS)
+CFLAGS-ak_ipc_test.c=		$(TEST_CFLAGS)
+CFLAGS-ak_multiprocess_test.c=	$(TEST_CFLAGS)
 CFLAGS-ak_negative_test.c=	$(TEST_CFLAGS)
 CFLAGS-ak_pattern_test.c=	$(TEST_CFLAGS)
 CFLAGS-ak_policy_test.c=	$(TEST_CFLAGS)
+CFLAGS-ak_state_test.c=		$(TEST_CFLAGS)
+CFLAGS-ak_syscall_test.c=	$(TEST_CFLAGS)
+CFLAGS-ak_wasm_test.c=		$(TEST_CFLAGS)
 CFLAGS-bitmap_test.c=		$(TEST_CFLAGS)
 CFLAGS-buffer_test.c=		$(TEST_CFLAGS)
 CFLAGS-closure_test.c=		$(TEST_CFLAGS)
