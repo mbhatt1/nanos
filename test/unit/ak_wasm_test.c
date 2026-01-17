@@ -494,7 +494,7 @@ static void compute_module_hash(mock_buffer_t *bytecode, u8 *hash_out)
     for (int i = 0; i < AK_HASH_SIZE; i++) {
         hash_out[i] = (h >> (i % 8 * 8)) & 0xff;
         if (i % 8 == 7)
-            h = h * 0x100000001b3ULL + (u64)i;
+            h = h * (u64)0x100000001b3ULL + (u64)i;
     }
 }
 
