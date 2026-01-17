@@ -252,7 +252,7 @@ CFLAGS-tuple_test.c=		$(LEGACY_TEST_CFLAGS)
 CFLAGS-udp_test.c=		$(LEGACY_TEST_CFLAGS)
 CFLAGS-vector_test.c=		$(LEGACY_TEST_CFLAGS)
 
-CLEANDIRS+=	$(OUTDIR)
+CLEANDIRS+=	$(OBJDIR) $(OUTDIR)/tools
 
 # gcov support (can be disabled for sanitizer builds via DISABLE_GCOV=1)
 ifndef DISABLE_GCOV

@@ -113,7 +113,7 @@ boolean objcache_test(heap meta, heap parent, bytes objsize)
         return false;
 
     if (heap_allocated(h) > 0) {
-        msg_err("%s: allocated (%d) should be 0; fail", func_ss, heap_allocated(h));
+        msg_err("%s: allocated (%ld) should be 0; fail", func_ss, heap_allocated(h));
         return false;
     }
     destroy_heap(h);
@@ -166,7 +166,7 @@ boolean preallocated_objcache_test(heap meta, heap parent, bytes objsize, boolea
             return false;
 
         if (heap_allocated(h) > 0) {
-            msg_err("%s: allocated (%d) should be 0; fail", func_ss, heap_allocated(h));
+            msg_err("%s: allocated (%ld) should be 0; fail", func_ss, heap_allocated(h));
             return false;
         }
     }

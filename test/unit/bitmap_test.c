@@ -182,7 +182,7 @@ boolean test_bitmap_alloc(bitmap b, u64 start, u64 end) {
  */
 boolean test_range_check_set(bitmap b) {
     u64 start = (u64)(rand() % 4096);
-    u64 nbits = (start < 4096) ? (u64)(rand() % (4096 - (int)start)) : 0;
+    u64 nbits = (start < 4096) ? (u64)(rand() % (int)(4096 - start)) : 0;
     boolean set = rand() & 1;
     bitmap_range_check_and_set(b, start, nbits, false, set);
     // check that specified range is set properly
@@ -251,7 +251,7 @@ boolean basic_test(void)
     if (!test_bitmap_alloc(b, 0, 4096)) return false;
     // generate random number between 0 and 4096
     u64 start = (u64)(rand() % 4096);
-    u64 end = (start < 4096) ? (u64)(rand() % (4096 - (int)start) + (int)start) : start;
+    u64 end = (start < 4096) ? (u64)((rand() % (int)(4096 - start)) + (int)start) : start;
     if(!test_bitmap_alloc(b, start, end)) return false; 
 
     // tests bitmap range check and set

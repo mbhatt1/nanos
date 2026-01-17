@@ -287,7 +287,8 @@ boolean ringbuf_tests(heap h)
 
     test_assert(b != INVALID_ADDRESS);
 
-    v4 = v8 = 0xdeadbeef;
+    v8 = 0xdeadbeef;
+    v4 = 0xdeadbeef;
     test_assert(ringbuf_write(b, &v4, sizeof(v4)) == true);
     test_assert(ringbuf_read(b, &v8, sizeof(v8)) == false);
     v4 = 0;

@@ -235,7 +235,7 @@ static boolean alloc_gte_test(heap h)
         deallocate_u64((heap)idh, id, 1);
     }
     if (heap_allocated((heap)idh) > 0) {
-        msg_err("%s error: non-zero heap allocated (%d)", func_ss, heap_allocated((heap)idh));
+        msg_err("%s error: non-zero heap allocated (%ld)", func_ss, heap_allocated((heap)idh));
         return false;
     }
     destroy_heap((heap)idh);
