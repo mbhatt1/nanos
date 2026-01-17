@@ -79,6 +79,7 @@ struct _closure_common {
 /* a basic closure has a struct without any closure-specific fields */
 #define closure_func_basic(__name, __ret, __func, ...)                              \
     static __ret __func(struct _closure_##__name *__self, ##__VA_ARGS__);           \
+    __attribute__((unused))                                                         \
     static __name _fill_##__func(u64 ctx, struct _closure_##__name *p, bytes s) {   \
         p->__apply = __func;                                                        \
         p->__c.ctx = ctx;                                                           \

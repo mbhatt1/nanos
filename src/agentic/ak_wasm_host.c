@@ -496,6 +496,7 @@ s64 ak_host_secret_get(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
         table t = ctx->agent->delegated_caps;
         if (t && t != INVALID_ADDRESS) {
             table_foreach(t, tid, cap) {
+                (void)tid;  /* unused - we only need the capability value */
                 ak_capability_t *c = (ak_capability_t *)cap;
                 if (c && c->type == AK_CAP_SECRETS) {
                     secrets_cap = c;

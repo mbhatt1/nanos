@@ -61,15 +61,19 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm build-essential qemu-system-x86
+          sudo apt-get install -y build-essential
 
-      - name: Build kernel with AK enabled
+      - name: Build and run AK unit tests
         run: |
-          make -j$(nproc) kernel PLATFORM=pc CONFIG_AK_ENABLED=1
-
-      - name: Run AK tests
-        run: |
-          cd src/agentic && make test || echo "AK tests not yet configured"
+          cd test/unit && make clean && make
+          echo "=== Running AK Tests ==="
+          cd ../../output/test/unit/bin
+          for test in ak_*; do
+            if [ -x "$test" ]; then
+              echo "Running $test..."
+              ./"$test" || exit 1
+            fi
+          done
 
   macos-build-test:
     name: macOS Build Test

@@ -289,6 +289,7 @@ void ak_approval_list_pending(u8 *run_id, void *cb /* closure */)
         return;
 
     table_foreach(approval_state.pending, id, ar_ptr) {
+        (void)id;  /* unused - we iterate by value */
         ak_approval_request_t *ar = (ak_approval_request_t *)ar_ptr;
         if (!ar)
             continue;
@@ -324,6 +325,7 @@ u64 ak_approval_pending_count(void)
 
     u64 count = 0;
     table_foreach(approval_state.pending, id, ar_ptr) {
+        (void)id;  /* unused - we iterate by value */
         ak_approval_request_t *ar = (ak_approval_request_t *)ar_ptr;
         if (ar->status == AK_APPROVAL_PENDING)
             count++;

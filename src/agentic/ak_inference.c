@@ -367,15 +367,11 @@ static ak_inference_response_t *virtio_request(buffer request_json)
      * 4. Read JSON response
      */
 
+    /* Prepare length-prefixed request (big-endian) */
     u32 req_len = buffer_length(request_json);
-    u8 len_buf[4];
-    len_buf[0] = (req_len >> 24) & 0xFF;
-    len_buf[1] = (req_len >> 16) & 0xFF;
-    len_buf[2] = (req_len >> 8) & 0xFF;
-    len_buf[3] = req_len & 0xFF;
+    (void)req_len;  /* TODO: use when virtio-serial is implemented */
 
-    /* Write would go to virtio fd here */
-    /* read would get response */
+    /* TODO: Write len_buf + request_json to virtio fd, read response */
 
     /* Parse response */
     res->success = false;
