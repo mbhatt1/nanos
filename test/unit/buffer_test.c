@@ -326,7 +326,7 @@ boolean ringbuf_tests(heap h)
 
     /* Buffer size must be a power of 2. */
     for (int i = 0; i < 10; i++) {
-        bytes new_size = random() & 0xFFFFFF;
+        bytes new_size = (u64)random() & 0xFFFFFF;
         test_assert(ringbuf_extend(b, new_size) == true);
         test_assert((b->length >= new_size) && (b->length == U64_FROM_BIT(find_order(b->length))));
     }

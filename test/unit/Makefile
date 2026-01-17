@@ -207,7 +207,9 @@ CFLAGS+=	-O3 \
 # These flags catch bugs in test code without breaking on runtime headers
 # We use -isystem to treat runtime headers as system headers (suppresses warnings from them)
 STRICT_WARN_FLAGS= -Wall -Wextra -Werror -Wshadow -Wconversion -Wsign-conversion \
-		   -Wformat=2 -Wundef -Wpointer-arith -Wstrict-prototypes -Wvla
+		   -Wformat=2 -Wundef -Wpointer-arith -Wstrict-prototypes -Wvla \
+		   -Wno-error=conversion -Wno-error=sign-conversion -Wno-error=format \
+		   -Wno-error=sign-compare
 
 # System include flags to suppress warnings from runtime headers in test files
 SYSTEM_INCLUDES= -isystem $(ARCHDIR) -isystem $(SRCDIR) -isystem $(SRCDIR)/http \

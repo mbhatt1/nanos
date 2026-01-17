@@ -264,7 +264,7 @@ static boolean preallocated_table_tests(heap h, u64 (*key_function)(void *x), u6
     table_validate(t, ss("preallocated_table_tests: after fill"));
 
     if (heap_allocated(h) != heap_occupancy) {
-        msg_err("%s error: unexpected allocation: heap_allocated(h) %lu, originally %lu",
+        msg_err("%s error: unexpected allocation: heap_allocated(h) %ld, originally %ld",
                 func_ss, heap_allocated(h), heap_occupancy);
         return false;
     }
@@ -284,7 +284,7 @@ static boolean preallocated_table_tests(heap h, u64 (*key_function)(void *x), u6
     destroy_heap(pageheap);
 
     if (heap_allocated(h) != heap_occupancy_before) {
-        msg_err("%s leak: heap_allocated(h) %lu, originally %lu",
+        msg_err("%s leak: heap_allocated(h) %ld, originally %ld",
                 func_ss, heap_allocated(h), heap_occupancy_before);
         return false;
     }
