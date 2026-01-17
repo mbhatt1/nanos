@@ -8,10 +8,19 @@
  * These tests run on the host without booting the unikernel.
  */
 
-#include <runtime.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+/* Local type definitions to avoid runtime.h dependency */
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef int64_t s64;
+typedef bool boolean;
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1

@@ -126,11 +126,11 @@ boolean test_wrap(heap h) {
     u64 map = (u64)rand();
     map = (map << 32) | (u64)rand();
     bitmap b = bitmap_wrap(h, &map, 64);
-    for (int i = 0; i < 64; i++) {
-        if (((map & (1ULL << i)) && !bitmap_get(b, i)) || 
+    for (u64 i = 0; i < 64; i++) {
+        if (((map & (1ULL << i)) && !bitmap_get(b, i)) ||
             (!(map & (1ULL << i)) && bitmap_get(b, i))) {
-            msg_err("%s: wrap failed for bitmap at bit %d | map: %ld bitmap: %ld", func_ss,
-                i, (map & (1ULL << i)), bitmap_get(b, i));
+            msg_err("%s: wrap failed for bitmap at bit %lld | map: %ld bitmap: %ld", func_ss,
+                (long long)i, (map & (1ULL << i)), bitmap_get(b, i));
             bitmap_unwrap(b);
             return false;
         }
@@ -159,10 +159,10 @@ boolean test_bitmap_alloc(bitmap b, u64 start, u64 end) {
             nbits >>= 1;
     }
     // check that specified range is set properly
-    for (int i = first; i < first + nbits; i++) {
+    for (u64 i = first; i < first + nbits; i++) {
         if (bitmap_get(b, i) != 1) {
-            msg_err("%s failed at bit %d | expected: %d actual: %d", func_ss,
-                i, 1, bitmap_get(b, i));
+            msg_err("%s failed at bit %lld | expected: %d actual: %d", func_ss,
+                (long long)i, 1, bitmap_get(b, i));
             if (!bitmap_dealloc(b, first, nbits))
                 msg_err("%s: bitmap_dealloc failed", func_ss);
             return false;
@@ -182,14 +182,14 @@ boolean test_bitmap_alloc(bitmap b, u64 start, u64 end) {
  */
 boolean test_range_check_set(bitmap b) {
     u64 start = (u64)(rand() % 4096);
-    u64 nbits = (u64)(rand() % (4096 - start));
+    u64 nbits = (start < 4096) ? (u64)(rand() % (4096 - (int)start)) : 0;
     boolean set = rand() & 1;
     bitmap_range_check_and_set(b, start, nbits, false, set);
     // check that specified range is set properly
-    for (int i = start; i < start + nbits; i++) {
+    for (u64 i = start; i < start + nbits; i++) {
         if (bitmap_get(b, i) != set) {
-            msg_err("%s failed for bitmap at bit %d | expected: %d actual: %d", func_ss,
-                i, set, bitmap_get(b, i));
+            msg_err("%s failed for bitmap at bit %lld | expected: %d actual: %d", func_ss,
+                (long long)i, set, bitmap_get(b, i));
             return false;
         }
     }
@@ -228,7 +228,7 @@ boolean test_range_get_first(bitmap b) {
     return true;
 }
 
-boolean basic_test()
+boolean basic_test(void)
 {
     heap h = init_process_runtime();
     // tests bitmap allocate
@@ -251,7 +251,7 @@ boolean basic_test()
     if (!test_bitmap_alloc(b, 0, 4096)) return false;
     // generate random number between 0 and 4096
     u64 start = (u64)(rand() % 4096);
-    u64 end = (u64)(rand() % (4096 - start) + start);
+    u64 end = (start < 4096) ? (u64)(rand() % (4096 - (int)start) + (int)start) : start;
     if(!test_bitmap_alloc(b, start, end)) return false; 
 
     // tests bitmap range check and set

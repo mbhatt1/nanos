@@ -46,9 +46,7 @@ SKIP_TEST=	network_test udp_test
 # These tests run on the host without booting the unikernel
 
 SRCS-ak_effects_test= \
-	$(CURDIR)/ak_effects_test.c \
-	$(RUNTIME)\
-	$(SRCDIR)/unix_process/unix_process_runtime.c
+	$(CURDIR)/ak_effects_test.c
 
 # Standalone Authority Kernel tests - no runtime dependencies
 # These use mock implementations for standalone testing
@@ -84,14 +82,10 @@ SRCS-ak_wasm_test= \
 	$(CURDIR)/ak_wasm_test.c
 
 SRCS-ak_pattern_test= \
-	$(CURDIR)/ak_pattern_test.c \
-	$(RUNTIME)\
-	$(SRCDIR)/unix_process/unix_process_runtime.c
+	$(CURDIR)/ak_pattern_test.c
 
 SRCS-ak_policy_test= \
-	$(CURDIR)/ak_policy_test.c \
-	$(RUNTIME)\
-	$(SRCDIR)/unix_process/unix_process_runtime.c
+	$(CURDIR)/ak_policy_test.c
 
 SRCS-bitmap_test= \
 	$(CURDIR)/bitmap_test.c \
@@ -258,7 +252,7 @@ CFLAGS-tuple_test.c=		$(LEGACY_TEST_CFLAGS)
 CFLAGS-udp_test.c=		$(LEGACY_TEST_CFLAGS)
 CFLAGS-vector_test.c=		$(LEGACY_TEST_CFLAGS)
 
-CLEANDIRS+=	$(OBJDIR)/test
+CLEANDIRS+=	$(OUTDIR)
 
 # gcov support (can be disabled for sanitizer builds via DISABLE_GCOV=1)
 ifndef DISABLE_GCOV

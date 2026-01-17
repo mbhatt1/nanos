@@ -142,7 +142,7 @@ boolean byteorder_tests(heap h)
 
 boolean concat_tests(heap h)
 {
-    int seed_size = 0x4000;
+    bytes seed_size = 0x4000;
     boolean failure = true;
     buffer wb = (buffer)0;
     buffer b = allocate_buffer(h, 10);
@@ -151,7 +151,7 @@ boolean concat_tests(heap h)
     buffer seed_buffer = allocate_buffer(h, seed_size);
     test_assert(seed_buffer->length == seed_size);
     // getrandom() uses buffer_length() to determine how much data to fill. We are
-    // using buffer_produce() to set the amount of data in buffer, so getrandom() will 
+    // using buffer_produce() to set the amount of data in buffer, so getrandom() will
     // initialize/fill the allocated size
     buffer_produce(seed_buffer, seed_size);
     test_assert(random_buffer(seed_buffer) == seed_size);
@@ -185,38 +185,38 @@ boolean concat_tests(heap h)
     // initialize a very small buffer so we can be certain buffer will
     // extend when we write.
     b = allocate_buffer(h, 1);
-    int offset = 0;
-    int size;
+    bytes offset = 0;
+    bytes size;
     // write into buffer with various sized chunks from source-buffer
-    // keep track of offset into source-buffer, and make sure we don't 
+    // keep track of offset into source-buffer, and make sure we don't
     // read beyond source-buffer
     for (size = 1, offset = 0; offset < seed_size; size <<= 1) {
-	
-	    int current_length = buffer_length(b);
-	    if (current_length + size > seed_size)
-		    size = seed_size - current_length;
+
+        bytes current_length = buffer_length(b);
+        if (current_length + size > seed_size)
+            size = seed_size - current_length;
 
         //void * prev = buffer_ref(b, current_length);;
 
-	    buffer_write(b, buffer_ref(seed_buffer, offset), size);
-    	test_assert(buffer_length(b) == (size + current_length));
-    	wb = sub_buffer(h, seed_buffer, 0,  offset + size);
-    	test_assert(buffer_compare(b, wb) == true);
-	    unwrap_buffer(h, wb);
-	    wb = (buffer)0;
+        buffer_write(b, buffer_ref(seed_buffer, offset), size);
+        test_assert(buffer_length(b) == (size + current_length));
+        wb = sub_buffer(h, seed_buffer, 0, offset + size);
+        test_assert(buffer_compare(b, wb) == true);
+        unwrap_buffer(h, wb);
+        wb = (buffer)0;
 
-	    offset += size;
-  }
-  // end result in a round about way, all of source-buffer has been written to test-buffer
-  // validate they match
-  test_assert(buffer_compare(b, seed_buffer) == true);
+        offset += size;
+    }
+    // end result in a round about way, all of source-buffer has been written to test-buffer
+    // validate they match
+    test_assert(buffer_compare(b, seed_buffer) == true);
 
-  /* test extension of a consumed buffer */
-  buffer_consume(b, buffer_length(b));
-  size = b->length / 2;
-  test_assert(buffer_extend(b, size) == true);
-  test_assert(buffer_length(b) == 0);
-  buffer_produce(b, size);
+    /* test extension of a consumed buffer */
+    buffer_consume(b, buffer_length(b));
+    size = b->length / 2;
+    test_assert(buffer_extend(b, size) == true);
+    test_assert(buffer_length(b) == 0);
+    buffer_produce(b, size);
 
   failure = false;
   fail:
