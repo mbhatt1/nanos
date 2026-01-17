@@ -1,0 +1,194 @@
+/**
+ * Authority Nanos - Custom Theme Styles
+ * Enhances the default VitePress theme with security-focused design
+ */
+
+:root {
+  /* Brand Colors - Security-focused palette */
+  --vp-c-brand-1: #e74c3c;
+  --vp-c-brand-2: #c0392b;
+  --vp-c-brand-3: #a93226;
+  --vp-c-brand-soft: rgba(231, 76, 60, 0.14);
+  
+  /* Accent Colors */
+  --vp-c-green-1: #27ae60;
+  --vp-c-green-2: #229954;
+  --vp-c-green-3: #1e8449;
+  --vp-c-green-soft: rgba(39, 174, 96, 0.14);
+  
+  --vp-c-yellow-1: #f39c12;
+  --vp-c-yellow-2: #e67e22;
+  --vp-c-yellow-3: #d35400;
+  
+  /* Enhanced Typography */
+  --vp-font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+  --vp-font-family-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, Consolas, monospace;
+}
+
+/* Hero Section Enhancements */
+.VPHero .name {
+  background: linear-gradient(135deg, var(--vp-c-brand-1) 0%, var(--vp-c-brand-2) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 800;
+}
+
+.VPHero .tagline {
+  font-size: 1.4rem;
+  line-height: 1.6;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+/* Feature Cards Enhancement */
+.VPFeature {
+  border: 1px solid var(--vp-c-divider);
+  transition: all 0.3s ease;
+  border-radius: 12px;
+}
+
+.VPFeature:hover {
+  border-color: var(--vp-c-brand-1);
+  box-shadow: 0 8px 24px rgba(231, 76, 60, 0.12);
+  transform: translateY(-2px);
+}
+
+.VPFeature .icon {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+}
+
+/* Code Block Improvements */
+div[class*='language-'] {
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+div[class*='language-']:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* Mermaid Diagram Styling */
+.mermaid {
+  text-align: center;
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: var(--vp-c-bg-soft);
+  border-radius: 8px;
+  border: 1px solid var(--vp-c-divider);
+}
+
+/* Custom Info Boxes */
+.custom-block.tip {
+  border-left: 4px solid var(--vp-c-green-1);
+}
+
+.custom-block.warning {
+  border-left: 4px solid var(--vp-c-yellow-1);
+}
+
+.custom-block.danger {
+  border-left: 4px solid var(--vp-c-brand-1);
+}
+
+/* Navigation Enhancement */
+.VPNav {
+  backdrop-filter: blur(12px);
+}
+
+/* Sidebar Enhancement */
+.VPSidebar {
+  border-right: 1px solid var(--vp-c-divider);
+}
+
+.VPSidebarItem.is-active {
+  font-weight: 600;
+  color: var(--vp-c-brand-1);
+}
+
+/* Button Enhancements */
+.VPButton.brand {
+  background: linear-gradient(135deg, var(--vp-c-brand-1) 0%, var(--vp-c-brand-2) 100%);
+  border: none;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.VPButton.brand:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(231, 76, 60, 0.3);
+}
+
+/* Footer Enhancement */
+.VPFooter {
+  border-top: 1px solid var(--vp-c-divider);
+  padding-top: 2rem;
+}
+
+/* Link Styling */
+a {
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: var(--vp-c-brand-1);
+}
+
+/* Badge Styling for Status Indicators */
+.vp-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.vp-badge.stable {
+  background: var(--vp-c-green-soft);
+  color: var(--vp-c-green-1);
+}
+
+.vp-badge.active {
+  background: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+}
+
+/* Responsive Enhancements */
+@media (max-width: 768px) {
+  .VPHero .name {
+    font-size: 2rem;
+  }
+  
+  .VPHero .tagline {
+    font-size: 1.1rem;
+  }
+  
+  .mermaid {
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+}
+
+/* Dark Mode Adjustments */
+.dark {
+  --vp-c-brand-1: #ff6b6b;
+  --vp-c-brand-2: #ff5252;
+  --vp-c-brand-3: #ff4040;
+}
+
+.dark .mermaid {
+  filter: invert(0.92) hue-rotate(180deg);
+}
+
+/* Print Styles */
+@media print {
+  .VPNav,
+  .VPSidebar,
+  .VPFooter {
+    display: none;
+  }
+  
+  .VPContent {
+    max-width: 100%;
+  }
+}
