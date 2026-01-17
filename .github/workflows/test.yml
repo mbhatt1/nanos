@@ -89,13 +89,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install nasm x86_64-elf-binutils aarch64-elf-binutils
-
-      - name: Build x86_64
-        run: |
-          make -j$(sysctl -n hw.ncpu) kernel PLATFORM=pc
+          brew install nasm aarch64-elf-binutils
 
       - name: Build ARM64
         run: |
-          make clean
           make -j$(sysctl -n hw.ncpu) kernel PLATFORM=virt
