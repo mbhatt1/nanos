@@ -323,7 +323,7 @@ static struct {
 static void generate_token_id(u8 *out)
 {
     for (int i = 0; i < AK_TOKEN_ID_SIZE; i++)
-        out[i] = rand() & 0xFF;
+        out[i] = (u8)(rand() & 0xFF);
 }
 
 static mock_buffer_t *mock_buffer_create(u64 capacity)

@@ -130,10 +130,10 @@ static void mock_sha256(const uint8_t *data, size_t len, uint8_t *output)
 
     /* Output as big-endian bytes */
     for (int i = 0; i < 8; i++) {
-        output[i*4]     = (h[i] >> 24) & 0xFF;
-        output[i*4 + 1] = (h[i] >> 16) & 0xFF;
-        output[i*4 + 2] = (h[i] >> 8)  & 0xFF;
-        output[i*4 + 3] = h[i] & 0xFF;
+        output[i*4]     = (uint8_t)((h[i] >> 24) & 0xFF);
+        output[i*4 + 1] = (uint8_t)((h[i] >> 16) & 0xFF);
+        output[i*4 + 2] = (uint8_t)((h[i] >> 8)  & 0xFF);
+        output[i*4 + 3] = (uint8_t)(h[i] & 0xFF);
     }
 }
 
@@ -1418,7 +1418,7 @@ bool test_cap_token_brute_force_resistance(void)
     int failures = 0;
     for (int attempt = 0; attempt < 1000; attempt++) {
         for (int i = 0; i < AK_MAC_SIZE; i++) {
-            forged.mac[i] = rand() & 0xFF;
+            forged.mac[i] = (uint8_t)(rand() & 0xFF);
         }
 
         if (mock_cap_verify(&forged) != 0) {
