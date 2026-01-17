@@ -24,6 +24,7 @@ typedef struct test_node {
 closure_func_basic(rmnode_handler, boolean, basic_test_validate,
                    rmnode node)
 {
+    (void)__self;  /* unused closure parameter */
     static int count = 0;
     int nresults = sizeof(rm_results) / sizeof(struct rm_result);
     range r = range_from_rmnode(node);

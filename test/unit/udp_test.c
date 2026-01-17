@@ -35,11 +35,11 @@ int main(int argc, char ** argv)
     u16 lport = DEFAULT_LOCAL_PORT;
     u64 result;
     if (get_u64(t, sym(localport), &result))
-        lport = result;
+        lport = (u16)result;
 
     int iterations = DEFAULT_LOCAL_ITERATIONS;
     if (get_u64(t, sym(iterations), &result))
-        iterations = result;
+        iterations = (int)result;
 
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0)
@@ -68,12 +68,12 @@ int main(int argc, char ** argv)
 	if (i == iterations - 1 && terminate)
 	    strcpy(sbuf, "terminate");
 
-	int slen = sendto(fd, sbuf, MSGSIZE, 0, (struct sockaddr *)&dsin, sizeof(dsin));
+	ssize_t slen = sendto(fd, sbuf, MSGSIZE, 0, (struct sockaddr *)&dsin, sizeof(dsin));
 	// XXX retry on EINTR / EAGAIN
 	if (slen < 0)
 	    test_perror("sendto");
 
-	int rlen = recvfrom(fd, rbuf, BUFLEN, 0, (struct sockaddr *)&rsin, &rsin_len);
+	ssize_t rlen = recvfrom(fd, rbuf, BUFLEN, 0, (struct sockaddr *)&rsin, &rsin_len);
 	if (rlen < 0)
 	    test_perror("recvfrom");
 	// XXX retry

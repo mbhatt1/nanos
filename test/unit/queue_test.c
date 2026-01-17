@@ -35,14 +35,14 @@ static volatile u64 vec_count;
 /* we don't have a thread-safe id allocator, settle for brute force search */
 static u64 find_free(void)
 {
-    u64 n, start = random() % RESULTS_VEC_SIZE;
+    u64 n, start = (u64)random() % RESULTS_VEC_SIZE;
     u64 i = start;
     while ((n = __atomic_exchange_n(&results[i], 1, __ATOMIC_ACQUIRE)) == 1) {
         i = (i + 1) % RESULTS_VEC_SIZE;
         if (i == start)         /* full */
             return INVALID;
     }
-    u64 o = fetch_and_add((u64*)&vec_count, -1);
+    u64 o = fetch_and_add((u64*)&vec_count, (u64)-1);
     test_assert(o > 0);
     return i;
 }
@@ -63,9 +63,9 @@ static void * test_child(void *arg)
 
     do {
         if (!drain_and_exit) {
-            int n_enqueue = random() % MAX_CONSECUTIVE_OPS;
-            queuetest_debug("enqueue %d...\n", n_enqueue);
-            for (int i = 0; i < n_enqueue; i++) {
+            u64 n_enqueue = (u64)random() % MAX_CONSECUTIVE_OPS;
+            queuetest_debug("enqueue %lld...\n", n_enqueue);
+            for (u64 i = 0; i < n_enqueue; i++) {
                 u64 n = find_free();
                 /* Allow enqueue failure here - even with an atomic
                    occupancy count, we can't be certain of the full
@@ -85,9 +85,9 @@ static void * test_child(void *arg)
             queuetest_debug("...done\n");
         }
 
-        int n_dequeue = random() % MAX_CONSECUTIVE_OPS;
-        queuetest_debug("dequeue %d...\n", n_dequeue);
-        for (int i = 0; i < n_dequeue; i++) {
+        u64 n_dequeue = (u64)random() % MAX_CONSECUTIVE_OPS;
+        queuetest_debug("dequeue %lld...\n", n_dequeue);
+        for (u64 i = 0; i < n_dequeue; i++) {
             /* ...same with empty condition */
             u64 n = (u64)dequeue(q);
             if (n == INVALID) {
@@ -158,16 +158,16 @@ static void n_test(void)
     queue q = allocate_queue(test_heap, QUEUE_SIZE);
     test_assert(q != INVALID_ADDRESS);
     void **buf = allocate(test_heap, QUEUE_SIZE * sizeof(u64));
-    for (int n = QUEUE_SIZE; n > 1; n >>= 1) {
-        int items = QUEUE_SIZE / n;
+    for (u64 n = QUEUE_SIZE; n > 1; n >>= 1) {
+        u64 items = QUEUE_SIZE / n;
         for (u64 x = 0; x < items; x++) {
-            for (int y = 0; y < n; y++)
+            for (u64 y = 0; y < n; y++)
                 buf[y] = (void *)x;
-            test_assert(enqueue_n(q, buf, n));
+            test_assert(enqueue_n(q, buf, (int)n));
         }
         for (u64 x = 0; x < items; x++) {
-            test_assert(dequeue_n(q, buf, n));
-            for (int y = 0; y < n; y++) {
+            test_assert(dequeue_n(q, buf, (int)n));
+            for (u64 y = 0; y < n; y++) {
                 test_assert(buf[y] == (void *)x);
             }
         }
@@ -214,8 +214,8 @@ static void basic_test(boolean multi)
 
     /* some number of randomized passes to test ring wrap */
     vec_count = QUEUE_SIZE;
-    for (int pass = 0; pass < BASIC_TEST_RANDOM_PASSES; pass++) {
-        u64 n_enqueue = random() % vec_count;
+    for (u64 pass = 0; pass < BASIC_TEST_RANDOM_PASSES; pass++) {
+        u64 n_enqueue = (u64)random() % vec_count;
         for (u64 i = 0; i < n_enqueue; i++) {
             u64 n = find_free();
             assert(n != INVALID);
@@ -223,7 +223,7 @@ static void basic_test(boolean multi)
         }
         test_assert(queue_length(q) == QUEUE_SIZE - vec_count);
         u64 n_dequeue = pass < (BASIC_TEST_RANDOM_PASSES - 1) ?
-            random() % queue_length(q) : queue_length(q);
+            (u64)random() % queue_length(q) : queue_length(q);
         for (u64 i = 0; i < n_dequeue; i++) {
             u64 n = test_dequeue(q, multi);
             test_assert(n != INVALID);

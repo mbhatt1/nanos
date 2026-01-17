@@ -18,7 +18,7 @@ static u64 ph_test_range(heap h, void *mem_base, range r, u64 max_page_size)
     pageheap_init_done(mem_base, max_page_size);
     for (u64 alloc_size = PAGESIZE; alloc_size > 0; alloc_size <<= 1) {
         u64 align = MAX(alloc_size, max_page_size) / PAGESIZE - 1;
-        int page_count;
+        u64 page_count;
         u64 allocated = 0;
 
         for (page_count = 0; page_count < _countof(addrs); page_count++) {
@@ -47,8 +47,8 @@ static u64 ph_test_range(heap h, void *mem_base, range r, u64 max_page_size)
         if (allocated > max_allocated)
             max_allocated = allocated;
 
-        for (int page = page_count - 1; page >= 0; page--)
-            deallocate_u64(ph, addrs[page], alloc_size);
+        for (u64 page = page_count; page > 0; page--)
+            deallocate_u64(ph, addrs[page - 1], alloc_size);
         test_assert(heap_allocated(ph) == 0);
 
         /* Re-do the same allocation requests as above, and verify that the same amount of memory
@@ -63,7 +63,7 @@ static u64 ph_test_range(heap h, void *mem_base, range r, u64 max_page_size)
         }
         test_assert(page_count * alloc_size == allocated);
 
-        for (int page = 0; page < page_count; page++)
+        for (u64 page = 0; page < page_count; page++)
             deallocate_u64(ph, addrs[page], alloc_size);
         test_assert(heap_allocated(ph) == 0);
     }
@@ -71,35 +71,35 @@ static u64 ph_test_range(heap h, void *mem_base, range r, u64 max_page_size)
     if (heap_filled) {
         u64 sizes[_countof(addrs)];
         u64 p;
-        int page_count = 0;
+        u64 page_count2 = 0;
 
         /* Allocate all heap memory, starting with the largest alloc size and falling back to
          * smaller sizes on allocation failure. */
         last_allocated = 0;
         for (u64 alloc_size = max_page_size; alloc_size >= PAGESIZE; alloc_size >>= 1) {
             while ((p = allocate_u64(ph, alloc_size)) != INVALID_PHYSICAL) {
-                addrs[page_count] = p;
-                sizes[page_count] = alloc_size;
-                page_count++;
+                addrs[page_count2] = p;
+                sizes[page_count2] = alloc_size;
+                page_count2++;
                 last_allocated += alloc_size;
             }
         }
         test_assert(last_allocated >= max_allocated);
         max_allocated = last_allocated;
-        for (int page = 0; page < page_count; page++)
+        for (u64 page = 0; page < page_count2; page++)
             deallocate_u64(ph, addrs[page], sizes[page]);
         test_assert(heap_allocated(ph) == 0);
 
         /* Allocate all heap memory using the smallest alloc size, and verify that the same amount
          * of memory as above can be allocated. */
-        page_count = 0;
+        page_count2 = 0;
         last_allocated = 0;
         while ((p = allocate_u64(ph, PAGESIZE)) != INVALID_PHYSICAL) {
-            addrs[page_count++] = p;
+            addrs[page_count2++] = p;
             last_allocated += PAGESIZE;
         }
         test_assert(last_allocated == max_allocated);
-        for (int page = 0; page < page_count; page++)
+        for (u64 page = 0; page < page_count2; page++)
             deallocate_u64(ph, addrs[page], PAGESIZE);
     }
 
@@ -111,8 +111,8 @@ static void ph_test_basic(heap h, void *mem_base, u64 mem_size, u64 max_page_siz
     range r;
 
     for (r.start = 0; r.start <= max_page_size;) {
-        u64 max_allocated[find_order(mem_size)];
-        int range_len = 0;
+        u64 max_allocated[64];  /* fixed size to avoid VLA */
+        u64 range_len = 0;
 
         for (r.end = r.start + PAGESIZE; r.end <= mem_size; r.end *= 2) {
             max_allocated[range_len] = ph_test_range(h, mem_base, r, max_page_size);
@@ -130,6 +130,7 @@ static void ph_test_basic(heap h, void *mem_base, u64 mem_size, u64 max_page_siz
 /* Test the most-recently-used allocation algorithm. */
 static void ph_test_mru(heap h, void *mem_base, u64 mem_size)
 {
+    (void)mem_size;  /* unused */
     heap ph = pageheap_init(h);
     u64 addrs[2048];
     u64 p;
@@ -139,7 +140,7 @@ static void ph_test_mru(heap h, void *mem_base, u64 mem_size)
     pageheap_init_done(mem_base, PH_TEST_MAX_PAGESIZE);
 
     for (u64 alloc_size = PAGESIZE; alloc_size <= PH_TEST_MAX_PAGESIZE; alloc_size <<= 1) {
-        int page_count;
+        u64 page_count;
 
         for (page_count = 0; page_count < _countof(addrs); page_count++) {
             p = allocate_u64(ph, alloc_size);
@@ -150,8 +151,8 @@ static void ph_test_mru(heap h, void *mem_base, u64 mem_size)
                 break;
         }
         test_assert(page_count >= 2);
-        for (int page = page_count - 1; page >= 0; page--)
-            deallocate_u64(ph, addrs[page], alloc_size);
+        for (u64 page = page_count; page > 0; page--)
+            deallocate_u64(ph, addrs[page - 1], alloc_size);
         /* Verify that memory areas are allocated in reverse order compared to the oder of the last
          * deallocations. */
         for (page_count = 0; page_count < _countof(addrs); page_count++) {
@@ -162,7 +163,7 @@ static void ph_test_mru(heap h, void *mem_base, u64 mem_size)
             else
                 break;
         }
-        for (int page = 0; page < page_count; page++)
+        for (u64 page = 0; page < page_count; page++)
             deallocate_u64(ph, addrs[page], alloc_size);
     }
 
@@ -181,20 +182,20 @@ static void ph_test_mru(heap h, void *mem_base, u64 mem_size)
         }
     }
     for (u64 alloc_size = PH_TEST_MAX_PAGESIZE; alloc_size >= PAGESIZE; alloc_size >>= 1) {
-        int alloc_count = PH_TEST_MAX_PAGESIZE / alloc_size;
+        u64 alloc_count = PH_TEST_MAX_PAGESIZE / alloc_size;
 
-        for (int i = 0; i < alloc_count; i++)
+        for (u64 i = 0; i < alloc_count; i++)
             test_assert(allocate_u64(ph, alloc_size) == p + i * alloc_size);
-        for (int i = alloc_count - 1; i >= 0; i--)
-            deallocate_u64(ph, p + i * alloc_size, alloc_size);
+        for (u64 i = alloc_count; i > 0; i--)
+            deallocate_u64(ph, p + (i - 1) * alloc_size, alloc_size);
     }
     for (u64 alloc_size = PAGESIZE * 2; alloc_size <= PH_TEST_MAX_PAGESIZE; alloc_size <<= 1) {
-        int alloc_count = PH_TEST_MAX_PAGESIZE / alloc_size;
+        u64 alloc_count = PH_TEST_MAX_PAGESIZE / alloc_size;
 
-        for (int i = 0; i < alloc_count; i++)
+        for (u64 i = 0; i < alloc_count; i++)
             test_assert(allocate_u64(ph, alloc_size) == p + i * alloc_size);
-        for (int i = alloc_count - 1; i >= 0; i--)
-            deallocate_u64(ph, p + i * alloc_size, alloc_size);
+        for (u64 i = alloc_count; i > 0; i--)
+            deallocate_u64(ph, p + (i - 1) * alloc_size, alloc_size);
     }
     if (unaligned_len != 0)
         deallocate_u64(ph, unaligned_base, unaligned_len);
@@ -204,6 +205,7 @@ static void ph_test_mru(heap h, void *mem_base, u64 mem_size)
  * multiple pages with different sizes). */
 static void ph_test_multipage(heap h, void *mem_base, u64 mem_size)
 {
+    (void)mem_size;  /* unused */
     heap ph = pageheap_init(h);
     u64 base;
 

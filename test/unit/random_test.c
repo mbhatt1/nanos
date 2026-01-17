@@ -50,9 +50,10 @@ static void rm_bytestream(char *path)
     remove(path);
 }
 
-static int write_chunk(int fd, u64 *buf, int len)
+static int write_chunk(int fd, u64 *buf, size_t len)
 {
-    int nbytes = 0, off = 0;
+    ssize_t nbytes = 0;
+    size_t off = 0;
     int err;
 
     while (off < len) {
@@ -67,7 +68,7 @@ static int write_chunk(int fd, u64 *buf, int len)
             }
         }
 
-        off += nbytes;
+        off += (size_t)nbytes;
     }
 
     return 0;
@@ -80,6 +81,7 @@ static int write_chunk(int fd, u64 *buf, int len)
  */
 static void gen_bytestream(char *path, int len)
 {
+    (void)len;  /* unused - BSLEN is used directly */
     int fd, err;
     u64 buf[INTERNAL_BUFLEN / 8];
     u64 i, nbytes = 0;
@@ -113,7 +115,9 @@ static int ent_get_stats(char *path, struct ent_stat_entry *stats)
 {
     char ent_cmd[1024], ent_buf[1024];
     char *s;
-    int matched, nfield = 0, field_len, linenum = -1;
+    size_t matched;
+    int nfield = 0, linenum = -1;
+    size_t field_len;
     FILE *f;
 
     snprintf(&ent_cmd[0], 1024, "ent -t %s", path);
@@ -127,7 +131,7 @@ static int ent_get_stats(char *path, struct ent_stat_entry *stats)
     matched = fread(&ent_buf[0], 1024, 1, f);
     if (ferror(f)) {
         pclose(f);
-        msg_err("%s failed to read ent statistics, matched=%d", func_ss, matched);
+        msg_err("%s failed to read ent statistics, matched=%zu", func_ss, matched);
         return -1;
     }
 
@@ -228,7 +232,7 @@ out_fail:
 
 int main(int argc, char **argv)
 {
-    char c;
+    int c;
     int err;
     int result = EXIT_SUCCESS;
     struct ent_stat_entry stats[ENT_NSTATS + 1];

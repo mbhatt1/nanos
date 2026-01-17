@@ -6,8 +6,8 @@
 
 static void test_memcpy(long *buf1, long *buf2, unsigned long buf_size)
 {
-    for (long i = 0; i < buf_size; i++) {
-        buf1[i] = buf_size - i;
+    for (unsigned long i = 0; i < buf_size; i++) {
+        buf1[i] = (long)(buf_size - i);
     }
 
     runtime_memcpy(buf2, buf1, sizeof(long) - 1);
@@ -19,8 +19,8 @@ static void test_memcpy(long *buf1, long *buf2, unsigned long buf_size)
     runtime_memcpy((u8 *)(buf2 + 2) + 1, buf1, sizeof(long));
     test_assert(runtime_memcmp(buf1, (u8 *)(buf2 + 2) + 1, sizeof(long)) == 0);
 
-    for (long i = 0; i < sizeof(long); i++) {
-        for (long j = 0; j < sizeof(long); j++) {
+    for (unsigned long i = 0; i < sizeof(long); i++) {
+        for (unsigned long j = 0; j < sizeof(long); j++) {
             runtime_memcpy((u8 *)buf2 + i, (u8 *)buf1 + j,
                     (buf_size - 1) * sizeof(long));
             test_assert(runtime_memcmp((u8 *)buf1 + j, (u8 *)buf2 + i,
@@ -31,20 +31,20 @@ static void test_memcpy(long *buf1, long *buf2, unsigned long buf_size)
 
 static void test_memcpy_overlap(long *buf, unsigned long buf_size)
 {
-    for (long i = 0; i < buf_size; i++) {
-        buf[i] = i;
+    for (unsigned long i = 0; i < buf_size; i++) {
+        buf[i] = (long)i;
     }
 
     runtime_memcpy(buf, buf + 1, (buf_size - 1) * sizeof(long));
-    for (long i = 0; i < buf_size - 1; i++) {
-        test_assert(buf[i] == i + 1);
+    for (unsigned long i = 0; i < buf_size - 1; i++) {
+        test_assert(buf[i] == (long)(i + 1));
     }
 
     long first_word = 0, last_word = 0;
-    for (int i = 0; i < sizeof(first_word); i++) {
+    for (unsigned long i = 0; i < sizeof(first_word); i++) {
         *((u8 *)&first_word + i) = *((u8 *)buf + 1 + i);
     }
-    for (int i = 0; i < sizeof(last_word) - 1; i++) {
+    for (unsigned long i = 0; i < sizeof(last_word) - 1; i++) {
         *((u8 *)&last_word + i) =
                 *((u8 *)buf + (buf_size - 1) * sizeof(long) + 1 + i);
     }
@@ -55,10 +55,10 @@ static void test_memcpy_overlap(long *buf, unsigned long buf_size)
     test_assert(buf[buf_size - 1] == last_word);
 
     *((u8 *)&first_word) = *((u8 *)buf);
-    for (int i = 1; i < sizeof(first_word); i++) {
+    for (unsigned long i = 1; i < sizeof(first_word); i++) {
         *((u8 *)&first_word + i) = *((u8 *)buf + i - 1);
     }
-    for (int i = 0; i < sizeof(last_word); i++) {
+    for (unsigned long i = 0; i < sizeof(last_word); i++) {
         *((u8 *)&last_word + i) =
                 *((u8 *)buf + (buf_size - 1) * sizeof(long) + i - 1);
     }
@@ -70,25 +70,25 @@ static void test_memcpy_overlap(long *buf, unsigned long buf_size)
 static void test_memset(long *buf, unsigned long buf_size)
 {
     runtime_memset((u8 *)buf, 0xAA, sizeof(long) - 1);
-    for (int i = 0; i < sizeof(long) - 1; i++) {
+    for (unsigned long i = 0; i < sizeof(long) - 1; i++) {
         test_assert(*((u8 *)buf + i) == 0xAA);
     }
 
     runtime_memset((u8 *)buf + 1, 0xBB, sizeof(long));
-    for (int i = 0; i < sizeof(long); i++) {
+    for (unsigned long i = 0; i < sizeof(long); i++) {
         test_assert(*((u8 *)buf + 1 + i) == 0xBB);
     }
 
     runtime_memset((u8 *)buf + 3, 0xCC, (buf_size - 1) * sizeof(long));
-    for (int i = 0; i < (buf_size - 1) * sizeof(long); i++) {
+    for (unsigned long i = 0; i < (buf_size - 1) * sizeof(long); i++) {
         test_assert(*((u8 *)buf + 3 + i) == 0xCC);
     }
 }
 
 static void test_memcmp(long *buf, unsigned long buf_size)
 {
-    for (long i = 0; i < buf_size; i++) {
-        buf[i] = i;
+    for (unsigned long i = 0; i < buf_size; i++) {
+        buf[i] = (long)i;
     }
     test_assert(runtime_memcmp(buf, buf, sizeof(long) - 1) == 0);
     test_assert(runtime_memcmp(buf, buf + 1, sizeof(long) - 1) != 0);

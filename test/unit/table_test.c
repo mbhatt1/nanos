@@ -4,6 +4,7 @@
 
 static inline key silly_key(void *a)
 {
+    (void)a;  /* unused */
     return 0;
 }
 
@@ -14,6 +15,8 @@ static inline key less_silly_key(void *a)
 
 static inline boolean anything_equals(void *a, void* b)
 {
+    (void)a;  /* unused */
+    (void)b;  /* unused */
     return true;
 }
 
@@ -97,7 +100,7 @@ static boolean basic_table_tests(heap h, u64 (*key_function)(void *x), u64 n_ele
 
     table_validate(t, ss("basic_table_tests: after remove one"));
 
-    count = table_elements(t);
+    count = (u64)table_elements(t);
     if (count != n_elem - 1) {
         msg_err("%s error: invalid table_elements() %ld, should be %ld", func_ss, count,
                 n_elem - 1);
@@ -110,7 +113,7 @@ static boolean basic_table_tests(heap h, u64 (*key_function)(void *x), u64 n_ele
         return false;
     }
     table_validate(t, ss("basic_table_tests: after table_remove()"));
-    count = table_elements(t);
+    count = (u64)table_elements(t);
     if (count != n_elem - 2) {
         msg_err("%s error: invalid table_elements() %ld after table_remove(), should be %ld",
                 func_ss, count, n_elem - 2);
@@ -129,7 +132,7 @@ static boolean basic_table_tests(heap h, u64 (*key_function)(void *x), u64 n_ele
 
     table_validate(t, ss("basic_table_tests: after remove backward"));
 
-    count = table_elements(t);
+    count = (u64)table_elements(t);
     if (count != 0) {
         msg_err("%s error: invalid table_elements() %ld, should be 0", func_ss, count);
         return false;
@@ -188,7 +191,7 @@ static boolean one_elem_table_tests(heap h, u64 n_elem)
         return false;
     }
 
-    count = table_elements(t);
+    count = (u64)table_elements(t);
     if (count != 1) {
         msg_err("%s error: invalid table_elements() %ld, should be 1", func_ss, count);
         return false;
@@ -218,7 +221,7 @@ static boolean one_elem_table_tests(heap h, u64 n_elem)
         msg_err("%s error: element found after table_clear()", func_ss);
         return false;
     }
-    count = table_elements(t);
+    count = (u64)table_elements(t);
     if (count != 0) {
         msg_err("%s error: invalid table_elements() %ld after table_clear()", func_ss, count);
         return false;

@@ -241,23 +241,23 @@ boolean basic_test(heap h)
 
 /* TODO more thorough would be to track insertions in a list or some
    other structure and parity check */
-boolean random_test(heap h, int n, int passes)
+boolean random_test(heap h, u64 n, u64 passes)
 {
     pqueue q = allocate_pqueue(h, basic_sort);
     char * msg = "";
-    int remain = 0;
+    u64 remain = 0;
 
-    for (int pass = 0; pass < passes; pass++) {
-        msg_debug("random_test pass %d\n", pass);
-        for (int i = remain; i < n; i++) {
+    for (u64 pass = 0; pass < passes; pass++) {
+        msg_debug("random_test pass %ld\n", pass);
+        for (u64 i = remain; i < n; i++) {
             u64 r = random_u64();
-            msg_debug("  insert %d\n", r);
+            msg_debug("  insert %ld\n", r);
             pqueue_insert(q, (void *)r);
         }
         u64 last = infinity;
         u64 npop = (pass == passes - 1) ? n : n / 2;
         remain = n - npop;
-        for (int i = 0; i < npop; i++) {
+        for (u64 i = 0; i < npop; i++) {
             u64 v = (u64)pqueue_pop(q);
             msg_debug("  pop %ld\n", v);
             if (v > last) {

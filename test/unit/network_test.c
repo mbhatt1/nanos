@@ -29,6 +29,7 @@ closure_function(7, 1, void, value_in,
                  heap, h, buffer_handler, out, u64 *, count, status_handler, completed, thunk, newconn, stats, s, tuple, req,
                  value v)
 {
+    (void)v;  /* unused */
     stats s = bound(s);
     s->responses++;
 
@@ -102,6 +103,7 @@ closure_function(8, 0, void, startconn,
 closure_func_basic(status_handler, void, connection_error,
                    status s)
 {
+    (void)__self;  /* unused closure self parameter */
     msg_err("connection error %v", s);
     exit(1);
 }
@@ -110,6 +112,7 @@ closure_function(1, 1, void, finished,
                  stats, st,
                  status s)
 {
+    (void)s;  /* unused */
     print_stats(bound(st));
     rprintf("\n");
     exit(0);

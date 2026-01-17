@@ -16,6 +16,7 @@ typedef struct testnode {
 closure_func_basic(rb_key_compare, int, test_compare,
                    rbnode a, rbnode b)
 {
+    (void)__self;  /* unused closure parameter */
     testnode ta = (testnode)a, tb = (testnode)b;
     return ta->key < tb->key ? -1 : (ta->key > tb->key ? 1 : 0);
 }
@@ -23,6 +24,7 @@ closure_func_basic(rb_key_compare, int, test_compare,
 closure_func_basic(rbnode_handler, boolean, dump_node,
                    rbnode n)
 {
+    (void)__self;  /* unused closure parameter */
     testnode tn = (testnode)n;
     rprintf(" %d", tn->key);
     return true;
@@ -85,16 +87,16 @@ static boolean test_insert(heap h, rbtree t, int key, boolean validate)
     tn->key = key;
     init_rbnode(&tn->node);
     rbtest_debug("inserting node %p, key %d\n", &tn->node, key);
-    boolean r = rbtree_insert_node(t, &tn->node);
+    boolean result = rbtree_insert_node(t, &tn->node);
     if (validate) {
         status s = rbtree_validate(t);
         if (!is_ok(s)) {
             rprintf("%s: rbtree_validate failed with %v ", func_ss, s);
             goto out_fail;
         }
-        rbnode r = rbtree_lookup(t, &tn->node);
-        if (r != &tn->node) {
-            rprintf("%s: rbtree_lookup failed (returned %p) ", func_ss, r);
+        rbnode lookup_result = rbtree_lookup(t, &tn->node);
+        if (lookup_result != &tn->node) {
+            rprintf("%s: rbtree_lookup failed (returned %p) ", func_ss, lookup_result);
             goto out_fail;
         }
         if (!test_max_lte(t)) {
@@ -102,7 +104,7 @@ static boolean test_insert(heap h, rbtree t, int key, boolean validate)
             goto out_fail;
         }
     }
-    return r;
+    return result;
   out_fail:
     rprintf("after inserting node %p (key %d)\n", &tn->node, key);
     return false;
@@ -110,6 +112,7 @@ static boolean test_insert(heap h, rbtree t, int key, boolean validate)
 
 static boolean test_remove(heap h, rbtree t, int key, boolean expect)
 {
+    (void)h;  /* unused */
     struct testnode tk;
     tk.key = key;
     rbtest_debug("deleting by key %d\n", key);
@@ -148,6 +151,7 @@ closure_function(1, 1, boolean, assert_no_node,
                  boolean *, result,
                  rbnode n)
 {
+    (void)n;  /* unused */
     *bound(result) = false;
     return false;
 }
@@ -358,11 +362,11 @@ static boolean random_test(heap h)
         return false;
     }
 
-    for (int i = 0; i < RANDOM_VECLEN; i++) {
+    for (u64 i = 0; i < RANDOM_VECLEN; i++) {
         boolean r;
       redo:
         /* restrict range so as to induce collisions */
-        vec[i] = random_u64() & MASK(RANDOM_VEC_ORDER + 1);
+        vec[i] = (int)(random_u64() & MASK(RANDOM_VEC_ORDER + 1));
         r = test_insert(h, t, vec[i], false);
         if (!r) {
             struct testnode tn;
@@ -381,7 +385,7 @@ static boolean random_test(heap h)
     }
     assert(rbtree_get_count(t) == RANDOM_VECLEN);
 
-    for (int i = 0; i < RANDOM_VECLEN; i++) {
+    for (u64 i = 0; i < RANDOM_VECLEN; i++) {
         test_remove(h, t, vec[i], true);
     }
     assert(rbtree_get_count(t) == 0);

@@ -329,7 +329,7 @@ boolean encode_decode_lengthy_test(heap h)
     // encode
     buffer b3 = allocate_buffer(h, 1000*50);
     tuple t3 = allocate_tuple();
-    for (int i=0; i<1000; ++i)
+    for (u64 i=0; i<1000; ++i)
     {
         set(t3, value_from_u64(i), wrap_string_cstring("100"));
     }

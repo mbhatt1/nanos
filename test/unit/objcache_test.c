@@ -32,13 +32,13 @@ static inline boolean validate_obj(heap h, void * obj)
     return true;
 }
 
-static boolean alloc_vec(heap h, int n, int s, vector v)
+static boolean alloc_vec(heap h, u64 n, bytes s, vector v)
 {
     if (!validate(h)) {
         msg_err("%s: failed first heap validation", func_ss);
         return false;
     }
-    for (int i=0; i < n; i++) {
+    for (u64 i = 0; i < n; i++) {
         void * p = allocate(h, s);
         if (p == INVALID_ADDRESS)
             return false;
@@ -47,7 +47,7 @@ static boolean alloc_vec(heap h, int n, int s, vector v)
             return false;
         }
 
-        vector_set(v, i, p);
+        vector_set(v, (int)i, p);
     }
     if (!validate(h)) {
         msg_err("%s: failed second heap validation", func_ss);
@@ -57,32 +57,32 @@ static boolean alloc_vec(heap h, int n, int s, vector v)
     return true;
 }
 
-static boolean dealloc_vec(heap h, int s, vector v)
+static boolean dealloc_vec(heap h, bytes s, vector v)
 {
     void * p;
     if (!validate(h))
-	return false;
+        return false;
     vector_foreach(v, p) {
-	if (!p)
-	    continue;
+        if (!p)
+            continue;
 
-	if (!validate_obj(h, p))
-	    return false;
+        if (!validate_obj(h, p))
+            return false;
 
-	deallocate(h, p, s);
+        deallocate(h, p, s);
     }
     if (!validate(h))
-	return false;
+        return false;
     return true;
 }
-    
+
 #define FOOTER_SIZE 24
-boolean objcache_test(heap meta, heap parent, int objsize)
+boolean objcache_test(heap meta, heap parent, bytes objsize)
 {
     /* just a cursory test */
-    int opp = (TEST_PAGESIZE - FOOTER_SIZE) / objsize;
+    u64 opp = (TEST_PAGESIZE - FOOTER_SIZE) / objsize;
     heap h = (heap)allocate_objcache(meta, parent, objsize, TEST_PAGESIZE, false);
-    vector objs = allocate_vector(meta, opp);
+    vector objs = allocate_vector(meta, (int)opp);
 
     msg_debug("objs %p, heap %p\n", objs, h);
 
@@ -121,12 +121,12 @@ boolean objcache_test(heap meta, heap parent, int objsize)
     return true;
 }
 
-boolean preallocated_objcache_test(heap meta, heap parent, int objsize, boolean prealloc_only)
+boolean preallocated_objcache_test(heap meta, heap parent, bytes objsize, boolean prealloc_only)
 {
     /* just a cursory test */
-    int opp = (TEST_PAGESIZE - FOOTER_SIZE) / objsize;
+    u64 opp = (TEST_PAGESIZE - FOOTER_SIZE) / objsize;
 
-    vector objs = allocate_vector(meta, opp);
+    vector objs = allocate_vector(meta, (int)opp);
 
     heap h = (heap)allocate_objcache_preallocated(meta, parent, objsize, TEST_PAGESIZE, opp, prealloc_only);
     u64 meta_occupancy = heap_allocated(meta);

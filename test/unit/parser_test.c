@@ -30,6 +30,7 @@ closure_function(1, 1, void, finish,
                  heap, h,
                  void *v)
 {
+    (void)__self;  /* unused closure parameter */
     root = v;
 }
 
@@ -51,6 +52,7 @@ closure_function(1, 1, void, perr,
 
 void parse_string(heap h, parser p, sstring str)
 {
+    (void)h;  /* unused */
     root = NULL;
     errors_count = 0;
     if (last_error) {
@@ -73,7 +75,7 @@ void parse_string(heap h, parser p, sstring str)
         return !_check_##name(h); \
     } \
 \
-    boolean _check_##name(heap h)
+    boolean _check_##name(heap __attribute__((unused)) h)
 
 #define TUPLE_PARSE_TEST(name, str) PARSE_TEST(name, tuple_p, str)
 #define JSON_PARSE_TEST(name, str) PARSE_TEST(name, json_p, str)

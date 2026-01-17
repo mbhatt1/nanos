@@ -54,7 +54,7 @@ boolean basic_test(heap h)
     int n = 1 << 20;
     for (long i = 0; i < n; i++) {
         void * prev = v->contents;
-        vector_set(v, i, (void *)i);
+        vector_set(v, (int)i, (void *)i);
         if (vector_length(v) != i + 1) {
             msg = "resize: wrong vector length";
             goto fail;
@@ -64,7 +64,7 @@ boolean basic_test(heap h)
         if (prev != v->contents || i == n - 1) {
             msg_debug("resize detected at index %ld\n", i);
             for (long j = 0; j < i + 1; j++) {
-                if (vector_get(v, j) != (void *)j) {
+                if (vector_get(v, (int)j) != (void *)j) {
                     msg = "resize: content mismatch";
                     goto fail;
                 }
