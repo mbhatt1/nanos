@@ -113,11 +113,7 @@ static void compute_merkle_root(u8 *hashes, u32 count, u8 *root_out)
         return;
     }
 
-    /* Overflow check for allocation size */
-    if (count > UINT64_MAX / AK_HASH_SIZE) {
-        runtime_memset(root_out, 0, AK_HASH_SIZE);
-        return;
-    }
+    /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
 
     /* Allocate two buffers for ping-pong computation to avoid in-place overwrites */
     u64 max_level_size = (u64)count * AK_HASH_SIZE;
@@ -330,9 +326,7 @@ boolean ak_state_verify_integrity(void)
     if (count == 0)
         return true;
 
-    /* Overflow check for allocation size */
-    if (count > UINT64_MAX / AK_HASH_SIZE)
-        return false;
+    /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
 
     /* Allocate hash array */
     u8 *hashes = allocate(ak_state.h, (u64)count * AK_HASH_SIZE);
@@ -595,8 +589,8 @@ s64 ak_state_emit_anchor(void)
     u64 *ptrs = ak_state_get_dirty_list(&count);
 
     if (count > 0 && ptrs) {
-        /* Overflow check for allocation size */
-        if (count <= UINT64_MAX / AK_HASH_SIZE) {
+        /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
+        {
             u8 *hashes = allocate(ak_state.h, (u64)count * AK_HASH_SIZE);
             if (hashes != INVALID_ADDRESS) {
                 for (u32 i = 0; i < count; i++) {

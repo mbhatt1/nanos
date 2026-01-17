@@ -12,6 +12,7 @@
 #include "ak_capability.h"
 #include "ak_assert.h"
 #include "ak_audit.h"
+#include "ak_pattern.h"
 
 /* Wrapper for Nanos sha256 that uses buffers */
 static void ak_sha256(const u8 *data, u32 len, u8 *output)
@@ -642,44 +643,7 @@ buffer ak_capability_serialize(heap h, ak_capability_t *cap)
     return canonical;
 }
 
-/* ============================================================
- * PATTERN MATCHING
- * ============================================================ */
-
-boolean ak_pattern_match(const char *pattern, const char *resource)
-{
-    if (!pattern || !resource)
-        return false;
-
-    /* Wildcard matches everything */
-    if (pattern[0] == '*' && pattern[1] == '\0')
-        return true;
-
-    u32 plen = runtime_strlen(pattern);
-    u32 rlen = runtime_strlen(resource);
-
-    /* Prefix wildcard (*.domain.com) */
-    if (pattern[0] == '*' && pattern[1] == '.') {
-        /* Must end with pattern suffix */
-        const char *suffix = pattern + 1;  /* Skip '*' */
-        u32 slen = plen - 1;
-        if (rlen < slen)
-            return false;
-        return ak_strcmp(resource + rlen - slen, suffix) == 0;
-    }
-
-    /* Suffix wildcard (/path/...) */
-    if (plen > 0 && pattern[plen-1] == '*') {
-        /* Must start with pattern prefix */
-        u32 prefix_len = plen - 1;
-        if (rlen < prefix_len)
-            return false;
-        return runtime_memcmp(resource, pattern, prefix_len) == 0;
-    }
-
-    /* Exact match */
-    return ak_strcmp(pattern, resource) == 0;
-}
+/* ak_pattern_match is now provided by ak_pattern.h */
 
 /* ============================================================
  * HELPERS

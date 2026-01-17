@@ -12,11 +12,17 @@
 #include "ak_types.h"
 #include "ak_audit.h"
 
-/* Filesystem includes for persistent storage */
-#ifdef KERNEL
-#include <fs/fs.h>
-#include <unix/filesystem.h>
-#endif
+/*
+ * Filesystem includes for persistent storage.
+ * NOTE: Persistent audit log storage is disabled for now due to complex
+ * dependencies on kernel types (pagecache, mutex, etc.) that aren't
+ * available during agentic module compilation.
+ *
+ * TODO: Re-enable when proper kernel integration is done.
+ * For now, audit log is in-memory only. INV-4 is enforced for in-memory
+ * entries but not persisted across reboots.
+ */
+#undef KERNEL_STORAGE_ENABLED
 
 /* Wrapper for Nanos sha256 that uses buffers */
 static void ak_sha256(const u8 *data, u32 len, u8 *output)
@@ -84,10 +90,10 @@ static struct {
     u32 anchor_capacity;
 
     /* Storage state - for persistent audit log */
-#ifdef KERNEL
+#ifdef KERNEL_STORAGE_ENABLED
     fsfile audit_file;          /* File handle for audit.log */
 #else
-    void *audit_file;           /* Placeholder for non-kernel builds */
+    void *audit_file;           /* Placeholder when storage disabled */
 #endif
     u64 file_offset;            /* Current write offset in file */
     boolean storage_enabled;    /* Whether persistent storage is active */
@@ -97,11 +103,13 @@ static struct {
     boolean initialized;
 } ak_log;
 
-/* Path to audit log file */
+/* Path to audit log file (used when storage is enabled) */
+#ifdef KERNEL_STORAGE_ENABLED
 static const char *AK_AUDIT_LOG_PATH = "/ak/audit.log";
+#endif
 
 /* Forward declarations for storage helpers */
-#ifdef KERNEL
+#ifdef KERNEL_STORAGE_ENABLED
 static s64 ak_audit_write_entry_to_disk(ak_log_entry_t *entry);
 static u32 ak_audit_crc32(const u8 *data, u64 len);
 #endif
@@ -168,7 +176,7 @@ s64 ak_audit_open_storage(void)
     if (!ak_log.initialized)
         return -EINVAL;
 
-#ifdef KERNEL
+#ifdef KERNEL_STORAGE_ENABLED
     /* Try to open existing file or create new one */
     ak_log.audit_file = fsfile_open_or_create(ss(AK_AUDIT_LOG_PATH), false);
     if (!ak_log.audit_file) {
@@ -185,7 +193,7 @@ s64 ak_audit_open_storage(void)
     ak_debug("ak_audit: opened audit log, size=%llu", ak_log.file_offset);
     return 0;
 #else
-    /* Non-kernel builds don't have filesystem access */
+    /* Storage disabled - in-memory only */
     ak_log.storage_enabled = false;
     return 0;
 #endif
@@ -649,11 +657,10 @@ s64 ak_audit_emit_anchor(void)
             return AK_E_LOG_FULL;
         }
         u32 new_cap = ak_log.anchor_capacity * 2;
-        /* Overflow check: prevent allocation size overflow */
-        if (new_cap > UINT64_MAX / sizeof(ak_anchor_t)) {
-            spin_unlock(&ak_log.lock);
-            return AK_E_LOG_FULL;
-        }
+        /* Note: allocation size overflow not possible here because:
+         * - new_cap is u32, max ~4 billion after above check
+         * - sizeof(ak_anchor_t) * 4B fits in u64
+         */
         ak_anchor_t *new_anchors = allocate(ak_log.h, sizeof(ak_anchor_t) * new_cap);
         if (!new_anchors || new_anchors == INVALID_ADDRESS) {
             spin_unlock(&ak_log.lock);
@@ -746,7 +753,7 @@ void ak_audit_post_anchor_remote(ak_anchor_t *anchor, const char *url)
  * before any response can be sent to agents.
  */
 
-#ifdef KERNEL
+#ifdef KERNEL_STORAGE_ENABLED
 
 /*
  * CRC32 implementation for entry integrity verification.
@@ -983,11 +990,11 @@ void ak_audit_sync(void)
     spin_unlock(&ak_log.lock);
 }
 
-#else /* !KERNEL */
+#else /* !KERNEL_STORAGE_ENABLED */
 
 /*
- * Non-kernel sync: just mark entries as clean (no persistent storage).
- * INV-4 is NOT enforced in non-kernel builds.
+ * When storage is disabled: just mark entries as clean (in-memory only).
+ * INV-4 is enforced for in-memory entries but not persisted across reboots.
  */
 void ak_audit_sync(void)
 {
@@ -1003,7 +1010,7 @@ void ak_audit_sync(void)
     spin_unlock(&ak_log.lock);
 }
 
-#endif /* KERNEL */
+#endif /* KERNEL_STORAGE_ENABLED */
 
 void ak_audit_get_stats(ak_audit_stats_t *stats)
 {

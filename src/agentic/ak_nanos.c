@@ -17,6 +17,42 @@
 struct thread;
 typedef struct thread *thread;
 
+/*
+ * User-space memory access helpers.
+ * In a unikernel environment, user/kernel boundary is blurred.
+ * These provide basic validation for the AK security model.
+ */
+static inline boolean validate_user_memory(const void *addr, u64 len, boolean write)
+{
+    (void)write;
+    /* Basic null and overflow checks */
+    if (!addr)
+        return false;
+    if (len == 0)
+        return true;
+    /* Check for pointer overflow */
+    if ((u64)addr > UINT64_MAX - len)
+        return false;
+    /* In unikernel, all memory is accessible - rely on WASM sandbox for isolation */
+    return true;
+}
+
+static inline boolean copy_from_user(void *dst, const void *src, u64 len)
+{
+    if (!validate_user_memory(src, len, false))
+        return false;
+    runtime_memcpy(dst, src, len);
+    return true;
+}
+
+static inline boolean copy_to_user(void *dst, const void *src, u64 len)
+{
+    if (!validate_user_memory(dst, len, true))
+        return false;
+    runtime_memcpy(dst, src, len);
+    return true;
+}
+
 /* ============================================================
  * NANOS SYSCALL INTEGRATION
  * ============================================================
@@ -85,7 +121,14 @@ ak_agent_context_t *ak_get_context(void)
  *
  * Return value in rax.
  */
-s64 ak_syscall_handler(
+/*
+ * Internal syscall handler for ak_nanos layer.
+ * Note: The main ak_syscall_handler is defined in ak_syscall.c.
+ * This is a helper for handling user-space buffer validation.
+ * TODO: Wire this into Nanos syscall dispatch when integration is complete.
+ */
+__attribute__((unused))
+static s64 ak_nanos_dispatch(
     u64 syscall_num,
     u64 arg0, u64 arg1, u64 arg2,
     u64 arg3, u64 arg4, u64 arg5)

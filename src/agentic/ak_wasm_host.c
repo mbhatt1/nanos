@@ -149,6 +149,7 @@ static buffer create_json_result(heap h, const char *key, const char *value, u64
     return result;
 }
 
+__attribute__((unused))
 static buffer create_json_error(heap h, const char *error)
 {
     u64 error_len = runtime_strlen(error);
@@ -1223,8 +1224,6 @@ s64 ak_host_stream_set_stop(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result
     u64 seq_len;
     const char *seq = parse_json_string(args, "sequence", &seq_len);
     if (seq && seq_len > 0) {
-        const char *sequences[1] = {seq};
-
         /* Need to null-terminate for the API */
         char seq_buf[256];
         if (seq_len >= sizeof(seq_buf))

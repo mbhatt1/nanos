@@ -3,12 +3,12 @@ name: Tests
 on:
   push:
     branches:
-      - main
+      - master
       - 'feature/**'
       - 'fix/**'
   pull_request:
     branches:
-      - main
+      - master
 
 jobs:
   unit-tests:

@@ -3,13 +3,13 @@ name: Build and Release
 on:
   push:
     branches:
-      - main
+      - master
       - 'release/**'
     tags:
       - 'v*'
   pull_request:
     branches:
-      - main
+      - master
 
 jobs:
   build-macos-x86:

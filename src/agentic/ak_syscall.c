@@ -837,7 +837,7 @@ ak_response_t *ak_handle_call(ak_agent_context_t *ctx, ak_request_t *req)
 
     /* FIX(BUG-053): Do NOT commit budget on failure - removed ak_budget_commit call */
 
-    return ak_response_error(ctx->heap, req, AK_E_TOOL_FAILED);
+    return ak_response_error(ctx->heap, req, AK_E_TOOL_FAIL);
 }
 
 /* ak_handle_inference is implemented in ak_inference.c */
