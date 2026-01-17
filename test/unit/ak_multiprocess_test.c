@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdarg.h>
 
@@ -405,7 +406,7 @@ static int64_t mock_agent_spawn(mock_agent_t *parent, const char *name,
 
     mock_state.agent_count++;
 
-    mock_log_event("SPAWN: parent=%llu child=%llu name=%s",
+    mock_log_event("SPAWN: parent=%" PRIu64 " child=%" PRIu64 " name=%s",
                    parent->pid, child->pid, name);
 
     return (int64_t)child->pid;
@@ -465,7 +466,7 @@ static int mock_agent_unregister(mock_agent_t *agent)
     agent->exited_ms = mock_state.current_time_ms;
     mock_state.agent_count--;
 
-    mock_log_event("EXIT: agent=%llu", agent->pid);
+    mock_log_event("EXIT: agent=%" PRIu64, agent->pid);
 
     return 0;
 }
@@ -660,7 +661,7 @@ static int mock_delegate_capability(mock_agent_t *parent, mock_agent_t *child,
 
     child->caps[child->cap_count++] = delegated;
 
-    mock_log_event("DELEGATE: cap=%d from=%llu to=%llu", cap->type, parent->pid, child->pid);
+    mock_log_event("DELEGATE: cap=%d from=%" PRIu64 " to=%" PRIu64, cap->type, parent->pid, child->pid);
 
     return 0;
 }
@@ -672,7 +673,7 @@ static void mock_revoke_capabilities(mock_agent_t *agent)
             agent->caps[i]->revoked = true;
         }
     }
-    mock_log_event("REVOKE_ALL: agent=%llu", agent->pid);
+    mock_log_event("REVOKE_ALL: agent=%" PRIu64, agent->pid);
 }
 
 /* ============================================================
@@ -690,7 +691,7 @@ static void mock_agent_crash(mock_agent_t *agent)
     agent->state = AGENT_STATE_CRASHED;
     agent->exited_ms = mock_state.current_time_ms;
 
-    mock_log_event("CRASH: agent=%llu", agent->pid);
+    mock_log_event("CRASH: agent=%" PRIu64, agent->pid);
 
     /* Notify parent if exists */
     mock_agent_t *parent = mock_find_agent(agent->parent_pid);
@@ -712,7 +713,7 @@ static void mock_agent_timeout(mock_agent_t *agent)
     /* Revoke capabilities on timeout */
     mock_revoke_capabilities(agent);
 
-    mock_log_event("TIMEOUT: agent=%llu", agent->pid);
+    mock_log_event("TIMEOUT: agent=%" PRIu64, agent->pid);
 }
 
 static void mock_agent_exit(mock_agent_t *agent, int exit_code)
@@ -741,7 +742,7 @@ static void mock_agent_exit(mock_agent_t *agent, int exit_code)
         }
     }
 
-    mock_log_event("EXIT: agent=%llu code=%d", agent->pid, exit_code);
+    mock_log_event("EXIT: agent=%" PRIu64 " code=%d", agent->pid, exit_code);
 }
 
 /* ============================================================
