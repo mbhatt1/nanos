@@ -61,7 +61,7 @@ void print_csum_buffer(buffer s, buffer b)
 /* This is really lame, but we're pruning value printing in the stage2 build
    to keep the image size under 64kB, else Xen/AWS booting will fall over.
 
-   See: https://github.com/nanovms/nanos/pull/1383
+   See: https://github.com/mbhatt1/nanos/pull/1383
 */
 
 #ifndef BOOT

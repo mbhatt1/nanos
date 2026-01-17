@@ -12,11 +12,11 @@ flowchart LR
 
     subgraph "2. Build"
         INITRD[Add to initrd]
-        BUILD[ops build]
+        BUILD[authority build]
     end
 
     subgraph "3. Run"
-        RUN[ops run]
+        RUN[authority run]
         APP[Agent Runs]
     end
 
@@ -42,7 +42,7 @@ flowchart LR
 
 Before you begin, ensure you have:
 
-- [ops](https://ops.city) installed
+- [authority CLI](https://authority.dev) installed
 - A compiled application (Go, Rust, C, etc.)
 - Basic familiarity with unikernels
 
@@ -72,14 +72,14 @@ Create `/ak/policy.json` in your initrd:
 mkdir -p initrd/ak
 cp policy.json initrd/ak/policy.json
 
-# Build with ops
-ops build myapp -c config.json
+# Build with authority CLI
+authority build myapp -c config.json
 ```
 
 ## 3. Run
 
 ```bash
-ops run myapp
+authority run myapp
 ```
 
 ## 4. Debug Denials

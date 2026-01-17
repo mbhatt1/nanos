@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Authority Nanos is a **fork of [Nanos](https://github.com/nanovms/nanos)** that adds the Authority Kernel — a capability-based security layer for AI agents.
+Authority Nanos is a **fork of [Nanos](https://github.com/mbhatt1/nanos)** that adds the Authority Kernel — a capability-based security layer for AI agents.
 
 ## System Stack
 

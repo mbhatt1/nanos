@@ -127,7 +127,7 @@ cp policy.json ak/policy.json
 ## Step 4: Run the Agent
 
 ```bash
-ops run -c config.json agent
+authority run -c config.json agent
 ```
 
 You should see the GitHub API response. If you try to access a different domain, it will be denied:

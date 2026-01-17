@@ -70,13 +70,13 @@ As AI agents become capable of controlling real-world systems, traditional secur
 
 ## Getting Started
 
-### Quick Start with ops
+### Quick Start with Authority CLI
 
-The fastest way to run applications on Authority Nanos is using [ops](https://ops.city):
+The fastest way to run applications on Authority Nanos is using the `authority` CLI:
 
 ```bash
-# Install ops and Authority Nanos
-curl https://ops.city/get.sh -sSfL | sh
+# Install Authority Nanos
+curl https://authority.dev/get.sh -sSfL | sh
 ```
 
 ### Running Your First Agent
@@ -114,7 +114,7 @@ tools:
 Deploy your agent:
 
 ```bash
-ops run -c agent.yaml agent-binary
+authority run -c agent.yaml agent-binary
 ```
 
 For local model support, start an inference server on the host:
@@ -318,7 +318,7 @@ brew update && brew install go wget ent qemu aarch64-elf-binutils
 
 ```bash
 sudo apt-get install qemu-system-x86 nasm golang-go ent ruby
-curl https://ops.city/get.sh -sSfL | sh
+curl https://authority.dev/get.sh -sSfL | sh
 ```
 
 ### Build the Kernel
@@ -468,10 +468,10 @@ See [Nanos Charter](CHARTER.md) for the philosophical foundation.
 
 ### General Nanos Documentation
 
-- [Operations Guide](https://nanovms.gitbook.io/ops/) - Using ops to deploy
-- [Architecture](https://github.com/nanovms/nanos/wiki/Architecture) - Kernel internals
-- [Debugging Guide](https://github.com/nanovms/nanos/wiki/debugging) - Troubleshooting
-- [Networking Setup](https://github.com/nanovms/nanos/wiki/networking-setup) - Manual network config
+- [Operations Guide](https://docs.authority.dev/) - Using authority CLI to deploy
+- [Architecture](https://github.com/mbhatt1/nanos/wiki/Architecture) - Kernel internals
+- [Debugging Guide](https://github.com/mbhatt1/nanos/wiki/debugging) - Troubleshooting
+- [Networking Setup](https://github.com/mbhatt1/nanos/wiki/networking-setup) - Manual network config
 - [FAQ](FAQ.md) - Frequently asked questions
 - [Examples](https://github.com/nanovms/ops-examples) - Sample applications
 
@@ -481,10 +481,10 @@ See [Nanos Charter](CHARTER.md) for the philosophical foundation.
 
 Authority Nanos maintains the performance characteristics of standard Nanos:
 
-- **Go on GCloud**: 18k req/sec ([details](https://github.com/nanovms/nanos/wiki/go_gcloud))
-- **Rust on GCloud**: 22k req/sec ([details](https://github.com/nanovms/nanos/wiki/rust_gcloud))
-- **Node.js on AWS**: 2k req/sec ([details](https://github.com/nanovms/nanos/wiki/nodejs_aws))
-- **Node.js on GCloud**: 4k req/sec ([details](https://github.com/nanovms/nanos/wiki/nodejs_gcloud))
+- **Go on GCloud**: 18k req/sec ([details](https://github.com/mbhatt1/nanos/wiki/go_gcloud))
+- **Rust on GCloud**: 22k req/sec ([details](https://github.com/mbhatt1/nanos/wiki/rust_gcloud))
+- **Node.js on AWS**: 2k req/sec ([details](https://github.com/mbhatt1/nanos/wiki/nodejs_aws))
+- **Node.js on GCloud**: 4k req/sec ([details](https://github.com/mbhatt1/nanos/wiki/nodejs_gcloud))
 
 The Authority Kernel adds minimal overhead:
 - Capability verification: ~5μs (constant-time HMAC)
@@ -516,7 +516,7 @@ For significant changes, please open an issue first to discuss your approach.
 1. Search existing issues first
 2. Use latest/nightly build to verify
 3. Provide minimal reproducible example
-4. Attach debug output (`ops run --trace`)
+4. Attach debug output (`authority run --trace`)
 5. Include config.json and policy.yaml
 
 ### Areas for Contribution
@@ -566,7 +566,7 @@ If you're using Authority Nanos, please open a PR to add your use case!
 ### Community Support
 
 - [Discussion Forum](https://forums.nanovms.com/) - General questions and community help
-- [GitHub Issues](https://github.com/nanovms/nanos/issues) - Bug reports and feature requests
+- [GitHub Issues](https://github.com/mbhatt1/nanos/issues) - Bug reports and feature requests
 - [Docs Site](https://nanovms.gitbook.io/ops/) - Comprehensive documentation
 
 ### Commercial Support
@@ -604,7 +604,7 @@ If you use Authority Nanos in research or publication, please cite:
   title = {Authority Nanos: AI-First Unikernel for Autonomous Agents},
   author = {NanoVMs, Inc.},
   year = {2024},
-  url = {https://github.com/nanovms/nanos}
+  url = {https://github.com/mbhatt1/nanos}
 }
 ```
 

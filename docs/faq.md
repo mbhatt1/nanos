@@ -4,7 +4,7 @@
 
 ### What is Authority Nanos?
 
-Authority Nanos is a **fork of [Nanos](https://github.com/nanovms/nanos)** that adds the Authority Kernel — a capability-based security layer designed specifically for running autonomous AI agents in production.
+Authority Nanos is a **fork of [Nanos](https://github.com/mbhatt1/nanos)** that adds the Authority Kernel — a capability-based security layer designed specifically for running autonomous AI agents in production.
 
 ### How is Authority Nanos different from standard Nanos?
 
@@ -123,8 +123,8 @@ Capabilities are **unforgeable HMAC-SHA256 signed tokens** granting specific per
 - **Hyper-V** (Windows) — experimental
 
 ### How do I deploy to cloud providers?
+Use the [authority CLI](https://authority.dev) which supports AWS, GCP, Azure, DigitalOcean, Vultr, and more.
 
-Use [ops](https://ops.city) which supports AWS, GCP, Azure, DigitalOcean, Vultr, and more.
 
 ### Can I run on edge devices?
 

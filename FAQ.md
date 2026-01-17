@@ -305,7 +305,7 @@ See [K8s Guide](https://nanovms.gitbook.io/ops/k8s) for details.
 
 ### How do I deploy to cloud providers?
 
-Use [ops](https://ops.city) which has native support for:
+Use the `authority` CLI which has native support for:
 - AWS (EC2, Fargate)
 - Google Cloud (GCE, GKE)
 - Azure (VMs, Container Instances)
@@ -315,7 +315,7 @@ Use [ops](https://ops.city) which has native support for:
 
 Example:
 ```bash
-ops run -t aws -c agent-config.yaml agent-binary
+authority run -t aws -c agent-config.yaml agent-binary
 ```
 
 ### Can I run Authority Nanos on edge devices?
@@ -355,7 +355,7 @@ make test
 **Audit log analysis:**
 ```bash
 # Query audit log
-ops run --trace agent-binary
+authority run --trace agent-binary
 
 # Extract specific run
 ak_audit_query --run-id="2024-01-15T10:30:00Z"
@@ -469,7 +469,7 @@ For significant changes, open an issue first to discuss.
 
 **Community Support** (free):
 - [Discussion Forum](https://forums.nanovms.com/)
-- [GitHub Issues](https://github.com/nanovms/nanos/issues)
+- [GitHub Issues](https://github.com/mbhatt1/nanos/issues)
 - [Documentation](https://nanovms.gitbook.io/ops/)
 
 **Commercial Support** (paid):
@@ -509,7 +509,7 @@ See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 
 ### Can I request features?
 
-**Yes!** Open a [GitHub issue](https://github.com/nanovms/nanos/issues) with:
+**Yes!** Open a [GitHub issue](https://github.com/mbhatt1/nanos/issues) with:
 - Use case description
 - Why existing features don't solve it
 - Proposed API or behavior

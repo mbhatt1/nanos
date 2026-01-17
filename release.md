@@ -1,7 +1,7 @@
 # Release Process
 
 ## Nanos
-Create a [github release](https://github.com/nanovms/nanos/releases) and build the source on 
+Create a [github release](https://github.com/mbhatt1/nanos/releases) and build the source on 
 Linux and Mac. Update the below.
 
 example:
@@ -25,6 +25,6 @@ Right now we dont push updates to user, but user need to request for update.
 ```
 2. **Updating nanos**:
 ```
-    Use the -f flag with ops commands.
-    ops run/load -f  
+    Use the -f flag with authority commands.
+    authority run/load -f
 ```

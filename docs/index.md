@@ -148,7 +148,7 @@ sequenceDiagram
 
 ## What is Authority Nanos?
 
-Authority Nanos is a **fork of [Nanos](https://github.com/nanovms/nanos)** that adds the **Authority Kernel** — a capability-based security layer purpose-built for running autonomous AI agents in production.
+Authority Nanos is a **fork of [Nanos](https://github.com/mbhatt1/nanos)** that adds the **Authority Kernel** — a capability-based security layer purpose-built for running autonomous AI agents in production.
 
 ```mermaid
 graph LR
@@ -233,8 +233,8 @@ Create a policy file (`/ak/policy.json`):
 Build and run:
 
 ```bash
-ops build myapp -c config.json
-ops run myapp
+authority build myapp -c config.json
+authority run myapp
 ```
 
 ## Deployment Options

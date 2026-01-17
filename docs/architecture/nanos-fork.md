@@ -1,6 +1,6 @@
 # Fork Relationship
 
-Authority Nanos is a **fork of [Nanos](https://github.com/nanovms/nanos)** — the original unikernel developed by [NanoVMs](https://nanovms.com).
+Authority Nanos is a **fork of [Nanos](https://github.com/mbhatt1/nanos)** — the original unikernel developed by [NanoVMs](https://nanovms.com).
 
 ## What is Nanos?
 
@@ -88,7 +88,7 @@ make kernel CONFIG_AK_ENABLED=0
 Improvements to the core Nanos kernel (not Authority Kernel specific) should be contributed upstream:
 
 1. Identify if the change is AK-specific or general Nanos
-2. For general changes, submit PR to [nanovms/nanos](https://github.com/nanovms/nanos)
+2. For general changes, submit PR to [nanovms/nanos](https://github.com/mbhatt1/nanos)
 3. For AK-specific changes, submit PR to Authority Nanos
 
 ## Why Fork?
@@ -106,7 +106,7 @@ Authority Nanos periodically syncs with upstream Nanos:
 
 ```bash
 # Add upstream remote
-git remote add upstream https://github.com/nanovms/nanos.git
+git remote add upstream https://github.com/mbhatt1/nanos.git
 
 # Fetch upstream changes
 git fetch upstream

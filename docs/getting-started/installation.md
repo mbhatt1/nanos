@@ -4,9 +4,9 @@
 
 ```mermaid
 flowchart TB
-    subgraph "Option 1: ops (Recommended)"
-        OPS_CURL[curl ops.city/get.sh]
-        OPS_INSTALL[ops installed]
+    subgraph "Option 1: authority CLI (Recommended)"
+        OPS_CURL[curl authority.dev/get.sh]
+        OPS_INSTALL[authority installed]
         OPS_READY[Ready to build agents]
 
         OPS_CURL --> OPS_INSTALL --> OPS_READY
@@ -25,15 +25,15 @@ flowchart TB
     style SRC_TEST fill:#27ae60,color:#fff
 ```
 
-## Using ops (Recommended)
+## Using authority CLI (Recommended)
 
-The fastest way to get started with Authority Nanos is using [ops](https://ops.city):
+The fastest way to get started with Authority Nanos is using the `authority` CLI:
 
 ```bash
-curl https://ops.city/get.sh -sSfL | sh
+curl https://authority.dev/get.sh -sSfL | sh
 ```
 
-This installs both ops and the Authority Nanos kernel.
+This installs both the authority CLI and the Authority Nanos kernel.
 
 ## Building from Source
 
@@ -60,7 +60,7 @@ brew update && brew install go wget ent qemu aarch64-elf-binutils
 ```bash
 sudo apt-get update
 sudo apt-get install qemu-system-x86 nasm golang-go ent ruby build-essential
-curl https://ops.city/get.sh -sSfL | sh
+curl https://authority.dev/get.sh -sSfL | sh
 ```
 
 ### Build the Kernel

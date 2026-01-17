@@ -82,7 +82,7 @@ static inline void *idt_from_interrupt(int interrupt)
    build on macos is somehow leading to incorrect IDT entries. This
    needs more investigation.
 
-   https://github.com/nanovms/nanos/issues/1060
+   https://github.com/mbhatt1/nanos/issues/1060
 */
 static void __attribute__((noinline)) write_idt(int interrupt, u64 offset, u64 ist)
 {
