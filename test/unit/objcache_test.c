@@ -61,7 +61,7 @@ static boolean dealloc_vec(heap h, bytes s, vector v)
 {
     if (!validate(h))
         return false;
-    u64 len = vector_length(v);
+    u64 len = (u64)vector_length(v);
     for (u64 i = 0; i < len; i++) {
         void *p = vector_get(v, (int)i);
         if (!p)

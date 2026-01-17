@@ -74,7 +74,7 @@ boolean basic_test(heap h)
 
     /* foreach - assuming it's meant to always be in order */
     long i = 0;
-    u64 vlen = vector_length(v);
+    u64 vlen = (u64)vector_length(v);
     for (u64 vi = 0; vi < vlen; vi++) {
         void *x = vector_get(v, (int)vi);
         if ((long)x != i) {
@@ -127,7 +127,7 @@ boolean basic_test(heap h)
 
     deallocate_vector(v);
     v = allocate_vector(h, 1);
-    vlen = vector_length(v);
+    vlen = (u64)vector_length(v);
     for (u64 vi = 0; vi < vlen; vi++) {
         (void)vector_get(v, (int)vi);
         msg = "foreach: body run on zero len";
