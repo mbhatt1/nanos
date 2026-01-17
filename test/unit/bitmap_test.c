@@ -24,9 +24,9 @@ bitmap test_alloc(heap h) {
  *  function.
  *  Also implicity tests bitmap_foreach_set
  */  
-boolean test_clone(bitmap b) { 
-    for (int i = 0; i < 20; i++) 
-        bitmap_set(b, rand(), 1);
+boolean test_clone(bitmap b) {
+    for (int i = 0; i < 20; i++)
+        bitmap_set(b, (u64)rand(), 1);
     bitmap b_cpy = bitmap_clone(b);
     // tests bits match in original bitmap
     bitmap_foreach_set(b, j) {
@@ -65,11 +65,11 @@ boolean test_clone(bitmap b) {
  *  function.
  *  Also implicity tests bitmap_foreach_set
  */ 
-boolean test_copy(heap h, bitmap b) { 
+boolean test_copy(heap h, bitmap b) {
     bitmap b_cpy = allocate_bitmap(h, h, 4096);
     for (int i = 0; i < 20; i++) {
-        bitmap_set(b_cpy, rand(), 1);
-        bitmap_set(b, rand(), 1);
+        bitmap_set(b_cpy, (u64)rand(), 1);
+        bitmap_set(b, (u64)rand(), 1);
     }
     bitmap_copy(b, b_cpy);
     // tests bits match in original bitmap
@@ -109,7 +109,7 @@ boolean test_copy(heap h, bitmap b) {
  *  bitmap_get and bitmap_set functions.
  */ 
 boolean test_set_and_get(bitmap b) {
-    u64 i = rand();
+    u64 i = (u64)rand();
     bitmap_set(b, i, 1);
     if (!bitmap_get(b, i)) {
         msg_err("%s failed for bitmap", func_ss);
@@ -122,9 +122,9 @@ boolean test_set_and_get(bitmap b) {
  *  Tests wrapping and unwrapping of bitmap using 
  *  bitmap_wrap and bitmap_unwrap functions.
  */ 
-boolean test_wrap(heap h) { 
-    u64 map = rand(); 
-    map = (map << 32) | rand();
+boolean test_wrap(heap h) {
+    u64 map = (u64)rand();
+    map = (map << 32) | (u64)rand();
     bitmap b = bitmap_wrap(h, &map, 64);
     for (int i = 0; i < 64; i++) {
         if (((map & (1ULL << i)) && !bitmap_get(b, i)) || 
@@ -144,7 +144,7 @@ boolean test_wrap(heap h) {
  *  bitmap_alloc_within_range and bitmap_dealloc functions.
  */ 
 boolean test_bitmap_alloc(bitmap b, u64 start, u64 end) {
-    u64 nbits = rand();
+    u64 nbits = (u64)rand();
     u64 first;
     while (true) {
         first = bitmap_alloc_within_range(b, nbits, start, end);
@@ -181,8 +181,8 @@ boolean test_bitmap_alloc(bitmap b, u64 start, u64 end) {
  *  bitmap_range_check_and_set
  */
 boolean test_range_check_set(bitmap b) {
-    u64 start = rand() % 4096;
-    u64 nbits = rand() % (4096 - start);
+    u64 start = (u64)(rand() % 4096);
+    u64 nbits = (u64)(rand() % (4096 - start));
     boolean set = rand() & 1;
     bitmap_range_check_and_set(b, start, nbits, false, set);
     // check that specified range is set properly
@@ -250,8 +250,8 @@ boolean basic_test()
     // tests bitmap alloc then bitmap alloc within range
     if (!test_bitmap_alloc(b, 0, 4096)) return false;
     // generate random number between 0 and 4096
-    u64 start = rand() % (4096);
-    u64 end = rand() % (4096 - start) + start; 
+    u64 start = (u64)(rand() % 4096);
+    u64 end = (u64)(rand() % (4096 - start) + start);
     if(!test_bitmap_alloc(b, start, end)) return false; 
 
     // tests bitmap range check and set
