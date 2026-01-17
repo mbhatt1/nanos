@@ -132,20 +132,20 @@ static void mock_log_init(void)
 static int canonicalize_entry(ak_log_entry_t *entry, uint8_t *buf, size_t buf_len)
 {
     int pos = 0;
-    pos += snprintf((char *)buf + pos, buf_len - pos, "{\"seq\":%llu,\"ts_ms\":%llu,\"op\":%u,",
+    pos += snprintf((char *)buf + pos, buf_len - (size_t)pos, "{\"seq\":%llu,\"ts_ms\":%llu,\"op\":%u,",
                     (unsigned long long)entry->seq, (unsigned long long)entry->ts_ms, entry->op);
 
-    pos += snprintf((char *)buf + pos, buf_len - pos, "\"pid\":\"");
+    pos += snprintf((char *)buf + pos, buf_len - (size_t)pos, "\"pid\":\"");
     for (int i = 0; i < AK_TOKEN_ID_SIZE && pos < (int)buf_len - 3; i++) {
-        pos += snprintf((char *)buf + pos, buf_len - pos, "%02x", entry->pid[i]);
+        pos += snprintf((char *)buf + pos, buf_len - (size_t)pos, "%02x", entry->pid[i]);
     }
-    pos += snprintf((char *)buf + pos, buf_len - pos, "\",");
+    pos += snprintf((char *)buf + pos, buf_len - (size_t)pos, "\",");
 
-    pos += snprintf((char *)buf + pos, buf_len - pos, "\"req_hash\":\"");
+    pos += snprintf((char *)buf + pos, buf_len - (size_t)pos, "\"req_hash\":\"");
     for (int i = 0; i < AK_HASH_SIZE && pos < (int)buf_len - 3; i++) {
-        pos += snprintf((char *)buf + pos, buf_len - pos, "%02x", entry->req_hash[i]);
+        pos += snprintf((char *)buf + pos, buf_len - (size_t)pos, "%02x", entry->req_hash[i]);
     }
-    pos += snprintf((char *)buf + pos, buf_len - pos, "\"}");
+    pos += snprintf((char *)buf + pos, buf_len - (size_t)pos, "\"}");
 
     return pos;
 }
@@ -158,9 +158,9 @@ static void compute_entry_hash(ak_log_entry_t *entry, uint8_t *prev_hash, uint8_
 
     uint8_t combined[AK_HASH_SIZE + 1024];
     memcpy(combined, prev_hash, AK_HASH_SIZE);
-    memcpy(combined + AK_HASH_SIZE, canonical, len);
+    memcpy(combined + AK_HASH_SIZE, canonical, (size_t)len);
 
-    test_sha256(combined, AK_HASH_SIZE + len, hash_out);
+    test_sha256(combined, AK_HASH_SIZE + (uint32_t)len, hash_out);
 }
 
 /* Append entry to log */
@@ -190,7 +190,7 @@ static int64_t mock_log_append(uint8_t *pid, uint8_t *run_id, uint16_t op,
     memcpy(mock_log.head_hash, entry->this_hash, AK_HASH_SIZE);
     mock_log.entry_count++;
 
-    return entry->seq;
+    return (int64_t)entry->seq;
 }
 
 /* Verify hash chain */
@@ -214,7 +214,7 @@ static int64_t mock_log_verify(uint64_t start_seq, uint64_t end_seq)
 
         /* Check prev_hash matches expected */
         if (memcmp(entry->prev_hash, expected_hash, AK_HASH_SIZE) != 0) {
-            return i + 1;  /* Return sequence number of bad entry */
+            return (int64_t)(i + 1);  /* Return sequence number of bad entry */
         }
 
         /* Recompute this_hash */
@@ -222,7 +222,7 @@ static int64_t mock_log_verify(uint64_t start_seq, uint64_t end_seq)
         compute_entry_hash(entry, entry->prev_hash, computed_hash);
 
         if (memcmp(entry->this_hash, computed_hash, AK_HASH_SIZE) != 0) {
-            return i + 1;
+            return (int64_t)(i + 1);
         }
 
         memcpy(expected_hash, entry->this_hash, AK_HASH_SIZE);
@@ -249,7 +249,7 @@ static int64_t mock_log_anchor(void)
     memcpy(anchor->log_hash, mock_log.head_hash, AK_HASH_SIZE);
 
     mock_log.anchor_count++;
-    return anchor->log_seq;
+    return (int64_t)anchor->log_seq;
 }
 
 /* Verify anchor */
@@ -310,8 +310,8 @@ bool test_audit_append_multiple(void)
     uint8_t hash[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 100; i++) {
-        hash[0] = i;
-        int64_t seq = mock_log_append(pid, run_id, i, hash, hash, hash);
+        hash[0] = (uint8_t)i;
+        int64_t seq = mock_log_append(pid, run_id, (uint16_t)i, hash, hash, hash);
         test_assert_eq(seq, i + 1);
     }
 
@@ -327,10 +327,10 @@ bool test_audit_sequence_numbers(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 50; i++) {
-        int64_t seq = mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        int64_t seq = mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
         test_assert_eq(seq, i + 1);
 
-        ak_log_entry_t *entry = mock_log_get(seq);
+        ak_log_entry_t *entry = mock_log_get((uint64_t)seq);
         test_assert(entry != NULL);
         test_assert_eq(entry->seq, (uint64_t)(i + 1));
     }
@@ -365,7 +365,7 @@ bool test_audit_hash_chain_links(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 10; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Verify each entry links to previous */
@@ -388,7 +388,7 @@ bool test_audit_hash_chain_verify_valid(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 50; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     int64_t result = mock_log_verify(1, 50);
@@ -404,7 +404,7 @@ bool test_audit_hash_chain_verify_partial(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 100; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Verify middle range */
@@ -425,7 +425,7 @@ bool test_audit_tamper_detect_single_bit(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 10; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Tamper with entry 5 - flip single bit in this_hash */
@@ -445,7 +445,7 @@ bool test_audit_tamper_detect_modified_data(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 10; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Tamper with entry 3 - modify op code */
@@ -465,7 +465,7 @@ bool test_audit_tamper_detect_chain_break(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 10; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Break the chain - modify prev_hash of entry 7 */
@@ -485,8 +485,8 @@ bool test_audit_tamper_detect_swap_entries(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 10; i++) {
-        dummy[0] = i;  /* Different data per entry */
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        dummy[0] = (uint8_t)i;  /* Different data per entry */
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Swap entries 4 and 5 */
@@ -508,7 +508,7 @@ bool test_audit_tamper_detect_deletion(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 10; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* "Delete" entry 5 by shifting entries */
@@ -531,12 +531,12 @@ bool test_audit_tamper_detect_insertion(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 10; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* "Insert" entry by shifting and creating fake entry */
     mock_log.entry_count++;
-    for (int i = mock_log.entry_count - 1; i > 5; i--) {
+    for (int i = (int)mock_log.entry_count - 1; i > 5; i--) {
         mock_log.entries[i] = mock_log.entries[i - 1];
     }
 
@@ -561,7 +561,7 @@ bool test_audit_anchor_create(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 100; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     int64_t anchor_seq = mock_log_anchor();
@@ -578,7 +578,7 @@ bool test_audit_anchor_verify_valid(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 100; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     mock_log_anchor();
@@ -596,14 +596,14 @@ bool test_audit_anchor_verify_after_more_entries(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 100; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     mock_log_anchor();
 
     /* Add more entries */
     for (int i = 0; i < 50; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Anchor should still be valid (points to entry 100) */
@@ -619,7 +619,7 @@ bool test_audit_anchor_verify_tampered(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 100; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     mock_log_anchor();
@@ -640,17 +640,17 @@ bool test_audit_multiple_anchors(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 50; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
     mock_log_anchor();
 
     for (int i = 0; i < 50; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
     mock_log_anchor();
 
     for (int i = 0; i < 50; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
     mock_log_anchor();
 
@@ -678,12 +678,12 @@ bool test_audit_query_by_seq(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 100; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Query specific entries */
     for (int i = 1; i <= 100; i++) {
-        ak_log_entry_t *entry = mock_log_get(i);
+        ak_log_entry_t *entry = mock_log_get((uint64_t)i);
         test_assert(entry != NULL);
         test_assert_eq(entry->seq, (uint64_t)i);
     }
@@ -698,7 +698,7 @@ bool test_audit_query_invalid_seq(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 10; i++) {
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* Query out of range */
@@ -732,7 +732,7 @@ bool test_audit_log_full(void)
 
     /* Fill the log */
     for (int i = 0; i < MAX_LOG_ENTRIES; i++) {
-        int64_t seq = mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        int64_t seq = mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
         test_assert(seq > 0);
     }
 
@@ -754,8 +754,8 @@ bool test_audit_large_entries(void)
 
     /* Append entries with varied data */
     for (int i = 0; i < 100; i++) {
-        large_data[0] = i;
-        int64_t seq = mock_log_append(large_data, large_data, i, large_data, large_data, large_data);
+        large_data[0] = (uint8_t)i;
+        int64_t seq = mock_log_append(large_data, large_data, (uint16_t)i, large_data, large_data, large_data);
         test_assert_eq(seq, i + 1);
     }
 
@@ -781,7 +781,7 @@ bool test_audit_all_operations_logged(void)
 
     /* Verify all were logged correctly */
     for (int i = 0; i < 8; i++) {
-        ak_log_entry_t *entry = mock_log_get(i + 1);
+        ak_log_entry_t *entry = mock_log_get((uint64_t)(i + 1));
         test_assert(entry != NULL);
         test_assert_eq(entry->op, ops[i]);
     }
@@ -802,9 +802,9 @@ bool test_audit_sequential_consistency(void)
     /* Simulate concurrent appends (in reality sequential, but tests logic) */
     for (int thread = 0; thread < 10; thread++) {
         for (int i = 0; i < 10; i++) {
-            dummy[0] = thread;
-            dummy[1] = i;
-            int64_t seq = mock_log_append(dummy, dummy, thread * 10 + i, dummy, dummy, dummy);
+            dummy[0] = (uint8_t)thread;
+            dummy[1] = (uint8_t)i;
+            int64_t seq = mock_log_append(dummy, dummy, (uint16_t)(thread * 10 + i), dummy, dummy, dummy);
             test_assert(seq > 0);
         }
     }
@@ -834,8 +834,8 @@ bool test_audit_hash_uniqueness(void)
     uint8_t dummy[AK_HASH_SIZE] = {0};
 
     for (int i = 0; i < 100; i++) {
-        dummy[0] = i;
-        mock_log_append(dummy, dummy, i, dummy, dummy, dummy);
+        dummy[0] = (uint8_t)i;
+        mock_log_append(dummy, dummy, (uint16_t)i, dummy, dummy, dummy);
     }
 
     /* All this_hash values should be unique */

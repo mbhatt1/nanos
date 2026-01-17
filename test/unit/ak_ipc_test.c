@@ -506,7 +506,7 @@ static int64_t mock_seq_tracker_check(ak_seq_tracker_t *tracker, uint64_t seq)
             seq < tracker->window_base + SEQ_WINDOW_SIZE) {
             uint64_t offset = seq - tracker->window_base;
             uint64_t byte_idx = offset / 8;
-            uint8_t bit_mask = 1 << (offset % 8);
+            uint8_t bit_mask = (uint8_t)(1 << (offset % 8));
 
             if (tracker->seen_bitmap[byte_idx] & bit_mask) {
                 return AK_E_REPLAY;
@@ -516,9 +516,9 @@ static int64_t mock_seq_tracker_check(ak_seq_tracker_t *tracker, uint64_t seq)
         return AK_E_REPLAY;
     }
 
-    /* Check for gap */
+    /* Check for gap (but not on first sequence) */
     int64_t result = 0;
-    if (seq > tracker->expected_next) {
+    if (tracker->highest_seen > 0 && seq > tracker->expected_next) {
         result = AK_E_SEQ_GAP;
     }
 
@@ -551,7 +551,7 @@ static int64_t mock_seq_tracker_check(ak_seq_tracker_t *tracker, uint64_t seq)
         seq < tracker->window_base + SEQ_WINDOW_SIZE) {
         uint64_t offset = seq - tracker->window_base;
         uint64_t byte_idx = offset / 8;
-        uint8_t bit_mask = 1 << (offset % 8);
+        uint8_t bit_mask = (uint8_t)(1 << (offset % 8));
         tracker->seen_bitmap[byte_idx] |= bit_mask;
     }
 
@@ -602,7 +602,7 @@ static bool mock_hex_decode(const char *hex, uint8_t *out, uint64_t max_len)
         int lo = hex_digit(hex[i * 2 + 1]);
         if (hi < 0 || lo < 0)
             return false;
-        out[i] = (hi << 4) | lo;
+        out[i] = (uint8_t)((hi << 4) | lo);
     }
 
     return true;
@@ -1235,7 +1235,7 @@ bool test_seq_tracker_sliding_window(void)
     test_assert_not_null(tracker);
 
     /* Process sequences within window */
-    for (int i = 1; i <= 100; i++) {
+    for (uint64_t i = 1; i <= 100; i++) {
         int64_t result = mock_seq_tracker_check(tracker, i);
         if (i == 1) {
             test_assert_eq(result, 0);
@@ -1246,7 +1246,7 @@ bool test_seq_tracker_sliding_window(void)
     }
 
     /* All these should now be detected as replays */
-    for (int i = 1; i <= 100; i++) {
+    for (uint64_t i = 1; i <= 100; i++) {
         test_assert_eq(mock_seq_tracker_check(tracker, i), AK_E_REPLAY);
     }
 
@@ -1373,7 +1373,7 @@ bool test_hex_encode_zeros(void)
 bool test_hex_encode_all_bytes(void)
 {
     uint8_t data[16];
-    for (int i = 0; i < 16; i++) data[i] = i * 16 + i;
+    for (int i = 0; i < 16; i++) data[i] = (uint8_t)(i * 16 + i);
 
     char out[33];
     mock_hex_encode(data, 16, out);
@@ -1862,8 +1862,8 @@ bool test_attack_sequence_overflow(void)
 bool test_crc32c_empty(void)
 {
     uint32_t crc = crc32c(NULL, 0);
-    /* Empty data should produce a defined CRC */
-    test_assert_neq(crc, 0);  /* CRC of empty data is not zero */
+    /* CRC-32C of empty data is 0 (0xFFFFFFFF ^ 0xFFFFFFFF after no iterations) */
+    test_assert_eq(crc, 0);
 
     return true;
 }

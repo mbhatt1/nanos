@@ -375,6 +375,8 @@ static bool mock_state_is_dirty(uint64_t ptr)
 /* Get dirty count */
 static uint64_t mock_state_dirty_count(void)
 {
+    if (!mock_state.initialized)
+        return 0;
     return mock_state.dirty_count;
 }
 
@@ -410,7 +412,7 @@ static int64_t mock_backend_put(uint64_t ptr, const uint8_t *data, uint32_t len,
     int found_idx = -1;
     for (uint32_t i = 0; i < mock_state.stored_count; i++) {
         if (mock_state.stored_objects[i].ptr == ptr && mock_state.stored_objects[i].valid) {
-            found_idx = i;
+            found_idx = (int)i;
             break;
         }
     }
@@ -418,7 +420,7 @@ static int64_t mock_backend_put(uint64_t ptr, const uint8_t *data, uint32_t len,
     if (found_idx < 0) {
         if (mock_state.stored_count >= MAX_STORED_OBJECTS)
             return AK_E_STATE_BACKEND_ERROR;
-        found_idx = mock_state.stored_count++;
+        found_idx = (int)mock_state.stored_count++;
     } else {
         /* Free old data */
         free(mock_state.stored_objects[found_idx].data);
@@ -540,6 +542,18 @@ static ak_sync_result_t mock_state_sync_objects(uint64_t *ptrs, uint32_t count)
         return result;
     }
 
+    /*
+     * Copy the ptrs array since mock_state_mark_clean modifies dirty_ptrs
+     * by shifting elements, which would cause us to skip elements.
+     */
+    uint64_t *ptrs_copy = malloc((size_t)count * sizeof(uint64_t));
+    if (!ptrs_copy) {
+        result.status = AK_SYNC_FAILED;
+        result.error_code = AK_E_STATE_SYNC_FAILED;
+        return result;
+    }
+    memcpy(ptrs_copy, ptrs, (size_t)count * sizeof(uint64_t));
+
     mock_state.sync_status = AK_SYNC_IN_PROGRESS;
     mock_state.stats.syncs_total++;
 
@@ -548,7 +562,7 @@ static ak_sync_result_t mock_state_sync_objects(uint64_t *ptrs, uint32_t count)
     uint64_t bytes_synced = 0;
 
     for (uint32_t i = 0; i < count; i++) {
-        uint64_t ptr = ptrs[i];
+        uint64_t ptr = ptrs_copy[i];
 
         /* Create mock object data */
         uint8_t mock_data[64];
@@ -589,6 +603,7 @@ static ak_sync_result_t mock_state_sync_objects(uint64_t *ptrs, uint32_t count)
     mock_state.sync_status = result.status;
     mock_state.last_sync_ms = mock_state.current_time_ms;
 
+    free(ptrs_copy);
     return result;
 }
 
@@ -1158,7 +1173,7 @@ bool test_sync_statistics_update(void)
     mock_state_init(&config);
 
     /* Perform several syncs */
-    for (int round = 0; round < 3; round++) {
+    for (uint64_t round = 0; round < 3; round++) {
         for (uint64_t i = 1; i <= 10; i++) {
             mock_state_mark_dirty(i * 0x100 + round * 0x10000);
         }
@@ -1245,7 +1260,7 @@ bool test_anchor_chain_linking(void)
     mock_state_init(NULL);
 
     /* Emit several anchors with dirty objects in between */
-    for (int i = 0; i < 5; i++) {
+    for (uint64_t i = 0; i < 5; i++) {
         mock_state_mark_dirty(i * 0x1000);
         mock_state_emit_anchor();
     }
@@ -1356,7 +1371,7 @@ bool test_anchor_verify_chain_tampered(void)
     mock_state_init(NULL);
 
     /* Create a valid chain */
-    for (int i = 0; i < 5; i++) {
+    for (uint64_t i = 0; i < 5; i++) {
         mock_state_mark_dirty(i * 0x1000);
         mock_state_emit_anchor();
     }
@@ -1935,13 +1950,13 @@ bool test_statistics_accumulation(void)
     mock_state_init(&config);
 
     /* Perform various operations */
-    for (int i = 0; i < 5; i++) {
+    for (uint64_t i = 0; i < 5; i++) {
         mock_state_mark_dirty(i * 0x1000);
     }
     mock_state_sync();
     mock_state_emit_anchor();
 
-    for (int i = 0; i < 3; i++) {
+    for (uint64_t i = 0; i < 3; i++) {
         mock_state_mark_dirty(i * 0x2000);
     }
     mock_state_sync();

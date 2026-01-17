@@ -12,10 +12,21 @@
  *   INV-4: Log Commitment (audit before response)
  */
 
-#include <runtime.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
+
+/* Type definitions to replace runtime.h types */
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef int64_t s64;
+typedef bool boolean;
 
 /* ============================================================
  * MOCK DEFINITIONS
@@ -196,7 +207,7 @@ static void mock_shutdown(void)
 static void generate_token_id(u8 *out)
 {
     for (int i = 0; i < AK_TOKEN_ID_SIZE; i++)
-        out[i] = rand() & 0xFF;
+        out[i] = (u8)(rand() & 0xFF);
 }
 
 static ak_agent_context_t *mock_context_create(void)
@@ -235,6 +246,7 @@ static ak_agent_context_t *mock_context_create(void)
     return ctx;
 }
 
+__attribute__((unused))
 static void mock_context_destroy(ak_agent_context_t *ctx)
 {
     if (!ctx) return;
@@ -265,7 +277,7 @@ static void mock_audit_log(ak_agent_context_t *ctx, ak_request_t *req, s64 resul
     entry->op = req->op;
     entry->seq = req->seq;
     entry->result_code = result_code;
-    entry->timestamp = mock_state.audit_count; /* Simple ordering */
+    entry->timestamp = (u64)mock_state.audit_count; /* Simple ordering */
 }
 
 /* Request validation */
@@ -398,6 +410,8 @@ static s64 mock_check_budget(ak_agent_context_t *ctx, ak_request_t *req)
 /* Policy check */
 static s64 mock_check_policy(ak_agent_context_t *ctx, ak_request_t *req)
 {
+    (void)req; /* Unused in simplified mock */
+
     if (!ctx || !ctx->policy)
         return AK_E_POLICY_DENIED;
 
@@ -940,7 +954,7 @@ static int test_dispatch_budget_enforcement(void)
 
     /* First 3 calls should succeed */
     for (int i = 0; i < 3; i++) {
-        req.seq = i + 1;
+        req.seq = (u64)(i + 1);
         ak_response_t *res = mock_dispatch(ctx, &req);
         test_assert(res->error_code == 0, "Call within budget should succeed");
         free(res);
@@ -1076,7 +1090,7 @@ static int test_dispatch_audit_all_operations(void)
         memset(&req, 0, sizeof(req));
         memcpy(req.pid, ctx->pid, AK_TOKEN_ID_SIZE);
         memcpy(req.run_id, ctx->run_id, AK_TOKEN_ID_SIZE);
-        req.seq = i + 1;
+        req.seq = (u64)(i + 1);
         req.op = ops[i];
         req.cap = (ops[i] == AK_SYS_READ || ops[i] == AK_SYS_QUERY) ? NULL : &cap;
 
@@ -1109,7 +1123,7 @@ static int test_dispatch_stats_total_requests(void)
     req.op = AK_SYS_READ;
 
     for (int i = 0; i < 10; i++) {
-        req.seq = i + 1;
+        req.seq = (u64)(i + 1);
         ak_response_t *res = mock_dispatch(ctx, &req);
         free(res);
     }
@@ -1135,7 +1149,7 @@ static int test_dispatch_stats_success_failure(void)
         memset(&req, 0, sizeof(req));
         memcpy(req.pid, ctx->pid, AK_TOKEN_ID_SIZE);
         memcpy(req.run_id, ctx->run_id, AK_TOKEN_ID_SIZE);
-        req.seq = i + 1;
+        req.seq = (u64)(i + 1);
         req.op = AK_SYS_READ;
 
         ak_response_t *res = mock_dispatch(ctx, &req);
@@ -1148,7 +1162,7 @@ static int test_dispatch_stats_success_failure(void)
         memset(&req, 0, sizeof(req));
         memcpy(req.pid, ctx->pid, AK_TOKEN_ID_SIZE);
         memcpy(req.run_id, ctx->run_id, AK_TOKEN_ID_SIZE);
-        req.seq = i + 6;
+        req.seq = (u64)(i + 6);
         req.op = AK_SYS_WRITE;
         req.cap = NULL;
 
@@ -1183,7 +1197,7 @@ static int test_dispatch_stats_op_counts(void)
         memset(&req, 0, sizeof(req));
         memcpy(req.pid, ctx->pid, AK_TOKEN_ID_SIZE);
         memcpy(req.run_id, ctx->run_id, AK_TOKEN_ID_SIZE);
-        req.seq = i + 1;
+        req.seq = (u64)(i + 1);
         req.op = AK_SYS_READ;
 
         ak_response_t *res = mock_dispatch(ctx, &req);
@@ -1195,7 +1209,7 @@ static int test_dispatch_stats_op_counts(void)
         memset(&req, 0, sizeof(req));
         memcpy(req.pid, ctx->pid, AK_TOKEN_ID_SIZE);
         memcpy(req.run_id, ctx->run_id, AK_TOKEN_ID_SIZE);
-        req.seq = i + 4;
+        req.seq = (u64)(i + 4);
         req.op = AK_SYS_QUERY;
 
         ak_response_t *res = mock_dispatch(ctx, &req);
@@ -1464,7 +1478,7 @@ static int test_dispatch_any_cap_works_everywhere(void)
         memset(&req, 0, sizeof(req));
         memcpy(req.pid, ctx->pid, AK_TOKEN_ID_SIZE);
         memcpy(req.run_id, ctx->run_id, AK_TOKEN_ID_SIZE);
-        req.seq = i + 1;
+        req.seq = (u64)(i + 1);
         req.op = effectful_ops[i];
         req.cap = &cap;
 
@@ -1546,6 +1560,9 @@ static test_case_t test_cases[] = {
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     printf("Authority Kernel Syscall Dispatcher Tests\n");
     printf("==========================================\n\n");
 

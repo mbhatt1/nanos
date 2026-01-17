@@ -278,6 +278,7 @@ static void mock_shutdown(void)
     memset(&mock_state, 0, sizeof(mock_state));
 }
 
+__attribute__((format(printf, 1, 2)))
 static void mock_log_event(const char *fmt, ...)
 {
     if (mock_state.audit.event_count < 256) {
@@ -404,7 +405,7 @@ static int64_t mock_agent_spawn(mock_agent_t *parent, const char *name,
 
     mock_state.agent_count++;
 
-    mock_log_event("SPAWN: parent=%lu child=%lu name=%s",
+    mock_log_event("SPAWN: parent=%llu child=%llu name=%s",
                    parent->pid, child->pid, name);
 
     return (int64_t)child->pid;
@@ -464,7 +465,7 @@ static int mock_agent_unregister(mock_agent_t *agent)
     agent->exited_ms = mock_state.current_time_ms;
     mock_state.agent_count--;
 
-    mock_log_event("EXIT: agent=%lu", agent->pid);
+    mock_log_event("EXIT: agent=%llu", agent->pid);
 
     return 0;
 }
@@ -659,7 +660,7 @@ static int mock_delegate_capability(mock_agent_t *parent, mock_agent_t *child,
 
     child->caps[child->cap_count++] = delegated;
 
-    mock_log_event("DELEGATE: cap=%d from=%lu to=%lu", cap->type, parent->pid, child->pid);
+    mock_log_event("DELEGATE: cap=%d from=%llu to=%llu", cap->type, parent->pid, child->pid);
 
     return 0;
 }
@@ -671,7 +672,7 @@ static void mock_revoke_capabilities(mock_agent_t *agent)
             agent->caps[i]->revoked = true;
         }
     }
-    mock_log_event("REVOKE_ALL: agent=%lu", agent->pid);
+    mock_log_event("REVOKE_ALL: agent=%llu", agent->pid);
 }
 
 /* ============================================================
@@ -689,14 +690,14 @@ static void mock_agent_crash(mock_agent_t *agent)
     agent->state = AGENT_STATE_CRASHED;
     agent->exited_ms = mock_state.current_time_ms;
 
-    mock_log_event("CRASH: agent=%lu", agent->pid);
+    mock_log_event("CRASH: agent=%llu", agent->pid);
 
     /* Notify parent if exists */
     mock_agent_t *parent = mock_find_agent(agent->parent_pid);
     if (parent && parent->active) {
         const char *msg = "child_crashed";
         mock_ipc_send(agent, parent->pid, AK_IPC_MSG_TYPE_NOTIFY,
-                      AK_IPC_FLAG_URGENT, (const uint8_t *)msg, strlen(msg));
+                      AK_IPC_FLAG_URGENT, (const uint8_t *)msg, (uint32_t)strlen(msg));
     }
 }
 
@@ -711,7 +712,7 @@ static void mock_agent_timeout(mock_agent_t *agent)
     /* Revoke capabilities on timeout */
     mock_revoke_capabilities(agent);
 
-    mock_log_event("TIMEOUT: agent=%lu", agent->pid);
+    mock_log_event("TIMEOUT: agent=%llu", agent->pid);
 }
 
 static void mock_agent_exit(mock_agent_t *agent, int exit_code)
@@ -740,7 +741,7 @@ static void mock_agent_exit(mock_agent_t *agent, int exit_code)
         }
     }
 
-    mock_log_event("EXIT: agent=%lu code=%d", agent->pid, exit_code);
+    mock_log_event("EXIT: agent=%llu code=%d", agent->pid, exit_code);
 }
 
 /* ============================================================
@@ -839,28 +840,47 @@ bool test_spawn_max_agents_limit(void)
 {
     mock_init();
 
-    mock_agent_t *parent = &mock_state.agents[0];
-    parent->pid = mock_state.next_pid++;
-    mock_generate_run_id(parent->run_id);
-    parent->active = true;
-    parent->state = AGENT_STATE_RUNNING;
-    parent->budget.spawn_limit = AK_MAX_AGENTS + 10;  /* High limit */
-    mock_state.agent_count++;
+    /*
+     * Test that we hit the AK_MAX_AGENTS limit.
+     * Since each parent can only have AK_MAX_CHILDREN children,
+     * we need multiple parents to reach the global agent limit.
+     */
+    int total_spawned = 0;
+    int parent_count = 0;
 
-    mock_create_capability(parent, AK_CAP_SPAWN, "*", 3600000);
+    /* Create enough parents to exceed AK_MAX_AGENTS */
+    for (int p = 0; p < 3; p++) {  /* 3 parents can spawn up to 96 children */
+        mock_agent_t *parent = &mock_state.agents[p];
+        parent->pid = mock_state.next_pid++;
+        mock_generate_run_id(parent->run_id);
+        parent->active = true;
+        parent->state = AGENT_STATE_RUNNING;
+        parent->budget.spawn_limit = AK_MAX_AGENTS + 10;
+        mock_state.agent_count++;
+        parent_count++;
 
-    /* Spawn until limit */
-    int spawned = 0;
-    for (int i = 0; i < AK_MAX_AGENTS + 5; i++) {
-        char name[32];
-        snprintf(name, sizeof(name), "child_%d", i);
-        int64_t result = mock_agent_spawn(parent, name, NULL);
-        if (result > 0) spawned++;
-        else break;
+        mock_create_capability(parent, AK_CAP_SPAWN, "*", 3600000);
+
+        /* Spawn children from this parent */
+        for (int i = 0; i < AK_MAX_CHILDREN + 5; i++) {
+            char name[64];
+            snprintf(name, sizeof(name), "child_p%d_%d", p, i);
+            int64_t result = mock_agent_spawn(parent, name, NULL);
+            if (result > 0) {
+                total_spawned++;
+            } else {
+                /* Hit either child limit or global agent limit */
+                break;
+            }
+        }
+
+        /* Stop if we've hit the global agent limit */
+        if (mock_state.agent_count >= AK_MAX_AGENTS) break;
     }
 
-    /* Should have spawned up to AK_MAX_AGENTS - 1 (parent counts) */
-    test_assert(spawned == AK_MAX_AGENTS - 1);
+    /* Should have spawned up to AK_MAX_AGENTS - parent_count total children */
+    test_assert_eq((uint32_t)(total_spawned + parent_count), mock_state.agent_count);
+    test_assert_eq(mock_state.agent_count, AK_MAX_AGENTS);
 
     mock_shutdown();
     return true;
@@ -958,7 +978,7 @@ bool test_message_send_recv_basic(void)
     /* Send message from parent to child */
     const char *payload = "Hello child!";
     int64_t msg_id = mock_ipc_send(parent, child->pid, AK_IPC_MSG_TYPE_NOTIFY,
-                                    0, (const uint8_t *)payload, strlen(payload));
+                                    0, (const uint8_t *)payload, (uint32_t)strlen(payload));
     test_assert(msg_id > 0);
 
     /* Receive message */
@@ -997,7 +1017,7 @@ bool test_message_queue_ordering(void)
         char payload[32];
         snprintf(payload, sizeof(payload), "msg_%d", i);
         mock_ipc_send(sender, receiver->pid, AK_IPC_MSG_TYPE_NOTIFY,
-                      0, (const uint8_t *)payload, strlen(payload));
+                      0, (const uint8_t *)payload, (uint32_t)strlen(payload));
     }
 
     /* Verify FIFO ordering */
@@ -1547,7 +1567,7 @@ bool test_security_capability_scope(void)
     mock_init();
 
     mock_agent_t *parent = &mock_state.agents[0];
-    parent->pid = 1000;
+    parent->pid = mock_state.next_pid++;  /* Use next_pid++ to avoid collision with child */
     mock_generate_run_id(parent->run_id);
     parent->active = true;
     parent->state = AGENT_STATE_RUNNING;
@@ -1581,7 +1601,7 @@ bool test_security_capability_revoked_not_delegatable(void)
     mock_init();
 
     mock_agent_t *parent = &mock_state.agents[0];
-    parent->pid = 1000;
+    parent->pid = mock_state.next_pid++;
     mock_generate_run_id(parent->run_id);
     parent->active = true;
     parent->state = AGENT_STATE_RUNNING;
@@ -1857,7 +1877,7 @@ bool test_edge_concurrent_send(void)
 
     for (int i = 0; i < 10; i++) {
         mock_agent_t *sender = &mock_state.agents[i + 1];
-        sender->pid = 2000 + i;
+        sender->pid = 2000 + (uint64_t)i;
         mock_generate_run_id(sender->run_id);
         sender->active = true;
         sender->has_ipc_cap = true;
@@ -1866,7 +1886,7 @@ bool test_edge_concurrent_send(void)
         char payload[32];
         snprintf(payload, sizeof(payload), "sender_%d", i);
         mock_ipc_send(sender, receiver->pid, AK_IPC_MSG_TYPE_NOTIFY,
-                      0, (const uint8_t *)payload, strlen(payload));
+                      0, (const uint8_t *)payload, (uint32_t)strlen(payload));
     }
 
     /* All messages should be received */

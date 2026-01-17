@@ -166,8 +166,8 @@ static ak_key_t *test_get_active_key(void)
 static ak_key_t *test_get_key(uint8_t kid)
 {
     for (int i = 0; i < AK_MAX_KEYS; i++) {
-        if (test_keys[i].kid == kid && !test_keys[i].retired) {
-            return &test_keys[i];
+        if (test_keys[i].kid == kid) {
+            return &test_keys[i];  /* Return even if retired; caller checks retired flag */
         }
     }
     return NULL;
@@ -290,7 +290,7 @@ static ak_capability_t *test_create_capability(
     if (!cap) return NULL;
 
     cap->type = type;
-    cap->resource_len = strlen(resource);
+    cap->resource_len = (uint32_t)strlen(resource);
     if (cap->resource_len >= sizeof(cap->resource)) {
         free(cap);
         return NULL;
@@ -311,7 +311,7 @@ static ak_capability_t *test_create_capability(
 
     uint8_t canonical[512];
     int len = test_canonicalize_cap(cap, canonical, sizeof(canonical));
-    test_hmac(key->secret, AK_KEY_SIZE, canonical, len, cap->mac);
+    test_hmac(key->secret, AK_KEY_SIZE, canonical, (uint32_t)len, cap->mac);
 
     return cap;
 }
@@ -329,7 +329,7 @@ static int64_t test_verify_capability(ak_capability_t *cap)
     uint8_t computed_mac[AK_MAC_SIZE];
     uint8_t canonical[512];
     int len = test_canonicalize_cap(cap, canonical, sizeof(canonical));
-    test_hmac(key->secret, AK_KEY_SIZE, canonical, len, computed_mac);
+    test_hmac(key->secret, AK_KEY_SIZE, canonical, (uint32_t)len, computed_mac);
 
     /* Constant-time comparison */
     if (!constant_time_compare(cap->mac, computed_mac, AK_MAC_SIZE)) {

@@ -253,26 +253,34 @@ static void mock_ed25519_sign(
     const uint8_t *public_key,
     uint8_t *signature)
 {
-    /* Mock signature = H(private_key || message) || H(public_key || message) */
-    uint8_t *buf = malloc(64 + message_len);
+    /*
+     * Mock signature construction:
+     * - First 32 bytes = H(private_key || message)
+     * - Second 32 bytes = H(public_key || message || first_half)
+     *
+     * This ensures tampering with ANY part of the signature causes
+     * verification to fail, since the second half depends on the first.
+     */
+    uint8_t *buf = malloc(64 + message_len + 32);
     if (!buf) {
         memset(signature, 0, AK_ED25519_SIGNATURE_SIZE);
         return;
     }
 
-    /* First 32 bytes of signature */
+    /* First 32 bytes of signature - derived from private key */
     memcpy(buf, private_key, 64);
     if (message_len > 0) {
         memcpy(buf + 64, message, message_len);
     }
     mock_sha256(buf, 64 + message_len, signature);
 
-    /* Second 32 bytes of signature */
+    /* Second 32 bytes - includes first half to bind them together */
     memcpy(buf, public_key, 32);
     if (message_len > 0) {
         memcpy(buf + 32, message, message_len);
     }
-    mock_sha256(buf, 32 + message_len, signature + 32);
+    memcpy(buf + 32 + message_len, signature, 32);  /* Include first half */
+    mock_sha256(buf, 32 + message_len + 32, signature + 32);
 
     free(buf);
 }
@@ -283,17 +291,22 @@ static bool mock_ed25519_verify(
     const uint8_t *signature,
     const uint8_t *public_key)
 {
-    /* Derive expected second half from public key */
-    uint8_t *buf = malloc(32 + message_len);
+    /*
+     * Verify by recomputing expected second half.
+     * Since second half = H(public_key || message || first_half),
+     * tampering with ANY part of the signature causes verification to fail.
+     */
+    uint8_t *buf = malloc(32 + message_len + 32);
     if (!buf) return false;
 
     memcpy(buf, public_key, 32);
     if (message_len > 0) {
         memcpy(buf + 32, message, message_len);
     }
+    memcpy(buf + 32 + message_len, signature, 32);  /* Include first half */
 
     uint8_t expected[32];
-    mock_sha256(buf, 32 + message_len, expected);
+    mock_sha256(buf, 32 + message_len + 32, expected);
     free(buf);
 
     /* Compare second half of signature */
@@ -414,7 +427,7 @@ static int64_t mock_chain_append(const uint8_t *data, size_t data_len)
     memcpy(mock_chain.head_hash, entry->this_hash, AK_HASH_SIZE);
     mock_chain.count++;
 
-    return entry->seq;
+    return (int64_t)entry->seq;
 }
 
 static int64_t mock_chain_verify(uint64_t start_seq, uint64_t end_seq)
@@ -435,7 +448,7 @@ static int64_t mock_chain_verify(uint64_t start_seq, uint64_t end_seq)
 
         /* Verify prev_hash linkage */
         if (memcmp(entry->prev_hash, expected_prev, AK_HASH_SIZE) != 0) {
-            return i + 1;  /* Return sequence number of bad entry */
+            return (int64_t)(i + 1);  /* Return sequence number of bad entry */
         }
 
         /* Recompute and verify this_hash */
@@ -443,7 +456,7 @@ static int64_t mock_chain_verify(uint64_t start_seq, uint64_t end_seq)
         compute_chain_hash(entry->prev_hash, entry->data, entry->data_len, computed);
 
         if (memcmp(entry->this_hash, computed, AK_HASH_SIZE) != 0) {
-            return i + 1;
+            return (int64_t)(i + 1);
         }
 
         memcpy(expected_prev, entry->this_hash, AK_HASH_SIZE);
@@ -494,7 +507,7 @@ static void mock_generate_token_id(uint8_t *tid)
     counter++;
 
     for (int i = 0; i < AK_TOKEN_ID_SIZE; i++) {
-        tid[i] = (uint8_t)((counter >> (i * 2)) ^ (i * 13));
+        tid[i] = (uint8_t)((counter >> (i * 2)) ^ (unsigned)(i * 13));
     }
 }
 
@@ -527,7 +540,7 @@ static mock_capability_t *mock_cap_create(const char *resource, uint32_t ttl_ms)
     uint8_t canonical[256];
     int len = canonicalize_cap(cap, canonical, sizeof(canonical));
     mock_hmac_sha256(mock_key_store.keys[cap->kid], AK_KEY_SIZE,
-                     canonical, len, cap->mac);
+                     canonical, (size_t)len, cap->mac);
 
     return cap;
 }
@@ -544,7 +557,7 @@ static int64_t mock_cap_verify(mock_capability_t *cap)
 
     uint8_t computed_mac[AK_MAC_SIZE];
     mock_hmac_sha256(mock_key_store.keys[cap->kid], AK_KEY_SIZE,
-                     canonical, len, computed_mac);
+                     canonical, (size_t)len, computed_mac);
 
     if (!constant_time_compare(cap->mac, computed_mac, AK_MAC_SIZE)) {
         return AK_E_CAP_INVALID;
@@ -723,7 +736,7 @@ bool test_hmac_basic(void)
 bool test_hmac_deterministic(void)
 {
     uint8_t key[AK_KEY_SIZE];
-    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = i + 1;
+    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = (uint8_t)(i + 1);
 
     uint8_t data[] = "Repeated message";
     uint8_t mac1[AK_MAC_SIZE];
@@ -740,7 +753,7 @@ bool test_hmac_deterministic(void)
 bool test_hmac_verification(void)
 {
     uint8_t key[AK_KEY_SIZE];
-    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = i * 7 + 3;
+    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = (uint8_t)(i * 7 + 3);
 
     uint8_t data[] = "Message to verify";
     uint8_t mac[AK_MAC_SIZE];
@@ -756,7 +769,7 @@ bool test_hmac_verification(void)
 bool test_hmac_tampered_mac_detection(void)
 {
     uint8_t key[AK_KEY_SIZE];
-    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = i + 10;
+    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = (uint8_t)(i + 10);
 
     uint8_t data[] = "Protected data";
     uint8_t mac[AK_MAC_SIZE];
@@ -777,8 +790,8 @@ bool test_hmac_wrong_key_detection(void)
     uint8_t key1[AK_KEY_SIZE];
     uint8_t key2[AK_KEY_SIZE];
     for (int i = 0; i < AK_KEY_SIZE; i++) {
-        key1[i] = i + 1;
-        key2[i] = i + 100;  /* Different key */
+        key1[i] = (uint8_t)(i + 1);
+        key2[i] = (uint8_t)(i + 100);  /* Different key */
     }
 
     uint8_t data[] = "Test data";
@@ -796,7 +809,7 @@ bool test_hmac_wrong_key_detection(void)
 bool test_hmac_empty_input(void)
 {
     uint8_t key[AK_KEY_SIZE];
-    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = i + 1;
+    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = (uint8_t)(i + 1);
 
     uint8_t mac[AK_MAC_SIZE];
 
@@ -815,7 +828,7 @@ bool test_hmac_empty_input(void)
 bool test_hmac_large_input(void)
 {
     uint8_t key[AK_KEY_SIZE];
-    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = i + 1;
+    for (int i = 0; i < AK_KEY_SIZE; i++) key[i] = (uint8_t)(i + 1);
 
     /* 64KB input */
     size_t len = 64 * 1024;
@@ -841,8 +854,8 @@ bool test_hmac_key_rotation(void)
     uint8_t key1[AK_KEY_SIZE];
     uint8_t key2[AK_KEY_SIZE];
     for (int i = 0; i < AK_KEY_SIZE; i++) {
-        key1[i] = i;
-        key2[i] = 255 - i;
+        key1[i] = (uint8_t)i;
+        key2[i] = (uint8_t)(255 - i);
     }
 
     uint8_t data[] = "Rotation test";
@@ -870,7 +883,7 @@ bool test_hmac_long_key(void)
 {
     /* Key longer than block size (64 bytes) should be hashed first */
     uint8_t long_key[128];
-    for (int i = 0; i < 128; i++) long_key[i] = i + 1;
+    for (int i = 0; i < 128; i++) long_key[i] = (uint8_t)(i + 1);
 
     uint8_t data[] = "Test with long key";
     uint8_t mac[AK_MAC_SIZE];
@@ -915,7 +928,7 @@ bool test_ed25519_keypair_generation(void)
 bool test_ed25519_keypair_deterministic(void)
 {
     uint8_t seed[32];
-    for (int i = 0; i < 32; i++) seed[i] = i + 100;
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i + 100);
 
     uint8_t public_key1[AK_ED25519_PUBLIC_KEY_SIZE];
     uint8_t private_key1[64];
@@ -934,7 +947,7 @@ bool test_ed25519_keypair_deterministic(void)
 bool test_ed25519_sign_verify(void)
 {
     uint8_t seed[32];
-    for (int i = 0; i < 32; i++) seed[i] = i * 3;
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 3);
 
     uint8_t public_key[AK_ED25519_PUBLIC_KEY_SIZE];
     uint8_t private_key[64];
@@ -954,7 +967,7 @@ bool test_ed25519_sign_verify(void)
 bool test_ed25519_invalid_signature_rejection(void)
 {
     uint8_t seed[32];
-    for (int i = 0; i < 32; i++) seed[i] = i + 50;
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i + 50);
 
     uint8_t public_key[AK_ED25519_PUBLIC_KEY_SIZE];
     uint8_t private_key[64];
@@ -978,8 +991,8 @@ bool test_ed25519_wrong_key_rejection(void)
 {
     uint8_t seed1[32], seed2[32];
     for (int i = 0; i < 32; i++) {
-        seed1[i] = i;
-        seed2[i] = 255 - i;
+        seed1[i] = (uint8_t)i;
+        seed2[i] = (uint8_t)(255 - i);
     }
 
     uint8_t public_key1[AK_ED25519_PUBLIC_KEY_SIZE], private_key1[64];
@@ -1017,7 +1030,7 @@ bool test_ed25519_trusted_key_add(void)
     mock_ed25519_init();
 
     uint8_t public_key[AK_ED25519_PUBLIC_KEY_SIZE];
-    for (int i = 0; i < AK_ED25519_PUBLIC_KEY_SIZE; i++) public_key[i] = i + 1;
+    for (int i = 0; i < AK_ED25519_PUBLIC_KEY_SIZE; i++) public_key[i] = (uint8_t)(i + 1);
 
     test_assert(mock_ed25519_add_trusted_key(public_key, "test-key"));
     test_assert_eq(mock_ed25519_trusted_key_count(), 1);
@@ -1033,8 +1046,8 @@ bool test_ed25519_trusted_key_check(void)
     uint8_t untrusted_key[AK_ED25519_PUBLIC_KEY_SIZE];
 
     for (int i = 0; i < AK_ED25519_PUBLIC_KEY_SIZE; i++) {
-        trusted_key[i] = i + 1;
-        untrusted_key[i] = 255 - i;
+        trusted_key[i] = (uint8_t)(i + 1);
+        untrusted_key[i] = (uint8_t)(255 - i);
     }
 
     test_assert(mock_ed25519_add_trusted_key(trusted_key, "trusted"));
@@ -1050,7 +1063,7 @@ bool test_ed25519_trusted_key_remove(void)
     mock_ed25519_init();
 
     uint8_t public_key[AK_ED25519_PUBLIC_KEY_SIZE];
-    for (int i = 0; i < AK_ED25519_PUBLIC_KEY_SIZE; i++) public_key[i] = i + 1;
+    for (int i = 0; i < AK_ED25519_PUBLIC_KEY_SIZE; i++) public_key[i] = (uint8_t)(i + 1);
 
     test_assert(mock_ed25519_add_trusted_key(public_key, "removable"));
     test_assert(mock_ed25519_is_trusted(public_key));
@@ -1070,7 +1083,7 @@ bool test_ed25519_trusted_key_max(void)
     for (int k = 0; k < AK_ED25519_MAX_TRUSTED_KEYS; k++) {
         uint8_t key[AK_ED25519_PUBLIC_KEY_SIZE];
         for (int i = 0; i < AK_ED25519_PUBLIC_KEY_SIZE; i++) {
-            key[i] = (k + 1) * (i + 1);
+            key[i] = (uint8_t)((k + 1) * (i + 1));
         }
         test_assert(mock_ed25519_add_trusted_key(key, "key"));
     }
@@ -1087,7 +1100,7 @@ bool test_ed25519_trusted_key_max(void)
 bool test_ed25519_empty_message(void)
 {
     uint8_t seed[32];
-    for (int i = 0; i < 32; i++) seed[i] = i;
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)i;
 
     uint8_t public_key[AK_ED25519_PUBLIC_KEY_SIZE];
     uint8_t private_key[64];
@@ -1519,8 +1532,8 @@ bool test_constant_time_compare_equal(void)
 {
     uint8_t a[32], b[32];
     for (int i = 0; i < 32; i++) {
-        a[i] = i;
-        b[i] = i;
+        a[i] = (uint8_t)i;
+        b[i] = (uint8_t)i;
     }
 
     test_assert(constant_time_compare(a, b, 32));
@@ -1532,8 +1545,8 @@ bool test_constant_time_compare_different(void)
 {
     uint8_t a[32], b[32];
     for (int i = 0; i < 32; i++) {
-        a[i] = i;
-        b[i] = 31 - i;
+        a[i] = (uint8_t)i;
+        b[i] = (uint8_t)(31 - i);
     }
 
     test_assert(!constant_time_compare(a, b, 32));
@@ -1545,8 +1558,8 @@ bool test_constant_time_compare_single_bit(void)
 {
     uint8_t a[32], b[32];
     for (int i = 0; i < 32; i++) {
-        a[i] = i;
-        b[i] = i;
+        a[i] = (uint8_t)i;
+        b[i] = (uint8_t)i;
     }
 
     /* Single bit difference */

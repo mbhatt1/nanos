@@ -282,7 +282,7 @@ bool test_approval_create_multiple(void)
 
     for (int i = 0; i < 10; i++) {
         ak_approval_request_t *req = mock_approval_create(
-            ids[i], ids[i], i, NULL, NULL
+            ids[i], ids[i], (uint16_t)i, NULL, NULL
         );
         test_assert(req != NULL);
         test_assert_eq(req->id, (uint64_t)(i + 1));
@@ -670,7 +670,7 @@ bool test_approval_mixed_decisions(void)
     ak_approval_request_t *reqs[10];
 
     for (int i = 0; i < 10; i++) {
-        reqs[i] = mock_approval_create(dummy, dummy, i, NULL, NULL);
+        reqs[i] = mock_approval_create(dummy, dummy, (uint16_t)i, NULL, NULL);
     }
 
     /* Grant some */
@@ -718,7 +718,7 @@ bool test_approval_high_volume(void)
 
     /* Create many requests */
     for (int i = 0; i < MAX_APPROVAL_REQUESTS; i++) {
-        ak_approval_request_t *req = mock_approval_create(dummy, dummy, i, NULL, NULL);
+        ak_approval_request_t *req = mock_approval_create(dummy, dummy, (uint16_t)i, NULL, NULL);
         test_assert(req != NULL);
     }
 

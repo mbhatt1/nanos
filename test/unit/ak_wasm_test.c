@@ -472,8 +472,8 @@ static boolean validate_wasm_header(mock_buffer_t *bytecode)
         return false;
 
     u8 *data = mock_buffer_ref(bytecode, 0);
-    u32 magic = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
-    u32 version = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
+    u32 magic = (u32)data[0] | ((u32)data[1] << 8) | ((u32)data[2] << 16) | ((u32)data[3] << 24);
+    u32 version = (u32)data[4] | ((u32)data[5] << 8) | ((u32)data[6] << 16) | ((u32)data[7] << 24);
 
     return (magic == WASM_MAGIC) && (version == WASM_VERSION);
 }
@@ -494,7 +494,7 @@ static void compute_module_hash(mock_buffer_t *bytecode, u8 *hash_out)
     for (int i = 0; i < AK_HASH_SIZE; i++) {
         hash_out[i] = (h >> (i % 8 * 8)) & 0xff;
         if (i % 8 == 7)
-            h = h * 0x100000001b3ULL + i;
+            h = h * 0x100000001b3ULL + (u64)i;
     }
 }
 
@@ -817,7 +817,7 @@ static void mock_exec_destroy(ak_wasm_exec_ctx_t *ctx)
 {
     if (!ctx) return;
 
-    if (ctx->input) mock_buffer_free(ctx->input);
+    /* Note: input is NOT freed here - it's owned by the caller */
     if (ctx->output) mock_buffer_free(ctx->output);
     if (ctx->suspension.resume_data)
         free(ctx->suspension.resume_data);
@@ -1000,8 +1000,10 @@ static ak_response_t *mock_wasm_execute_tool(
         }
     }
 
-    tool->module->last_used_ms = 1000;
-    tool->module->invocation_count++;
+    if (tool->module) {
+        tool->module->last_used_ms = 1000;
+        tool->module->invocation_count++;
+    }
 
     mock_exec_destroy(ctx);
 
