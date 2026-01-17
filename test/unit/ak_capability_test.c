@@ -185,10 +185,10 @@ static void test_hash(const uint8_t *data, uint32_t len, uint8_t *output)
     }
 
     for (int i = 0; i < 8; i++) {
-        output[i*4] = (h[i] >> 24) & 0xFF;
-        output[i*4+1] = (h[i] >> 16) & 0xFF;
-        output[i*4+2] = (h[i] >> 8) & 0xFF;
-        output[i*4+3] = h[i] & 0xFF;
+        output[i*4]   = (uint8_t)((h[i] >> 24) & 0xFF);
+        output[i*4+1] = (uint8_t)((h[i] >> 16) & 0xFF);
+        output[i*4+2] = (uint8_t)((h[i] >> 8) & 0xFF);
+        output[i*4+3] = (uint8_t)(h[i] & 0xFF);
     }
 }
 
@@ -670,7 +670,7 @@ bool test_cap_forgery_random_mac(void)
 
     /* Random MAC */
     for (int i = 0; i < AK_MAC_SIZE; i++) {
-        forged.mac[i] = rand() & 0xFF;
+        forged.mac[i] = (uint8_t)(rand() & 0xFF);
     }
 
     int64_t result = test_verify_capability(&forged);
@@ -696,7 +696,7 @@ bool test_cap_forgery_brute_force(void)
     int failures = 0;
     for (int attempt = 0; attempt < 1000; attempt++) {
         for (int i = 0; i < AK_MAC_SIZE; i++) {
-            forged.mac[i] = rand() & 0xFF;
+            forged.mac[i] = (uint8_t)(rand() & 0xFF);
         }
 
         if (test_verify_capability(&forged) != 0) {
