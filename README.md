@@ -1,10 +1,6 @@
-# Authority Nanos
+# Authority, a fork of Nanos
 
-[![CircleCI](https://circleci.com/gh/nanovms/nanos.svg?style=svg)](https://circleci.com/gh/nanovms/nanos)
-
-<p align="center">
-  <img src="https://repository-images.githubusercontent.com/115159616/44eb1980-a6f4-11e9-9e7b-df7adf662967" style="width:200px;"/>
-</p>
+<img width="352" height="410" alt="image" src="https://github.com/user-attachments/assets/dc49825c-6696-49da-8f78-a9acedeccb0e" />
 
 **The AI-First Unikernel for Autonomous Agents**
 
