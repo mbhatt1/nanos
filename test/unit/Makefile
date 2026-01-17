@@ -9,10 +9,19 @@ PLATFORM_FLAGS=	-DNO_EPOLL
 endif
 
 PROGRAMS= \
+	ak_approval_test \
+	ak_audit_test \
+	ak_capability_test \
+	ak_crypto_test \
 	ak_effects_test \
+	ak_ipc_test \
+	ak_multiprocess_test \
 	ak_negative_test \
 	ak_pattern_test \
 	ak_policy_test \
+	ak_state_test \
+	ak_syscall_test \
+	ak_wasm_test \
 	bitmap_test \
 	buffer_test \
 	closure_test \

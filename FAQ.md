@@ -4,7 +4,9 @@
 
 ### What is Authority Nanos?
 
-Authority Nanos is an AI-first unikernel specifically designed for running autonomous AI agents in production. It combines the proven Nanos kernel with the Authority Kernel — a capability-based security layer that provides cryptographic access control, tamper-evident audit logging, and native LLM integration.
+Authority Nanos is **the only real way to run computer use agents** — the production-grade unikernel purpose-built for AI agents that interact with real systems.
+
+When your AI agent deploys code, executes shell commands, or modifies databases, containers and traditional VMs fall short. Authority Nanos provides cryptographic authorization, immutable audit trails, and fail-safe controls required when autonomous agents control production infrastructure.
 
 ### How is Authority Nanos different from standard Nanos?
 
@@ -19,24 +21,19 @@ Authority Nanos extends Nanos with the **Authority Kernel** subsystem, which add
 
 While maintaining Nanos's core benefits (single-process, unikernel architecture), Authority Nanos is purpose-built for AI agent deployments.
 
-### Why use Authority Nanos for AI agents?
+### Why use Authority Nanos for computer use agents?
 
-**Security**: Traditional OSes weren't designed for autonomous agents. Authority Nanos provides:
-- Zero-trust by default — every operation requires explicit capability
-- Complete audit trails for compliance and debugging
-- Budget enforcement to prevent runaway costs
-- Fail-closed security model
+**Computer use agents are different**: They execute code with real-world consequences — deploying infrastructure, modifying databases, running shell commands. Traditional security models (designed for human operators with judgment) fail when agents operate autonomously.
 
-**AI-Native**: Built-in support for:
-- Local LLM inference via virtio-serial (Ollama, vLLM)
-- External API routing (OpenAI, Anthropic, custom)
-- Hybrid mode with intelligent model routing
-- Tool execution in sandboxed WASM environment
+**Authority Nanos provides**:
+- **Cryptographic Proof**: HMAC-signed capabilities, not "hope the agent behaves"
+- **Immutable Audit**: Hash-chained logs that prove what happened
+- **Fail-Closed**: Unknown operations denied by default, not allowed then logged
+- **Zero Privilege Escalation**: No users, no sudo, no ambient authority
+- **Tool Sandboxing**: WASM isolation with explicit capability passing
+- **Budget Controls**: Prevent runaway costs before they happen
 
-**Isolation**: Unikernel architecture eliminates:
-- Privilege escalation attacks (no users or privileges)
-- Container escape vulnerabilities
-- Unnecessary attack surface (minimal syscalls)
+**The Alternative**: Run agents in containers, hope nothing breaks, respond to incidents after the damage is done.
 
 ---
 

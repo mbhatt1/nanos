@@ -1,5 +1,9 @@
 # Installation
 
+**Get Started Running Computer Use Agents Securely**
+
+Authority Nanos provides the cryptographic authorization and immutable audit trails required when AI agents control production systems.
+
 ## Installation Methods
 
 ```mermaid

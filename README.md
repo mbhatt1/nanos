@@ -32,9 +32,17 @@ Read more about the [Authority Kernel](src/agentic/README.md) and [Security Inva
 
 ## Why Authority Nanos?
 
-### Built for the Age of AI Agents
+### The Computer Use Problem
 
-As AI agents become capable of controlling real-world systems, traditional security models fall short. Authority Nanos provides:
+**Computer use agents** are fundamentally different from chatbots:
+- They execute code that modifies production systems
+- They interact with databases, APIs, and infrastructure
+- They make decisions with real-world consequences
+- They run autonomously without human oversight
+
+Traditional security models (containers, VMs, serverless) were designed for human operators with judgment. When AI agents control these systems, you need:
+
+### The Authority Nanos Solution
 
 **Zero-Trust Architecture**
 - Every operation requires a valid, non-revoked capability token
@@ -57,14 +65,17 @@ As AI agents become capable of controlling real-world systems, traditional secur
 - [`ak_sys_write`](src/agentic/ak_heap.h) - Versioned heap with CAS semantics
 - [`ak_sys_batch`](src/agentic/ak_syscall.h) - Atomic multi-operation transactions
 
-### Ideal For
+### Computer Use Systems Need Authority Nanos
 
-✅ **Autonomous Agent Platforms** - Deploy untrusted agent code safely  
-✅ **Computer Use Systems** - Agents that interact with real systems  
-✅ **Multi-Tenant SaaS** - Isolate customer agents with strong boundaries  
-✅ **Regulated Industries** - Complete audit trails for compliance  
-✅ **Edge AI** - Run agents on ARM devices with local models  
-✅ **Research & Evaluation** - Reproducible agent execution with replay
+✅ **Code Deployment Agents** - Deploy to production with cryptographic audit trail
+✅ **Infrastructure Automation** - Provision resources with capability-gated access
+✅ **Database Query Agents** - Execute SQL with row-level capability controls
+✅ **DevOps Assistants** - kubectl, terraform, ansible with provable authorization
+✅ **Security Analysts** - Investigate incidents with tamper-proof audit logs
+✅ **Regulated Industries** - Healthcare, finance, defense with compliance guarantees
+
+**Without Authority Nanos**: Hope the agent behaves, check logs later, incident response when things break.
+**With Authority Nanos**: Cryptographic proof of authorization, real-time policy enforcement, immutable audit trail.
 
 ---
 

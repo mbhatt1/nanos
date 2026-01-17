@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: Authority Nanos
-  text: Fork of Nanos with Authority Kernel
-  tagline: The AI-First Unikernel for Autonomous Agents
+  text: The Only Real Way to Run Computer Use Agents
+  tagline: Production-grade security for agents that control real systems
   actions:
     - theme: brand
       text: Get Started
@@ -15,23 +15,23 @@ hero:
 
 features:
   - icon: "🔐"
-    title: Capability-Based Security
-    details: Fine-grained access control with HMAC-SHA256 signed tokens. Every operation requires explicit authorization.
+    title: Cryptographic Authorization
+    details: HMAC-signed capabilities for every operation. No permission guessing, no ambient authority, no privilege escalation.
   - icon: "📝"
-    title: Tamper-Evident Audit Logs
-    details: Hash-chained cryptographic logging of all operations. Complete auditability for compliance and debugging.
+    title: Immutable Audit Trail
+    details: Hash-chained logs prove what the agent did (or didn't do). Tamper-evident, compliance-ready, incident-provable.
+  - icon: "🚫"
+    title: Fail-Closed by Default
+    details: Unknown operations denied, not allowed then logged. Zero-trust enforcement before execution, not after.
   - icon: "🤖"
-    title: Native LLM Integration
-    details: Local models via virtio-serial (Ollama, vLLM) and external APIs (OpenAI, Anthropic). Hybrid routing support.
-  - icon: "🚀"
-    title: Minimal Attack Surface
-    details: Single-process unikernel with no SSH, no users, no unnecessary syscalls. VM-level isolation by design.
+    title: Tool Sandboxing
+    details: WASM-isolated tool execution with explicit capability passing. No shell escapes, no system access, no surprises.
   - icon: "⚡"
-    title: Cross-Platform
-    details: Full support for x86_64 and ARM64. Deploy to AWS, GCP, Azure, Raspberry Pi, and more.
-  - icon: "🔄"
-    title: Deny-by-Default
-    details: All operations denied unless explicitly allowed by policy. Fail-closed security model throughout.
+    title: Zero Privilege Escalation
+    details: No users, no sudo, no setuid, no capabilities. Single-process unikernel eliminates entire attack classes.
+  - icon: "🎯"
+    title: Built for Computer Use
+    details: Syscalls designed for autonomous agents controlling production systems, not human operators clicking buttons.
 ---
 
 ## System Architecture

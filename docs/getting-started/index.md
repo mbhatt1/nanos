@@ -1,6 +1,8 @@
 # Quick Start
 
-Get started with the Authority Kernel deny-by-default security model.
+**Deploy Computer Use Agents with Cryptographic Security**
+
+Authority Nanos is the only way to run computer use agents safely in production. This guide shows you how to deploy agents with capability-based authorization and immutable audit trails.
 
 ## Getting Started Workflow
 
