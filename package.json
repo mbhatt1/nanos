@@ -1,6 +1,7 @@
 {
   "name": "authority-nanos-docs",
   "version": "1.0.0",
+  "type": "module",
   "description": "Documentation for Authority Nanos - Fork of Nanos with Authority Kernel for AI Agents",
   "scripts": {
     "docs:dev": "vitepress dev docs",
