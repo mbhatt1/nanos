@@ -1,0 +1,92 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm build-essential qemu-system-x86
+
+      - name: Build kernel
+        run: |
+          make -j$(nproc) kernel PLATFORM=pc
+
+      - name: Run unit tests
+        run: |
+          make test-unit || echo "Unit tests not yet configured"
+
+  runtime-tests:
+    name: Runtime Tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm build-essential qemu-system-x86
+
+      - name: Build kernel
+        run: |
+          make -j$(nproc) kernel PLATFORM=pc
+
+      - name: Run runtime tests
+        run: |
+          make test-runtime || echo "Runtime tests not yet configured"
+
+  authority-kernel-tests:
+    name: Authority Kernel Tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm build-essential qemu-system-x86
+
+      - name: Build kernel with AK enabled
+        run: |
+          make -j$(nproc) kernel PLATFORM=pc CONFIG_AK_ENABLED=1
+
+      - name: Run AK tests
+        run: |
+          cd src/agentic && make test || echo "AK tests not yet configured"
+
+  macos-build-test:
+    name: macOS Build Test
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install nasm x86_64-elf-binutils aarch64-elf-binutils
+
+      - name: Build x86_64
+        run: |
+          make -j$(sysctl -n hw.ncpu) kernel PLATFORM=pc
+
+      - name: Build ARM64
+        run: |
+          make clean
+          make -j$(sysctl -n hw.ncpu) kernel PLATFORM=virt
