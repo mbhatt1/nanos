@@ -19,6 +19,14 @@
 #include "ak_compat.h"
 #include "ak_heap.h"
 
+/* VFS includes for real filesystem I/O */
+#ifdef KERNEL
+#include <fs.h>
+
+/* External declaration for getting root filesystem */
+extern filesystem get_root_fs(void);
+#endif
+
 /* ============================================================
  * INTERNAL HELPERS
  * ============================================================ */

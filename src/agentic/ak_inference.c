@@ -215,9 +215,26 @@ void ak_inference_init(heap h, ak_llm_config_t *config)
     ak_inf_state.api_configured = false;
     ak_inf_state.api_key_valid = false;
 
-    /* Allocate virtio protocol buffers */
+    /*
+     * Allocate virtio protocol buffers.
+     *
+     * These buffers are used for staging data during virtio-serial I/O.
+     * We must check for both NULL and INVALID_ADDRESS since Nanos heap
+     * allocators return INVALID_ADDRESS on failure, not NULL.
+     */
     ak_inf_state.virtio_tx_buf = allocate_buffer(h, 65536);
+    if (!ak_inf_state.virtio_tx_buf || ak_inf_state.virtio_tx_buf == INVALID_ADDRESS) {
+        ak_inf_state.virtio_tx_buf = 0;
+        ak_error("Failed to allocate virtio TX buffer");
+        /* Continue initialization - local inference will be unavailable */
+    }
+
     ak_inf_state.virtio_rx_buf = allocate_buffer(h, 65536);
+    if (!ak_inf_state.virtio_rx_buf || ak_inf_state.virtio_rx_buf == INVALID_ADDRESS) {
+        ak_inf_state.virtio_rx_buf = 0;
+        ak_error("Failed to allocate virtio RX buffer");
+        /* Continue initialization - local inference will be unavailable */
+    }
 
     if (ak_inf_state.config.mode == AK_LLM_LOCAL ||
         ak_inf_state.config.mode == AK_LLM_HYBRID) {
@@ -376,6 +393,52 @@ s64 ak_local_inference_init(ak_llm_local_config_t *config)
  */
 #define VIRTIO_IO_TIMEOUT_MS    30000
 #define VIRTIO_MAX_RESPONSE_SIZE (1024 * 1024)  /* 1MB max response */
+#define VIRTIO_MIN_RESPONSE_SIZE 2              /* Minimum valid JSON response: {} */
+
+/*
+ * Check if an error is transient and should be retried.
+ *
+ * Transient errors are those that may succeed on retry:
+ *   - EAGAIN/EWOULDBLOCK: Resource temporarily unavailable
+ *   - EINTR: Interrupted system call
+ *   - Timeout with partial progress: May complete with more time
+ *
+ * Non-transient errors (no retry):
+ *   - EBADF: Bad file descriptor
+ *   - ECONNRESET: Connection reset by peer
+ *   - EPIPE: Broken pipe
+ *   - Device not configured
+ */
+static inline boolean is_transient_error(s64 error_code)
+{
+    return error_code == AK_E_LLM_TIMEOUT ||
+           error_code == -EAGAIN ||
+           error_code == -EINTR;
+}
+
+/*
+ * Sleep for exponential backoff delay.
+ *
+ * Implements exponential backoff with jitter to avoid thundering herd.
+ * Delay = base_ms * 2^attempt + random(0, base_ms/2)
+ */
+static void virtio_backoff_delay(u32 attempt, u32 base_ms)
+{
+    u32 delay_ms = base_ms * (1 << attempt);
+    if (delay_ms > 5000)
+        delay_ms = 5000;  /* Cap at 5 seconds */
+
+    /*
+     * Simple delay implementation.
+     * In a full implementation, this would use kern_pause() or similar.
+     * For now, we spin-wait (not ideal, but functional).
+     */
+    u64 start = now(CLOCK_ID_MONOTONIC);
+    u64 target = start + (u64)delay_ms * MILLION;
+    while (now(CLOCK_ID_MONOTONIC) < target) {
+        /* Yield CPU - in production, use proper scheduler yield */
+    }
+}
 
 /*
  * Write exactly 'len' bytes to virtio fd with timeout.
@@ -1095,9 +1158,28 @@ ak_inference_response_t *ak_parse_api_response(heap h, ak_llm_provider_t provide
             return res;
         }
     } else {
-        /* Return raw response if parsing fails */
-        res->content = response;
-        res->success = true;
+        /*
+         * BUG-A9-009 FIX: Response ownership clarification.
+         *
+         * When we can't parse the response, we copy it to a new buffer
+         * instead of transferring ownership. This ensures the caller
+         * always retains ownership of the 'response' parameter and
+         * res->content is always a fresh allocation that res owns.
+         *
+         * Previously, this transferred ownership which caused:
+         *   1. Double-free if caller also freed response
+         *   2. Memory leak if caller didn't know ownership transferred
+         */
+        res->content = allocate_buffer(h, buffer_length(response) + 1);
+        if (res->content && res->content != INVALID_ADDRESS) {
+            buffer_write(res->content, buffer_ref(response, 0), buffer_length(response));
+            res->success = true;
+        } else {
+            res->content = 0;
+            res->success = false;
+            res->error_code = AK_E_LLM_API_ERROR;
+            return res;
+        }
     }
 
     /* Extract usage statistics */

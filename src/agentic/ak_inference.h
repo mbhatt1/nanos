@@ -378,5 +378,18 @@ void ak_inference_get_stats(ak_inference_stats_t *stats);
 #define AK_E_LLM_MODEL_NOT_FOUND    (-4605)
 #define AK_E_LLM_RATE_LIMITED       (-4606)
 #define AK_E_LLM_CONTENT_FILTERED   (-4607)
+#define AK_E_LLM_DEVICE_UNAVAILABLE (-4608)  /* virtio device not present/ready */
+#define AK_E_LLM_PARTIAL_IO         (-4609)  /* incomplete read/write */
+#define AK_E_LLM_MALFORMED_RESPONSE (-4610)  /* response parsing failed */
+#define AK_E_LLM_BUFFER_OVERFLOW    (-4611)  /* response exceeds buffer capacity */
+#define AK_E_LLM_RETRY_EXHAUSTED    (-4612)  /* all retry attempts failed */
+
+/* ============================================================
+ * RETRY CONFIGURATION
+ * ============================================================ */
+
+#define AK_LLM_MAX_RETRIES          3        /* Max retry attempts for transient errors */
+#define AK_LLM_RETRY_DELAY_MS       100      /* Base delay between retries (exponential backoff) */
+#define AK_LLM_IDLE_TIMEOUT_MS      5000     /* Idle timeout for I/O operations */
 
 #endif /* AK_INFERENCE_H */

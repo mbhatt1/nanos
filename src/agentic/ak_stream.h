@@ -208,6 +208,15 @@ typedef struct ak_stream_session {
     ak_stream_on_token_t on_token_callback;
     void *on_token_ctx;
 
+    /* Cancellation support */
+    boolean cancelled;
+    char cancel_reason[128];
+
+    /* Backpressure support */
+    u64 backpressure_high_water;    /* High-water mark (default 64KB) */
+    u64 bytes_pending;              /* Bytes waiting for consumer */
+    boolean backpressure_active;    /* True if consumer is slow */
+
     /* Linked list for session tracking */
     struct ak_stream_session *next;
     struct ak_stream_session *prev;
@@ -692,6 +701,79 @@ void ak_stream_reset_idle_timeout(ak_stream_session_t *session);
 u32 ak_stream_check_all_timeouts(void);
 
 /* ============================================================
+ * CANCELLATION SUPPORT
+ * ============================================================
+ */
+
+/*
+ * Cancel streaming session mid-generation.
+ *
+ * Gracefully aborts the stream and invokes close callback with
+ * AK_STREAM_STATE_CLOSED. Use ak_stream_abort() for error cases.
+ *
+ * @param session  Session to cancel
+ * @param reason   Human-readable cancellation reason
+ *
+ * Returns: 0 on success, error code on failure.
+ */
+s64 ak_stream_cancel(
+    ak_stream_session_t *session,
+    const char *reason
+);
+
+/*
+ * Check if session is cancelled.
+ *
+ * Returns: true if session was cancelled.
+ */
+boolean ak_stream_is_cancelled(ak_stream_session_t *session);
+
+/* ============================================================
+ * BACKPRESSURE SUPPORT
+ * ============================================================
+ */
+
+/*
+ * Check if consumer can accept more data.
+ *
+ * Returns true if consumer is ready, false if backpressure is active.
+ * When backpressure is active, the producer should pause sending.
+ *
+ * @param session         Session to check
+ * @param bytes_pending   Number of bytes waiting to be consumed
+ *
+ * Returns: true if ready for more data, false if should pause.
+ */
+boolean ak_stream_can_send(
+    ak_stream_session_t *session,
+    u64 bytes_pending
+);
+
+/*
+ * Signal consumer is ready for more data.
+ *
+ * Called by the consumer to indicate it has processed pending data
+ * and is ready to receive more. This resets backpressure state.
+ *
+ * @param session  Session to signal
+ */
+void ak_stream_consumer_ready(ak_stream_session_t *session);
+
+/*
+ * Set high-water mark for backpressure.
+ *
+ * When pending bytes exceed this threshold, backpressure is activated.
+ * Default is 64KB.
+ *
+ * @param session     Session to configure
+ * @param high_water  High-water mark in bytes (0 to disable)
+ */
+void ak_stream_set_backpressure_limit(
+    ak_stream_session_t *session,
+    u64 high_water
+);
+
+/* ============================================================
  * GLOBAL STATISTICS
  * ============================================================
  */
@@ -726,5 +808,7 @@ void ak_stream_get_global_stats(ak_stream_global_stats_t *stats);
 #define AK_E_STREAM_CHUNK_TOO_LARGE (-4704)  /* Chunk exceeds max size */
 #define AK_E_STREAM_TYPE_MISMATCH   (-4705)  /* Wrong operation for type */
 #define AK_E_STREAM_STOP_TRIGGERED  (-4706)  /* Stop sequence triggered */
+#define AK_E_STREAM_CANCELLED       (-4707)  /* Stream was cancelled */
+#define AK_E_STREAM_BACKPRESSURE    (-4708)  /* Consumer slow, backpressure active */
 
 #endif /* AK_STREAM_H */

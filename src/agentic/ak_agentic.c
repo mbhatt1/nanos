@@ -591,7 +591,18 @@ int ak_handle_tool_call(
                 /* Cleanup */
                 if (args_buf && args_buf != INVALID_ADDRESS)
                     deallocate_buffer(args_buf);
-                /* Response cleanup would be handled by caller */
+                /*
+                 * BUG-A9-006 FIX: Clean up WASM tool response here.
+                 * The response is allocated by ak_wasm_execute_tool and ownership
+                 * is NOT transferred to caller - we must free it after extracting data.
+                 */
+                if (response) {
+                    if (response->result && response->result != INVALID_ADDRESS)
+                        deallocate_buffer(response->result);
+                    if (response->error_msg && response->error_msg != INVALID_ADDRESS)
+                        deallocate_buffer(response->error_msg);
+                    deallocate(ak_agentic_state.h, response, sizeof(ak_response_t));
+                }
             } else {
                 ak_agentic_state.stats.tool_calls_failed++;
                 return AK_E_TOOL_HANDLER_NOT_FOUND;
@@ -749,9 +760,15 @@ int ak_handle_wasm_invoke(
             buffer args_buf = NULL;
             if (args && args_len > 0) {
                 args_buf = allocate_buffer(ak_agentic_state.h, args_len);
-                if (args_buf != INVALID_ADDRESS) {
-                    buffer_write(args_buf, args, args_len);
+                /*
+                 * BUG-A9-007 FIX: Check for both NULL and INVALID_ADDRESS.
+                 * If allocation fails, return error instead of continuing with invalid buffer.
+                 */
+                if (!args_buf || args_buf == INVALID_ADDRESS) {
+                    ak_agentic_state.stats.wasm_invokes_failed++;
+                    return AK_E_WASM_OOM;
                 }
+                buffer_write(args_buf, args, args_len);
             }
 
             ak_wasm_exec_ctx_t *exec_ctx = ak_wasm_exec_create(

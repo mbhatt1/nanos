@@ -14,17 +14,13 @@
 #include "ak_compat.h"
 #include "ak_assert.h"
 #include "ak_policy.h"
+#include "ak_policy_v2.h"
+#include "ak_pattern.h"
 #include "ak_audit.h"
 #include "ak_deny_ux.h"
 #include "ak_fd_table.h"
 #include "ak_record.h"
 #include "ak_process.h"
-
-/* Forward declaration for policy v2 check (implemented by Agent B) */
-struct ak_policy_v2;
-extern boolean ak_policy_v2_check(struct ak_policy_v2 *p,
-                                   const ak_effect_req_t *req,
-                                   ak_decision_t *decision_out);
 
 /* Forward declaration for socket address lookup (implemented in ak_posix_route.c) */
 extern int ak_get_socket_bound_addr(int fd, struct sockaddr *addr, socklen_t *addrlen);

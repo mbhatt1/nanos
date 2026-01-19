@@ -115,6 +115,15 @@
 #define AK_E_POLICY_DENIED      (-4502)  /* Policy denied */
 #define AK_E_TIMEOUT            (-4503)  /* Operation timeout */
 
+/* Network proxy errors (4550-4599) - for WASM host network operations */
+#define AK_E_NET_REQUIRES_PROXY (-4550)  /* Operation requires IPC proxy */
+#define AK_E_NET_NO_DIRECT      (-4551)  /* Direct network access denied from WASM */
+#define AK_E_NET_URL_INVALID    (-4552)  /* Invalid URL format */
+#define AK_E_NET_HOST_INVALID   (-4553)  /* Invalid host/port */
+#define AK_E_NET_TLS_REQUIRED   (-4554)  /* TLS required but not available */
+#define AK_E_NET_PROXY_TIMEOUT  (-4555)  /* Proxy response timeout */
+#define AK_E_NET_PROXY_ERROR    (-4556)  /* Proxy returned error */
+
 /* ============================================================
  * FRAME CONSTANTS
  * ============================================================ */

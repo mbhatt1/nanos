@@ -1432,9 +1432,20 @@ ak_response_t *ak_handle_spawn(ak_agent_context_t *ctx, ak_request_t *req)
 
     /* Create child budget (subset of parent) */
     child->budget = ak_budget_create(ctx->heap, child->run_id, child->policy);
+    /* BUG-A9-001 FIX: Check budget creation and cleanup on failure */
+    if (!child->budget) {
+        deallocate(ctx->heap, child, sizeof(ak_agent_context_t));
+        return ak_response_error(ctx->heap, req, -ENOMEM);
+    }
 
     /* Create sequence tracker */
     child->seq_tracker = ak_seq_tracker_create(ctx->heap, child->pid, child->run_id);
+    /* BUG-A9-001 FIX: Check seq_tracker creation and cleanup budget + context on failure */
+    if (!child->seq_tracker) {
+        ak_budget_destroy(ctx->heap, child->budget);
+        deallocate(ctx->heap, child, sizeof(ak_agent_context_t));
+        return ak_response_error(ctx->heap, req, -ENOMEM);
+    }
 
     child->started_ms = now(CLOCK_ID_REALTIME) / 1000000;
     child->terminated = false;
@@ -2069,8 +2080,8 @@ sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
         resp = ak_handle_respond(current_ctx, &req);
         break;
     case AK_SYS_INFERENCE:
-        /* Inference handler would go here */
-        return -ENOSYS;
+        resp = ak_handle_inference(current_ctx, &req);
+        break;
     default:
         return -ENOSYS;
     }

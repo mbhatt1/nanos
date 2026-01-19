@@ -797,6 +797,12 @@ s64 ak_stream_flush_tokens(ak_stream_session_t *session)
     session->last_chunk_ns = get_time_ns();
     update_rate_counters(session, buffer_len, 1);
 
+    /* Invoke token callback for flushed buffer content */
+    if (session->on_token_callback) {
+        const char *flushed_data = (const char *)buffer_ref(session->partial_token_buffer, 0);
+        session->on_token_callback(session, flushed_data, (u32)buffer_len, false, session->on_token_ctx);
+    }
+
     /* Clear buffer */
     buffer_clear(session->partial_token_buffer);
 
@@ -1226,4 +1232,108 @@ void ak_stream_get_global_stats(ak_stream_global_stats_t *stats)
     }
 
     runtime_memcpy(stats, &stream_state.stats, sizeof(ak_stream_global_stats_t));
+}
+
+/* ============================================================
+ * CANCELLATION SUPPORT
+ * ============================================================ */
+
+s64 ak_stream_cancel(ak_stream_session_t *session, const char *reason)
+{
+    if (!session) {
+        return AK_E_STREAM_INVALID;
+    }
+
+    if (session->state == AK_STREAM_STATE_CLOSED ||
+        session->state == AK_STREAM_STATE_ERROR) {
+        return 0;  /* Already closed */
+    }
+
+    /* Mark as cancelled */
+    session->cancelled = true;
+    if (reason) {
+        runtime_strncpy(session->cancel_reason, reason, sizeof(session->cancel_reason) - 1);
+        session->cancel_reason[sizeof(session->cancel_reason) - 1] = '\0';
+    }
+
+    /* Flush any buffered tokens before closing */
+    if (session->type == AK_STREAM_LLM_TOKENS && session->partial_token_buffer) {
+        ak_stream_flush_tokens(session);
+    }
+
+    /* Send final callback notification with is_final=true */
+    if (session->on_token_callback && session->type == AK_STREAM_LLM_TOKENS) {
+        session->on_token_callback(session, "", 0, true, session->on_token_ctx);
+    }
+
+    /* Close the session gracefully */
+    return ak_stream_close(session);
+}
+
+boolean ak_stream_is_cancelled(ak_stream_session_t *session)
+{
+    if (!session) {
+        return false;
+    }
+    return session->cancelled;
+}
+
+/* ============================================================
+ * BACKPRESSURE SUPPORT
+ * ============================================================ */
+
+/* Default high-water mark for backpressure: 64KB */
+#define AK_STREAM_DEFAULT_HIGH_WATER    (64 * 1024)
+
+boolean ak_stream_can_send(ak_stream_session_t *session, u64 bytes_pending)
+{
+    if (!session) {
+        return false;
+    }
+
+    /* If backpressure is disabled, always allow */
+    if (session->backpressure_high_water == 0) {
+        return true;
+    }
+
+    /* Update pending bytes count */
+    session->bytes_pending = bytes_pending;
+
+    /* Check if we're over the high-water mark */
+    if (bytes_pending >= session->backpressure_high_water) {
+        session->backpressure_active = true;
+        return false;
+    }
+
+    /* If we were in backpressure and dropped below threshold, clear it */
+    if (session->backpressure_active && bytes_pending < session->backpressure_high_water / 2) {
+        session->backpressure_active = false;
+    }
+
+    return !session->backpressure_active;
+}
+
+void ak_stream_consumer_ready(ak_stream_session_t *session)
+{
+    if (!session) {
+        return;
+    }
+
+    /* Consumer has caught up - clear backpressure */
+    session->bytes_pending = 0;
+    session->backpressure_active = false;
+}
+
+void ak_stream_set_backpressure_limit(ak_stream_session_t *session, u64 high_water)
+{
+    if (!session) {
+        return;
+    }
+
+    session->backpressure_high_water = high_water;
+
+    /* Clear backpressure if it's now disabled */
+    if (high_water == 0) {
+        session->backpressure_active = false;
+    }
 }

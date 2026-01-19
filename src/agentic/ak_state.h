@@ -363,6 +363,246 @@ typedef struct ak_state_stats {
 void ak_state_get_stats(ak_state_stats_t *stats);
 
 /* ============================================================
+ * STATE FILE FORMAT
+ * ============================================================
+ * The state file uses a binary format for efficient persistence:
+ *
+ * STATE FILE HEADER (64 bytes):
+ *   - Magic:          4 bytes  "AKST"
+ *   - Version:        2 bytes  (format version, currently 1)
+ *   - Flags:          2 bytes  (compression, encryption flags)
+ *   - Object count:   4 bytes  (number of objects in file)
+ *   - Reserved:       4 bytes
+ *   - Timestamp:      8 bytes  (creation timestamp ms)
+ *   - Sequence:       8 bytes  (anchor sequence number)
+ *   - Merkle root:   32 bytes  (integrity hash of all objects)
+ *
+ * OBJECT ENTRY (variable length):
+ *   - Ptr:            8 bytes  (object pointer/ID)
+ *   - Type hash:      8 bytes  (schema type identifier)
+ *   - Version:        8 bytes  (CAS version number)
+ *   - Taint:          4 bytes  (taint level)
+ *   - Flags:          4 bytes  (deleted, compressed, etc.)
+ *   - Data length:    4 bytes  (length of serialized data)
+ *   - Hash:          32 bytes  (SHA-256 of data for integrity)
+ *   - Data:          variable  (serialized JSON value)
+ *
+ * ANCHOR CHAIN (appended to end):
+ *   - Anchor count:   4 bytes
+ *   - Anchors:       variable  (ak_state_anchor_t array)
+ *
+ * RECOVERY PROCEDURE:
+ *   1. Read header, verify magic and version
+ *   2. Verify merkle root matches computed root of objects
+ *   3. For each object:
+ *      a. Verify individual object hash
+ *      b. Restore to typed heap
+ *   4. Verify anchor chain integrity
+ *   5. Resume from latest anchor sequence
+ */
+
+/* State file magic number "AKST" */
+#define AK_STATE_FILE_MAGIC         0x54534B41
+
+/* State file format version */
+#define AK_STATE_FILE_VERSION       1
+
+/* State file flags */
+#define AK_STATE_FLAG_COMPRESSED    (1 << 0)
+#define AK_STATE_FLAG_ENCRYPTED     (1 << 1)
+#define AK_STATE_FLAG_INCREMENTAL   (1 << 2)
+
+/* State file header structure */
+typedef struct ak_state_file_header {
+    u32 magic;                      /* AK_STATE_FILE_MAGIC */
+    u16 version;                    /* File format version */
+    u16 flags;                      /* Compression/encryption flags */
+    u32 object_count;               /* Number of objects */
+    u32 reserved;
+    u64 timestamp_ms;               /* Creation timestamp */
+    u64 sequence;                   /* Anchor sequence number */
+    u8 merkle_root[AK_HASH_SIZE];   /* Integrity hash */
+} ak_state_file_header_t;
+
+/* Serialized object entry header */
+typedef struct ak_state_object_entry {
+    u64 ptr;                        /* Object pointer/ID */
+    u64 type_hash;                  /* Schema type identifier */
+    u64 version;                    /* CAS version number */
+    u32 taint;                      /* Taint level */
+    u32 flags;                      /* Object flags */
+    u32 data_length;                /* Serialized data length */
+    u8 hash[AK_HASH_SIZE];          /* Object data hash */
+    /* Followed by data_length bytes of serialized data */
+} ak_state_object_entry_t;
+
+/* Object entry flags */
+#define AK_OBJ_FLAG_DELETED         (1 << 0)
+#define AK_OBJ_FLAG_COMPRESSED      (1 << 1)
+
+/* ============================================================
+ * LOCAL DISK PERSISTENCE (AK_ENABLE_STATE_SYNC)
+ * ============================================================ */
+
+#ifdef AK_ENABLE_STATE_SYNC
+
+/*
+ * Write state to local disk file.
+ *
+ * Serializes all dirty objects (or full state if full_sync is true)
+ * to the configured state file path. Uses fsync() to ensure durability.
+ *
+ * Parameters:
+ *   full_sync - If true, write all objects; if false, only dirty objects
+ *
+ * Returns:
+ *   0 on success, negative error code on failure
+ */
+s64 ak_state_write_to_disk(boolean full_sync);
+
+/*
+ * Load state from local disk file.
+ *
+ * Reads state file, verifies integrity, and restores to typed heap.
+ *
+ * Returns:
+ *   0 on success, negative error code on failure
+ */
+s64 ak_state_load_from_disk(void);
+
+/*
+ * Set the state file path for persistence.
+ *
+ * Parameters:
+ *   path - Path to state file (will be created if doesn't exist)
+ *
+ * Returns:
+ *   0 on success, negative error code on failure
+ */
+s64 ak_state_set_file_path(const char *path);
+
+/*
+ * Get current state file path.
+ */
+const char *ak_state_get_file_path(void);
+
+/*
+ * Verify state file integrity without loading.
+ *
+ * Parameters:
+ *   path - Path to state file
+ *
+ * Returns:
+ *   0 if valid, negative error code if corrupt
+ */
+s64 ak_state_verify_file(const char *path);
+
+/* ============================================================
+ * REMOTE SYNC PROTOCOL
+ * ============================================================
+ *
+ * The sync protocol supports remote state backends for distributed
+ * persistence. Protocol messages use a simple binary format:
+ *
+ * SYNC REQUEST:
+ *   - Command:        1 byte   (PUT=1, GET=2, DELETE=3, LIST=4, SYNC=5)
+ *   - Flags:          1 byte   (compression, etc.)
+ *   - Sequence:       8 bytes  (for ordering/conflict detection)
+ *   - Key length:     2 bytes
+ *   - Value length:   4 bytes
+ *   - Key:           variable  (object ptr as hex string)
+ *   - Value:         variable  (serialized object data)
+ *   - Hash:          32 bytes  (integrity)
+ *
+ * SYNC RESPONSE:
+ *   - Status:         1 byte   (OK=0, ERROR=1, CONFLICT=2, NOT_FOUND=3)
+ *   - Flags:          1 byte
+ *   - Sequence:       8 bytes  (server's sequence for CAS)
+ *   - Value length:   4 bytes
+ *   - Value:         variable  (for GET responses)
+ *   - Error message: variable  (for ERROR responses)
+ *
+ * CONFLICT RESOLUTION:
+ *   - Last-write-wins based on sequence numbers
+ *   - Client can request server's current value on conflict
+ *   - Merge strategies can be implemented by caller
+ */
+
+/* Sync protocol commands */
+typedef enum ak_sync_cmd {
+    AK_SYNC_CMD_PUT     = 1,
+    AK_SYNC_CMD_GET     = 2,
+    AK_SYNC_CMD_DELETE  = 3,
+    AK_SYNC_CMD_LIST    = 4,
+    AK_SYNC_CMD_SYNC    = 5,    /* Full state sync */
+    AK_SYNC_CMD_DELTA   = 6,    /* Delta/incremental sync */
+} ak_sync_cmd_t;
+
+/* Sync protocol status codes */
+typedef enum ak_sync_response_status {
+    AK_SYNC_STATUS_OK           = 0,
+    AK_SYNC_STATUS_ERROR        = 1,
+    AK_SYNC_STATUS_CONFLICT     = 2,
+    AK_SYNC_STATUS_NOT_FOUND    = 3,
+    AK_SYNC_STATUS_UNAUTHORIZED = 4,
+    AK_SYNC_STATUS_RATE_LIMITED = 5,
+} ak_sync_response_status_t;
+
+/* Conflict resolution strategy */
+typedef enum ak_conflict_strategy {
+    AK_CONFLICT_LAST_WRITE_WINS = 0,
+    AK_CONFLICT_FIRST_WRITE_WINS = 1,
+    AK_CONFLICT_MERGE = 2,
+    AK_CONFLICT_CALLBACK = 3,
+} ak_conflict_strategy_t;
+
+/* Sync callback for custom conflict resolution */
+typedef buffer (*ak_conflict_resolver_t)(
+    heap h,
+    u64 ptr,
+    buffer local_value,
+    u64 local_version,
+    buffer remote_value,
+    u64 remote_version
+);
+
+/*
+ * Configure conflict resolution strategy.
+ */
+void ak_state_set_conflict_strategy(ak_conflict_strategy_t strategy);
+
+/*
+ * Set custom conflict resolver callback.
+ */
+void ak_state_set_conflict_resolver(ak_conflict_resolver_t resolver);
+
+/*
+ * Perform delta sync (only changed objects since last sync).
+ *
+ * Returns sync result with details of what was synced.
+ */
+ak_sync_result_t ak_state_delta_sync(void);
+
+/*
+ * Get remote state version (for sync decision).
+ *
+ * Returns remote sequence number, or negative error.
+ */
+s64 ak_state_get_remote_version(void);
+
+/*
+ * Pull changes from remote (download-only sync).
+ */
+ak_sync_result_t ak_state_pull(void);
+
+/*
+ * Push changes to remote (upload-only sync).
+ */
+ak_sync_result_t ak_state_push(void);
+
+#endif /* AK_ENABLE_STATE_SYNC */
+
+/* ============================================================
  * ERROR CODES
  * ============================================================ */
 
@@ -372,5 +612,9 @@ void ak_state_get_stats(ak_state_stats_t *stats);
 #define AK_E_STATE_BACKEND_ERROR    (-4703)
 #define AK_E_STATE_ENCRYPTION_ERROR (-4704)
 #define AK_E_STATE_TIMEOUT          (-4705)
+#define AK_E_STATE_CONFLICT         (-4706)
+#define AK_E_STATE_VERSION_MISMATCH (-4707)
+#define AK_E_STATE_FILE_CORRUPT     (-4708)
+#define AK_E_STATE_MERKLE_MISMATCH  (-4709)
 
 #endif /* AK_STATE_H */
