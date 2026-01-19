@@ -22,7 +22,7 @@ import os
 import platform
 from ctypes import (
     CDLL, POINTER, Structure, c_char, c_char_p, c_uint8, c_uint16, c_uint32,
-    c_uint64, c_int64, c_bool, byref, create_string_buffer, sizeof, cast
+    c_uint64, c_int64, c_bool, c_void_p, byref, create_string_buffer, sizeof, cast
 )
 from pathlib import Path
 from typing import Optional, Dict, Tuple, Any, Union, List
@@ -641,8 +641,8 @@ class AuthorityKernel:
         resp = EffectResponse()
         err = self.libak.ak_syscall(
             Syscall.ALLOC,
-            cast(byref(req), c_uint64),
-            cast(byref(resp), c_uint64),
+            cast(byref(req), c_void_p).value or 0,
+            cast(byref(resp), c_void_p).value or 0,
             0, 0, 0
         )
 
@@ -685,8 +685,8 @@ class AuthorityKernel:
         resp = EffectResponse()
         err = self.libak.ak_syscall(
             Syscall.READ,
-            cast(byref(req), c_uint64),
-            cast(byref(resp), c_uint64),
+            cast(byref(req), c_void_p).value or 0,
+            cast(byref(resp), c_void_p).value or 0,
             0, 0, 0
         )
 
@@ -754,8 +754,8 @@ class AuthorityKernel:
         resp = EffectResponse()
         err = self.libak.ak_syscall(
             Syscall.WRITE,
-            cast(byref(req), c_uint64),
-            cast(byref(resp), c_uint64),
+            cast(byref(req), c_void_p).value or 0,
+            cast(byref(resp), c_void_p).value or 0,
             0, 0, 0
         )
 
@@ -791,8 +791,8 @@ class AuthorityKernel:
         resp = EffectResponse()
         err = self.libak.ak_syscall(
             Syscall.DELETE,
-            cast(byref(req), c_uint64),
-            cast(byref(resp), c_uint64),
+            cast(byref(req), c_void_p).value or 0,
+            cast(byref(resp), c_void_p).value or 0,
             0, 0, 0
         )
 
@@ -860,8 +860,8 @@ class AuthorityKernel:
         resp = EffectResponse()
         err = self.libak.ak_syscall(
             Syscall.QUERY,
-            cast(byref(req), c_uint64),
-            cast(byref(resp), c_uint64),
+            cast(byref(req), c_void_p).value or 0,
+            cast(byref(resp), c_void_p).value or 0,
             0, 0, 0
         )
 
@@ -1035,8 +1035,8 @@ class AuthorityKernel:
         resp = EffectResponse()
         err = self.libak.ak_syscall(
             Syscall.CALL,
-            cast(byref(req), c_uint64),
-            cast(byref(resp), c_uint64),
+            cast(byref(req), c_void_p).value or 0,
+            cast(byref(resp), c_void_p).value or 0,
             0, 0, 0
         )
 

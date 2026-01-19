@@ -1,0 +1,7 @@
+{
+  "Args": ["main.py"],
+  "ManifestPassthrough": {
+    "expected_exit_code": ["0"],
+    "debug_exit": "t"
+  }
+}
