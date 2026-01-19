@@ -42,8 +42,6 @@ jobs:
       - name: Install dependencies
         run: |
           brew install nasm go wget qemu
-          brew tap nanovms/homebrew-qemu
-          brew install nanovms/homebrew-qemu/qemu
 
       - name: Build kernel and libak (x86_64)
         run: |
@@ -101,8 +99,6 @@ jobs:
       - name: Install dependencies
         run: |
           brew install nasm go wget qemu aarch64-elf-binutils
-          brew tap nanovms/homebrew-qemu
-          brew install nanovms/homebrew-qemu/qemu
 
       - name: Build kernel and libak (ARM64)
         run: |
