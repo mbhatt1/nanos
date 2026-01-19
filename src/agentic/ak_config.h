@@ -180,6 +180,41 @@
 #endif
 
 /* ============================================================
+ * POLICY SIGNATURE CONFIGURATION
+ * ============================================================ */
+
+/*
+ * Allow unsigned policies (DEVELOPMENT ONLY)
+ *
+ * SECURITY WARNING: Setting this to 1 disables signature verification
+ * for policy files. This should NEVER be enabled in production builds.
+ *
+ * When enabled:
+ *   - Unsigned policies are accepted with a warning
+ *   - A warning is logged for each unsigned policy load
+ *   - This flag should only be set during development/testing
+ *
+ * Production builds MUST leave this at 0 (default).
+ */
+#ifndef AK_ALLOW_UNSIGNED_POLICIES
+#define AK_ALLOW_UNSIGNED_POLICIES      0       /* Default: require signatures */
+#endif
+
+/*
+ * Runtime override for unsigned policies (checked at runtime)
+ *
+ * Even if AK_ALLOW_UNSIGNED_POLICIES is 1, this runtime flag can
+ * further restrict unsigned policy loading. Set via environment
+ * or configuration at boot time.
+ *
+ * 0 = Follow compile-time setting
+ * 1 = Always require signatures (override dev mode)
+ */
+#ifndef AK_REQUIRE_POLICY_SIGNATURES
+#define AK_REQUIRE_POLICY_SIGNATURES    0       /* Runtime override */
+#endif
+
+/* ============================================================
  * AI-FIRST KERNEL CONFIGURATION
  * ============================================================
  * When enabled, removes unnecessary Linux syscalls:

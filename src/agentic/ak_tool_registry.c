@@ -126,6 +126,12 @@ static struct {
     /* Tool pool */
     ak_tool_def_t tool_pool[AK_TOOL_REGISTRY_MAX_TOOLS];
     u32 tool_pool_used;
+
+    /* Current invocation context for composite tool handlers.
+     * This allows composite_handler to identify which composite
+     * tool is being invoked without changing the handler signature.
+     * Thread safety: single-threaded kernel assumption. */
+    void *current_handler_ctx;
 } registry_state;
 
 /* ============================================================
@@ -759,8 +765,16 @@ int ak_tool_invoke_timeout(ak_ctx_t *ctx, const char *name, const char *version,
     /* Record start time */
     u64 start_ns = ak_now();
 
+    /* Set handler context for composite tool lookup.
+     * Saved and restored to support nested tool invocations. */
+    void *saved_ctx = registry_state.current_handler_ctx;
+    registry_state.current_handler_ctx = tool->handler_ctx;
+
     /* Execute handler */
     s64 handler_result = tool->handler(ctx, args, result);
+
+    /* Restore previous handler context */
+    registry_state.current_handler_ctx = saved_ctx;
 
     /* Record elapsed time */
     u64 elapsed_ns = ak_now() - start_ns;
@@ -1026,21 +1040,16 @@ int ak_tool_get_schema(const char *name, const char **input_out,
 
 /*
  * Composite tool handler - chains multiple tools together.
+ *
+ * The composite tool is identified via registry_state.current_handler_ctx,
+ * which is set by ak_tool_invoke_timeout() before calling the handler.
+ * This allows proper lookup without changing the handler function signature.
  */
 static s64 composite_handler(ak_ctx_t *ctx, buffer args, buffer *result)
 {
-    /* The tool name is embedded in handler_ctx */
-    ak_composite_tool_t *comp = NULL;
-
-    /* Find the composite tool */
-    for (u32 i = 0; i < registry_state.composite_count; i++) {
-        if (registry_state.composites[i]) {
-            /* The context passed to us should contain the composite name */
-            /* For now, we'll retrieve it from the current invocation context */
-            comp = registry_state.composites[i];
-            break;  /* This is a simplification - real impl would track properly */
-        }
-    }
+    /* Retrieve the composite tool from the current invocation context.
+     * This is set by ak_tool_invoke_timeout() before handler execution. */
+    ak_composite_tool_t *comp = (ak_composite_tool_t *)registry_state.current_handler_ctx;
 
     if (!comp || comp->chain_length == 0)
         return AK_E_TOOL_CHAIN_ERROR;

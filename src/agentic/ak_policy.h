@@ -178,11 +178,43 @@ void ak_policy_get_hash(ak_policy_t *policy, u8 *hash_out);
  * ============================================================ */
 
 /*
- * Verify policy signature.
+ * Verify policy signature using HMAC-SHA256.
  *
- * Returns: true if valid, false if forged/corrupted.
+ * Signature format:
+ *   - First AK_MAC_SIZE (32) bytes of policy->signature contain
+ *     HMAC-SHA256(signing_key, policy_hash)
+ *   - policy_hash is SHA-256 of the policy content
+ *
+ * Behavior by configuration:
+ *   - AK_ALLOW_UNSIGNED_POLICIES=0 (default, production):
+ *     Rejects unsigned policies. Requires valid signature.
+ *   - AK_ALLOW_UNSIGNED_POLICIES=1 (development only):
+ *     Accepts unsigned policies with a warning logged.
+ *   - AK_REQUIRE_POLICY_SIGNATURES=1 (runtime override):
+ *     Always requires signatures, overrides dev mode.
+ *
+ * @param policy        Policy to verify
+ * @param signing_key   32-byte HMAC key (NULL allowed for unsigned check)
+ * @return              true if valid (or unsigned in dev mode), false otherwise
+ *
+ * SECURITY: In production, always set AK_ALLOW_UNSIGNED_POLICIES=0
  */
 boolean ak_policy_verify_signature(ak_policy_t *policy, u8 *signing_key);
+
+/*
+ * Sign a policy using HMAC-SHA256.
+ *
+ * Computes HMAC-SHA256(signing_key, policy_hash) and stores
+ * the result in the first AK_MAC_SIZE bytes of policy->signature.
+ *
+ * @param policy        Policy to sign (policy_hash must be computed)
+ * @param signing_key   32-byte HMAC key (must not be NULL)
+ * @return              true on success, false on error
+ *
+ * Note: This function is provided for policy generation tools.
+ * The signing key should be kept secure and never exposed.
+ */
+boolean ak_policy_sign(ak_policy_t *policy, const u8 *signing_key);
 
 /*
  * Check if policy is expired.

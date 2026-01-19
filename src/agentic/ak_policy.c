@@ -190,22 +190,211 @@ void ak_policy_get_hash(ak_policy_t *policy, u8 *hash_out)
  * POLICY VERIFICATION
  * ============================================================ */
 
+/*
+ * HMAC-SHA256 implementation for policy signature verification.
+ * Computes HMAC(key, message) = H((key XOR opad) || H((key XOR ipad) || message))
+ */
+static void ak_policy_hmac_sha256(const u8 *key, u32 key_len,
+                                   const u8 *data, u32 data_len,
+                                   u8 *output)
+{
+    u8 key_block[64];
+    u8 inner_hash[32];
+    u8 ipad[64];
+    u8 opad[64];
+
+    /* Step 1: Prepare key block (pad or hash if necessary) */
+    runtime_memset(key_block, 0, 64);
+    if (key_len > 64) {
+        /* Key longer than block size: hash it first */
+        ak_sha256(key, key_len, key_block);
+    } else {
+        /* Copy key, padding with zeros */
+        runtime_memcpy(key_block, key, key_len);
+    }
+
+    /* Step 2: Compute ipad and opad */
+    for (int i = 0; i < 64; i++) {
+        ipad[i] = key_block[i] ^ 0x36;
+        opad[i] = key_block[i] ^ 0x5c;
+    }
+
+    /* Step 3: Inner hash: H(ipad || message) */
+    /* We need to allocate a temporary buffer for ipad || message */
+    u32 inner_len = 64 + data_len;
+    u8 *inner_buf = allocate(ak_policy_state.h, inner_len);
+    if (!inner_buf) {
+        runtime_memset(output, 0, 32);
+        return;
+    }
+    runtime_memcpy(inner_buf, ipad, 64);
+    runtime_memcpy(inner_buf + 64, data, data_len);
+    ak_sha256(inner_buf, inner_len, inner_hash);
+    deallocate(ak_policy_state.h, inner_buf, inner_len);
+
+    /* Step 4: Outer hash: H(opad || inner_hash) */
+    u8 outer_buf[64 + 32];
+    runtime_memcpy(outer_buf, opad, 64);
+    runtime_memcpy(outer_buf + 64, inner_hash, 32);
+    ak_sha256(outer_buf, 64 + 32, output);
+
+    /* Clear sensitive data */
+    runtime_memset(key_block, 0, 64);
+    runtime_memset(inner_hash, 0, 32);
+    runtime_memset(ipad, 0, 64);
+    runtime_memset(opad, 0, 64);
+}
+
+/*
+ * Constant-time comparison to prevent timing attacks.
+ * Returns true if buffers are equal, false otherwise.
+ */
+static boolean ak_policy_constant_time_compare(const u8 *a, const u8 *b, u32 len)
+{
+    u8 diff = 0;
+    for (u32 i = 0; i < len; i++) {
+        diff |= a[i] ^ b[i];
+    }
+    return diff == 0;
+}
+
+/*
+ * Check if a signature buffer contains all zeros (unsigned policy).
+ */
+static boolean ak_policy_signature_is_empty(const u8 *sig, u32 len)
+{
+    for (u32 i = 0; i < len; i++) {
+        if (sig[i] != 0)
+            return false;
+    }
+    return true;
+}
+
+/*
+ * Verify policy signature using HMAC-SHA256.
+ *
+ * Signature verification process:
+ * 1. Compute HMAC-SHA256 over the policy content hash using the signing key
+ * 2. Compare computed MAC with stored signature using constant-time comparison
+ * 3. Return true only if signatures match exactly
+ *
+ * SECURITY: Policy signatures protect against tampering and ensure
+ * authenticity of policy rules. Always require signatures in production.
+ */
 boolean ak_policy_verify_signature(ak_policy_t *policy, u8 *signing_key)
+{
+    if (!policy)
+        return false;
+
+    /*
+     * Check if signature is empty (all zeros = unsigned policy)
+     */
+    boolean is_unsigned = ak_policy_signature_is_empty(policy->signature, AK_SIG_SIZE);
+
+    /*
+     * Handle unsigned policies based on configuration
+     */
+    if (is_unsigned) {
+        /*
+         * Runtime override: If AK_REQUIRE_POLICY_SIGNATURES is set,
+         * always require signatures regardless of compile-time setting.
+         */
+#if AK_REQUIRE_POLICY_SIGNATURES
+        ak_error("SECURITY: Unsigned policy rejected (runtime signature requirement enabled)");
+        return false;
+#endif
+
+        /*
+         * Development mode: Allow unsigned policies with warning
+         */
+#if AK_ALLOW_UNSIGNED_POLICIES
+        ak_warn("SECURITY WARNING: Loading unsigned policy in development mode");
+        ak_warn("  Policy hash: %02x%02x%02x%02x%02x%02x%02x%02x...",
+                policy->policy_hash[0], policy->policy_hash[1],
+                policy->policy_hash[2], policy->policy_hash[3],
+                policy->policy_hash[4], policy->policy_hash[5],
+                policy->policy_hash[6], policy->policy_hash[7]);
+        ak_warn("  Unsigned policies are ONLY permitted for development");
+        ak_warn("  Production builds MUST set AK_ALLOW_UNSIGNED_POLICIES=0");
+        return true;
+#else
+        /*
+         * Production mode: Reject unsigned policies
+         */
+        ak_error("SECURITY: Unsigned policy rejected (signatures required in production)");
+        ak_error("  Policy hash: %02x%02x%02x%02x%02x%02x%02x%02x...",
+                policy->policy_hash[0], policy->policy_hash[1],
+                policy->policy_hash[2], policy->policy_hash[3],
+                policy->policy_hash[4], policy->policy_hash[5],
+                policy->policy_hash[6], policy->policy_hash[7]);
+        return false;
+#endif
+    }
+
+    /*
+     * Policy has a signature - verify it
+     */
+    if (!signing_key) {
+        ak_error("SECURITY: Cannot verify policy signature without signing key");
+        return false;
+    }
+
+    /*
+     * Compute expected HMAC over policy content hash
+     * The signature covers: HMAC-SHA256(signing_key, policy_hash)
+     */
+    u8 computed_mac[AK_MAC_SIZE];
+    ak_policy_hmac_sha256(signing_key, AK_KEY_SIZE,
+                          policy->policy_hash, AK_HASH_SIZE,
+                          computed_mac);
+
+    /*
+     * Constant-time comparison to prevent timing attacks
+     * Compare only first AK_MAC_SIZE bytes of signature
+     */
+    boolean valid = ak_policy_constant_time_compare(computed_mac,
+                                                     policy->signature,
+                                                     AK_MAC_SIZE);
+
+    /* Clear sensitive data */
+    runtime_memset(computed_mac, 0, AK_MAC_SIZE);
+
+    if (!valid) {
+        ak_error("SECURITY: Policy signature verification failed");
+        ak_error("  Policy hash: %02x%02x%02x%02x%02x%02x%02x%02x...",
+                policy->policy_hash[0], policy->policy_hash[1],
+                policy->policy_hash[2], policy->policy_hash[3],
+                policy->policy_hash[4], policy->policy_hash[5],
+                policy->policy_hash[6], policy->policy_hash[7]);
+        return false;
+    }
+
+    return true;
+}
+
+/*
+ * Sign a policy using HMAC-SHA256.
+ *
+ * This function is provided for policy generation tools to create
+ * signed policies that can be verified at runtime.
+ */
+boolean ak_policy_sign(ak_policy_t *policy, const u8 *signing_key)
 {
     if (!policy || !signing_key)
         return false;
 
     /*
-     * HMAC-SHA256 signature verification:
-     * Computes HMAC over policy content and compares to stored signature.
-     * Requires cryptographic library integration (e.g., mbedtls).
-     *
-     * For now, returns true to allow unsigned development policies.
-     * Production deployments MUST enable signature verification.
+     * Compute HMAC-SHA256 over policy content hash
+     * Store result in first AK_MAC_SIZE bytes of signature field
      */
+    ak_policy_hmac_sha256(signing_key, AK_KEY_SIZE,
+                          policy->policy_hash, AK_HASH_SIZE,
+                          policy->signature);
 
-    (void)signing_key;
-    return true;  /* Unsigned policies allowed in development */
+    /* Zero out remaining bytes of signature field */
+    runtime_memset(policy->signature + AK_MAC_SIZE, 0, AK_SIG_SIZE - AK_MAC_SIZE);
+
+    return true;
 }
 
 boolean ak_policy_expired(ak_policy_t *policy)

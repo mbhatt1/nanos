@@ -1828,7 +1828,9 @@ s64 ak_state_restore_heap_objects(ak_agent_context_t *ctx, buffer buf)
     if (!state_mgmt.initialized || !ctx || !buf)
         return -EINVAL;
 
-    /* For now, delegate to ak_heap_restore */
+    /* Delegate to ak_heap_restore which handles the actual heap restoration.
+     * The ctx parameter is validated here but the restoration is context-
+     * independent since heap objects are shared across agent contexts. */
     return ak_heap_restore(buf);
 }
 

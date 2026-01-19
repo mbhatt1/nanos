@@ -417,7 +417,10 @@ static bool toml_parse_keyval(ak_toml_parser_t *p)
         val_type = AK_TOML_TYPE_BOOLEAN;
         if (!toml_parse_boolean(p, &boolval)) return false;
     } else if (c == '[') {
-        /* Array - for now skip, not needed for simple policy format */
+        /* Arrays in key-value context are not supported by this policy parser.
+         * The policy format uses TOML array tables ([[section]]) for lists
+         * of rules, not inline arrays. This keeps the parser simple and
+         * encourages clear policy structure. */
         toml_set_error(p, AK_TOML_ERR_SYNTAX, "Arrays not supported in key-value context");
         return false;
     } else {

@@ -14,40 +14,8 @@
 #include "ak_audit.h"
 #include "ak_pattern.h"
 
-/* Wrapper for Nanos sha256 that uses buffers */
-static void ak_sha256(const u8 *data, u32 len, u8 *output)
-{
-    buffer src = alloca_wrap_buffer((void *)data, len);
-    buffer dst = alloca_wrap_buffer(output, 32);
-    sha256(dst, src);
-}
-
-/* Wrapper for HMAC-SHA256 - simplified implementation for now */
-static void ak_hmac_sha256(const u8 *key, u32 key_len,
-                           const u8 *data, u32 data_len,
-                           u8 *output)
-{
-    /* Simple HMAC: H(key XOR opad || H(key XOR ipad || message)) */
-    /* For now, just use sha256 of key || data (not cryptographically proper HMAC) */
-    u8 temp[64 + 4096];
-    if (key_len + data_len > sizeof(temp)) {
-        ak_memzero(output, 32);
-        return;
-    }
-    ak_memcpy(temp, key, key_len);
-    ak_memcpy(temp + key_len, data, data_len);
-    ak_sha256(temp, key_len + data_len, output);
-}
-
-/* Random bytes from Nanos random subsystem */
-static void ak_random_bytes(u8 *buf, u32 len)
-{
-    /* Use Nanos random if available, otherwise zero (not secure but compiles) */
-    ak_memzero(buf, len);
-}
-
 /* ============================================================
- * INTERNAL STATE
+ * INTERNAL STATE (forward declaration for HMAC function)
  * ============================================================ */
 
 static struct {
@@ -72,6 +40,101 @@ typedef struct rate_counter {
     u32 count;
     u64 window_start_ms;
 } rate_counter_t;
+
+/* Wrapper for Nanos sha256 that uses buffers */
+static void ak_sha256(const u8 *data, u32 len, u8 *output)
+{
+    buffer src = alloca_wrap_buffer((void *)data, len);
+    buffer dst = alloca_wrap_buffer(output, 32);
+    sha256(dst, src);
+}
+
+/*
+ * HMAC-SHA256 per RFC 2104
+ *
+ * HMAC(K, m) = H((K' XOR opad) || H((K' XOR ipad) || m))
+ * where:
+ *   K' = K padded with zeros to block size (64 bytes for SHA-256)
+ *   ipad = 0x36 repeated 64 times
+ *   opad = 0x5c repeated 64 times
+ */
+#define HMAC_BLOCK_SIZE 64
+#define HMAC_IPAD 0x36
+#define HMAC_OPAD 0x5c
+
+static void ak_hmac_sha256(const u8 *key, u32 key_len,
+                           const u8 *data, u32 data_len,
+                           u8 *output)
+{
+    u8 k_prime[HMAC_BLOCK_SIZE];
+    u8 inner_pad[HMAC_BLOCK_SIZE];
+    u8 outer_pad[HMAC_BLOCK_SIZE];
+    u8 inner_hash[32];
+    u8 outer_input[HMAC_BLOCK_SIZE + 32];
+
+    /* Step 1: Derive K' from key
+     * If key > block size, K' = H(key)
+     * If key <= block size, K' = key padded with zeros
+     */
+    ak_memzero(k_prime, HMAC_BLOCK_SIZE);
+    if (key_len > HMAC_BLOCK_SIZE) {
+        /* Key too long: hash it first */
+        ak_sha256(key, key_len, k_prime);
+        /* Remaining bytes already zeroed */
+    } else {
+        /* Key fits: copy and zero-pad */
+        ak_memcpy(k_prime, key, key_len);
+        /* Remaining bytes already zeroed */
+    }
+
+    /* Step 2: Compute inner and outer padded keys
+     * inner_pad = K' XOR ipad
+     * outer_pad = K' XOR opad
+     */
+    for (u32 i = 0; i < HMAC_BLOCK_SIZE; i++) {
+        inner_pad[i] = k_prime[i] ^ HMAC_IPAD;
+        outer_pad[i] = k_prime[i] ^ HMAC_OPAD;
+    }
+
+    /* Step 3: Compute inner hash = H(inner_pad || message)
+     * We need to allocate a buffer for (inner_pad || data)
+     */
+    u32 inner_input_len = HMAC_BLOCK_SIZE + data_len;
+    u8 *inner_input = allocate(ak_cap_state.h, inner_input_len);
+    if (inner_input == INVALID_ADDRESS) {
+        ak_memzero(output, 32);
+        goto cleanup;
+    }
+    ak_memcpy(inner_input, inner_pad, HMAC_BLOCK_SIZE);
+    ak_memcpy(inner_input + HMAC_BLOCK_SIZE, data, data_len);
+    ak_sha256(inner_input, inner_input_len, inner_hash);
+
+    /* Zero and free inner input */
+    ak_memzero(inner_input, inner_input_len);
+    deallocate(ak_cap_state.h, inner_input, inner_input_len);
+
+    /* Step 4: Compute outer hash = H(outer_pad || inner_hash)
+     * This is the final HMAC output
+     */
+    ak_memcpy(outer_input, outer_pad, HMAC_BLOCK_SIZE);
+    ak_memcpy(outer_input + HMAC_BLOCK_SIZE, inner_hash, 32);
+    ak_sha256(outer_input, HMAC_BLOCK_SIZE + 32, output);
+
+cleanup:
+    /* Security: Zero all sensitive intermediate values */
+    ak_memzero(k_prime, HMAC_BLOCK_SIZE);
+    ak_memzero(inner_pad, HMAC_BLOCK_SIZE);
+    ak_memzero(outer_pad, HMAC_BLOCK_SIZE);
+    ak_memzero(inner_hash, 32);
+    ak_memzero(outer_input, HMAC_BLOCK_SIZE + 32);
+}
+
+/* Random bytes from Nanos random subsystem */
+static void ak_random_bytes(u8 *buf, u32 len)
+{
+    /* Use Nanos random if available, otherwise zero (not secure but compiles) */
+    ak_memzero(buf, len);
+}
 
 /* ============================================================
  * CONSTANT-TIME COMPARISON

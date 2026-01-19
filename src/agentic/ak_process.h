@@ -365,18 +365,22 @@ boolean ak_process_authorize_spawn(
 /*
  * Execute a spawn request.
  *
- * Full spawn workflow:
- *   1. Validate request
- *   2. Check authorization
- *   3. Create child process
- *   4. Register in process table
- *   5. Delegate capabilities
- *   6. Start execution
+ * UNIKERNEL NOTE: This function always returns -ENOSYS.
+ *
+ * Authority Nanos is a single-process unikernel that does not support
+ * traditional process spawning (fork/exec). This function exists to:
+ *   - Validate spawn requests against policy (useful for testing)
+ *   - Provide consistent audit logging of spawn attempts
+ *   - Maintain API compatibility for future expansion
+ *
+ * For multi-agent scenarios, deploy separate VMs rather than spawning
+ * child processes. The orchestrator can use this function to validate
+ * that a spawn WOULD be permitted, then launch a new VM accordingly.
  *
  * @param parent_pid    Parent process ID
  * @param req           Spawn request
- * @param result        Output: spawn result
- * @return              0 on success, negative error on failure
+ * @param result        Output: spawn result (success=false, error_code=ENOSYS)
+ * @return              -ENOSYS (function not supported in unikernel)
  */
 int ak_process_spawn(
     u64 parent_pid,

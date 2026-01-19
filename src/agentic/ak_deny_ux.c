@@ -540,11 +540,13 @@ sysreturn ak_sys_set_mode(u64 mode)
     if (mode > AK_MODE_RECORD)
         return -EINVAL;
 
-    /* Security: Don't allow downgrading from HARD to SOFT/OFF
-     * unless explicitly permitted by policy */
+    /* Security: Mode downgrade protection.
+     * Once in HARD mode, downgrades to SOFT/OFF are denied to prevent
+     * runtime weakening of enforcement. This is a security invariant:
+     * agents should not be able to reduce their own supervision level.
+     * Policy-controlled downgrades would require a privileged capability
+     * (AK_CAP_MODE_CONTROL) which is not currently implemented. */
     if (ctx->mode == AK_MODE_HARD && mode < AK_MODE_HARD) {
-        /* Check if policy allows mode downgrade */
-        /* For now, deny all downgrades from HARD mode */
         return -EPERM;
     }
 

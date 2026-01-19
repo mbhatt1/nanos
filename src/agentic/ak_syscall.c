@@ -173,10 +173,16 @@ void ak_init(heap h)
     ak_state.initialized = true;
 }
 
+/* Forward declaration for cleanup (defined in syscall handler section) */
+void ak_cleanup_root_context(void);
+
 void ak_shutdown(void)
 {
     if (!ak_state.initialized)
         return;
+
+    /* Cleanup root agent context first */
+    ak_cleanup_root_context();
 
     /* Flush audit log */
     ak_audit_sync();
@@ -725,16 +731,325 @@ ak_response_t *ak_handle_delete(ak_agent_context_t *ctx, ak_request_t *req)
 
 ak_response_t *ak_handle_query(ak_agent_context_t *ctx, ak_request_t *req)
 {
-    /* Query support - returns empty results for now */
-    (void)req;
+    /*
+     * QUERY: Query the audit log
+     *
+     * Args (all optional):
+     *   "pid": "hex_string"     - Filter by agent PID
+     *   "run_id": "hex_string"  - Filter by run ID
+     *   "op": number            - Filter by operation code
+     *   "start_seq": number     - Start sequence (default: 0)
+     *   "end_seq": number       - End sequence (default: head)
+     *   "limit": number         - Max results (default: 100, max: 1000)
+     *
+     * Returns:
+     *   {"entries": [...], "head_seq": N, "count": N}
+     */
 
-    buffer result = allocate_buffer(ctx->heap, 16);
-    if (!result)
+    /* Parse filter parameters from args */
+    u8 filter_pid[AK_TOKEN_ID_SIZE];
+    u8 filter_run_id[AK_TOKEN_ID_SIZE];
+    boolean has_pid_filter = false;
+    boolean has_run_id_filter = false;
+
+    if (req->args) {
+        char hex_buf[AK_TOKEN_ID_SIZE * 2 + 1];
+
+        if (ak_json_extract_string(req->args, "pid", hex_buf, sizeof(hex_buf)) > 0) {
+            ak_hex_decode(hex_buf, filter_pid, AK_TOKEN_ID_SIZE);
+            has_pid_filter = true;
+        }
+
+        if (ak_json_extract_string(req->args, "run_id", hex_buf, sizeof(hex_buf)) > 0) {
+            ak_hex_decode(hex_buf, filter_run_id, AK_TOKEN_ID_SIZE);
+            has_run_id_filter = true;
+        }
+    }
+
+    /* Parse sequence range */
+    u64 start_seq = 0;
+    u64 end_seq = ak_audit_head_seq();
+    u64 limit = 100;
+
+    if (req->args) {
+        u64 parsed_start = ak_json_extract_u64(req->args, "start_seq");
+        if (parsed_start > 0)
+            start_seq = parsed_start;
+
+        u64 parsed_end = ak_json_extract_u64(req->args, "end_seq");
+        if (parsed_end > 0)
+            end_seq = parsed_end;
+
+        u64 parsed_limit = ak_json_extract_u64(req->args, "limit");
+        if (parsed_limit > 0) {
+            limit = parsed_limit;
+            if (limit > 1000)
+                limit = 1000;  /* Cap at 1000 to prevent DoS */
+        }
+    }
+
+    /* Parse operation filter */
+    u16 filter_op = 0;
+    if (req->args) {
+        u64 op_val = ak_json_extract_u64(req->args, "op");
+        if (op_val > 0 && op_val <= 0xFFFF)
+            filter_op = (u16)op_val;
+    }
+
+    /* Build query filter */
+    ak_log_query_filter_t filter;
+    filter.pid = has_pid_filter ? filter_pid : NULL;
+    filter.run_id = has_run_id_filter ? filter_run_id : NULL;
+    filter.op = filter_op;
+
+    /* Execute query */
+    u64 count = 0;
+    ak_log_entry_t **entries = ak_audit_query(ctx->heap, &filter, start_seq, end_seq, &count);
+
+    /* Apply limit */
+    if (count > limit)
+        count = limit;
+
+    /* Build result JSON */
+    /* Estimate buffer size: ~200 bytes per entry + overhead */
+    u64 buf_size = 128 + (count * 256);
+    if (buf_size > 1024 * 1024)
+        buf_size = 1024 * 1024;  /* Cap at 1MB */
+
+    buffer result = allocate_buffer(ctx->heap, buf_size);
+    if (!result) {
+        /* Cleanup entries if allocated */
+        if (entries) {
+            for (u64 i = 0; i < count; i++) {
+                if (entries[i])
+                    deallocate(ctx->heap, entries[i], sizeof(ak_log_entry_t));
+            }
+            deallocate(ctx->heap, entries, sizeof(ak_log_entry_t*) * count);
+        }
         return ak_response_error(ctx->heap, req, -ENOMEM);
+    }
 
-    buffer_write(result, "{\"results\":[]}", 14);
+    buffer_write(result, "{\"entries\":[", 12);
+
+    for (u64 i = 0; i < count; i++) {
+        if (i > 0)
+            buffer_write(result, ",", 1);
+
+        ak_log_entry_t *entry = entries[i];
+        if (!entry)
+            continue;
+
+        buffer_write(result, "{\"seq\":", 7);
+
+        /* Write sequence number */
+        char num_buf[32];
+        int num_len = 0;
+        u64 v = entry->seq;
+        if (v == 0) {
+            num_buf[0] = '0';
+            num_len = 1;
+        } else {
+            char tmp[32];
+            while (v > 0) {
+                tmp[num_len++] = '0' + (v % 10);
+                v /= 10;
+            }
+            for (int j = 0; j < num_len; j++)
+                num_buf[j] = tmp[num_len - 1 - j];
+        }
+        buffer_write(result, num_buf, num_len);
+
+        buffer_write(result, ",\"ts_ms\":", 9);
+        v = entry->ts_ms;
+        num_len = 0;
+        if (v == 0) {
+            num_buf[0] = '0';
+            num_len = 1;
+        } else {
+            char tmp[32];
+            while (v > 0) {
+                tmp[num_len++] = '0' + (v % 10);
+                v /= 10;
+            }
+            for (int j = 0; j < num_len; j++)
+                num_buf[j] = tmp[num_len - 1 - j];
+        }
+        buffer_write(result, num_buf, num_len);
+
+        buffer_write(result, ",\"op\":", 6);
+        v = entry->op;
+        num_len = 0;
+        if (v == 0) {
+            num_buf[0] = '0';
+            num_len = 1;
+        } else {
+            char tmp[32];
+            while (v > 0) {
+                tmp[num_len++] = '0' + (v % 10);
+                v /= 10;
+            }
+            for (int j = 0; j < num_len; j++)
+                num_buf[j] = tmp[num_len - 1 - j];
+        }
+        buffer_write(result, num_buf, num_len);
+
+        /* Add PID as hex string */
+        buffer_write(result, ",\"pid\":\"", 8);
+        char hex[AK_TOKEN_ID_SIZE * 2 + 1];
+        ak_hex_encode(entry->pid, AK_TOKEN_ID_SIZE, hex);
+        buffer_write(result, hex, AK_TOKEN_ID_SIZE * 2);
+        buffer_write(result, "\"", 1);
+
+        /* Add run_id as hex string */
+        buffer_write(result, ",\"run_id\":\"", 11);
+        ak_hex_encode(entry->run_id, AK_TOKEN_ID_SIZE, hex);
+        buffer_write(result, hex, AK_TOKEN_ID_SIZE * 2);
+        buffer_write(result, "\"", 1);
+
+        /* Add req_hash */
+        buffer_write(result, ",\"req_hash\":\"", 13);
+        char hash_hex[AK_HASH_SIZE * 2 + 1];
+        ak_hex_encode(entry->req_hash, AK_HASH_SIZE, hash_hex);
+        buffer_write(result, hash_hex, AK_HASH_SIZE * 2);
+        buffer_write(result, "\"", 1);
+
+        /* Add this_hash (entry hash) */
+        buffer_write(result, ",\"hash\":\"", 9);
+        ak_hex_encode(entry->this_hash, AK_HASH_SIZE, hash_hex);
+        buffer_write(result, hash_hex, AK_HASH_SIZE * 2);
+        buffer_write(result, "\"}", 2);
+    }
+
+    buffer_write(result, "],\"head_seq\":", 13);
+
+    /* Write head_seq */
+    char head_buf[32];
+    int head_len = 0;
+    u64 head = ak_audit_head_seq();
+    if (head == 0) {
+        head_buf[0] = '0';
+        head_len = 1;
+    } else {
+        char tmp[32];
+        while (head > 0) {
+            tmp[head_len++] = '0' + (head % 10);
+            head /= 10;
+        }
+        for (int j = 0; j < head_len; j++)
+            head_buf[j] = tmp[head_len - 1 - j];
+    }
+    buffer_write(result, head_buf, head_len);
+
+    buffer_write(result, ",\"count\":", 9);
+
+    /* Write count */
+    char count_buf[32];
+    int count_len = 0;
+    u64 c = count;
+    if (c == 0) {
+        count_buf[0] = '0';
+        count_len = 1;
+    } else {
+        char tmp[32];
+        while (c > 0) {
+            tmp[count_len++] = '0' + (c % 10);
+            c /= 10;
+        }
+        for (int j = 0; j < count_len; j++)
+            count_buf[j] = tmp[count_len - 1 - j];
+    }
+    buffer_write(result, count_buf, count_len);
+    buffer_write(result, "}", 1);
+
+    /* Cleanup entries */
+    if (entries) {
+        for (u64 i = 0; i < count; i++) {
+            if (entries[i])
+                deallocate(ctx->heap, entries[i], sizeof(ak_log_entry_t));
+        }
+        deallocate(ctx->heap, entries, sizeof(ak_log_entry_t*) * count);
+    }
 
     return ak_response_success(ctx->heap, req, result);
+}
+
+/*
+ * Helper: Extract JSON array element by index (simple parser for batch ops).
+ * Returns start offset and length of element, or -1 if not found.
+ */
+static s64 ak_json_array_element(buffer json, u64 index, u64 *len_out)
+{
+    if (!json || !len_out)
+        return -1;
+
+    u8 *data = buffer_ref(json, 0);
+    u64 len = buffer_length(json);
+    u64 i = 0;
+
+    /* Skip to array start */
+    while (i < len && data[i] != '[')
+        i++;
+    if (i >= len)
+        return -1;
+    i++;  /* Skip '[' */
+
+    /* Skip whitespace */
+    while (i < len && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' || data[i] == '\r'))
+        i++;
+
+    /* Find the element at the given index */
+    u64 current_index = 0;
+    while (i < len && current_index <= index) {
+        if (data[i] == ']')
+            return -1;  /* End of array before reaching index */
+
+        /* Skip whitespace and commas */
+        while (i < len && (data[i] == ' ' || data[i] == '\t' || data[i] == '\n' ||
+                          data[i] == '\r' || data[i] == ','))
+            i++;
+
+        if (i >= len || data[i] == ']')
+            return -1;
+
+        /* Found element start */
+        u64 elem_start = i;
+        int depth = 0;
+        boolean in_string = false;
+
+        /* Parse element (handling nested objects/arrays/strings) */
+        while (i < len) {
+            if (in_string) {
+                if (data[i] == '\\' && i + 1 < len) {
+                    i += 2;  /* Skip escaped char */
+                    continue;
+                }
+                if (data[i] == '"')
+                    in_string = false;
+            } else {
+                if (data[i] == '"')
+                    in_string = true;
+                else if (data[i] == '{' || data[i] == '[')
+                    depth++;
+                else if (data[i] == '}' || data[i] == ']') {
+                    if (depth == 0)
+                        break;  /* End of element (hit array end or next level) */
+                    depth--;
+                } else if (data[i] == ',' && depth == 0) {
+                    break;  /* End of element */
+                }
+            }
+            i++;
+        }
+
+        if (current_index == index) {
+            *len_out = i - elem_start;
+            return elem_start;
+        }
+
+        current_index++;
+    }
+
+    return -1;
 }
 
 ak_response_t *ak_handle_batch(ak_agent_context_t *ctx, ak_request_t *req)
@@ -743,28 +1058,202 @@ ak_response_t *ak_handle_batch(ak_agent_context_t *ctx, ak_request_t *req)
         return ak_response_error(ctx->heap, req, -EINVAL);
 
     /*
-     * BATCH semantics: All or nothing
-     * Parse batch request, execute in transaction
+     * BATCH: Atomic batch of heap operations
+     *
+     * Args format:
+     *   {"ops": [
+     *     {"op": "alloc", "type": N, "value": {...}},
+     *     {"op": "write", "ptr": N, "patch": {...}, "version": N},
+     *     {"op": "delete", "ptr": N, "version": N}
+     *   ]}
+     *
+     * Semantics: All or nothing - either all operations succeed atomically,
+     * or none are applied (transaction rollback).
+     *
+     * Returns:
+     *   {"committed": true, "results": [...], "op_count": N}
+     *   or error if any operation fails (entire batch rolled back)
      */
 
+    /* Begin transaction */
     ak_heap_txn_t *txn = ak_heap_txn_begin();
     if (!txn)
         return ak_response_error(ctx->heap, req, -ENOMEM);
 
-    /* Batch operations parsed from args would be executed here */
-    /* For now, just commit the empty transaction */
+    /* Find the "ops" array in args */
+    u8 *args_data = buffer_ref(req->args, 0);
+    u64 args_len = buffer_length(req->args);
 
+    /* Look for "ops" key */
+    const char *ops_key = "\"ops\"";
+    u64 ops_key_len = 5;
+    s64 ops_start = -1;
+
+    for (u64 i = 0; i + ops_key_len < args_len; i++) {
+        if (runtime_memcmp(&args_data[i], ops_key, ops_key_len) == 0) {
+            /* Found "ops", skip to colon and array */
+            u64 j = i + ops_key_len;
+            while (j < args_len && (args_data[j] == ':' || args_data[j] == ' ' ||
+                                    args_data[j] == '\t'))
+                j++;
+            if (j < args_len && args_data[j] == '[') {
+                ops_start = j;
+                break;
+            }
+        }
+    }
+
+    if (ops_start < 0) {
+        /* No "ops" array found - return error instead of empty commit */
+        ak_heap_txn_rollback(txn);
+        return ak_response_error(ctx->heap, req, AK_E_SCHEMA_INVALID);
+    }
+
+    /* Create a buffer view for the ops array */
+    buffer ops_buf = alloca_wrap_buffer(&args_data[ops_start], args_len - ops_start);
+
+    /* Process each operation in the batch */
+    u64 op_count = 0;
+    u64 max_ops = 100;  /* Limit batch size to prevent DoS */
+    s64 batch_err = 0;
+
+    /* Allocate results tracking */
+    u64 *results_ptr = allocate(ctx->heap, sizeof(u64) * max_ops);
+    if (!results_ptr) {
+        ak_heap_txn_rollback(txn);
+        return ak_response_error(ctx->heap, req, -ENOMEM);
+    }
+
+    for (u64 idx = 0; idx < max_ops; idx++) {
+        u64 elem_len = 0;
+        s64 elem_start = ak_json_array_element(ops_buf, idx, &elem_len);
+        if (elem_start < 0)
+            break;  /* No more elements */
+
+        /* Create buffer for this element */
+        buffer elem = alloca_wrap_buffer(buffer_ref(ops_buf, elem_start), elem_len);
+
+        /* Extract operation type */
+        char op_type[16];
+        if (ak_json_extract_string(elem, "op", op_type, sizeof(op_type)) < 0) {
+            batch_err = AK_E_SCHEMA_INVALID;
+            break;
+        }
+
+        /* Execute operation based on type */
+        if (runtime_strcmp(op_type, "alloc") == 0) {
+            u64 type_hash = ak_json_extract_u64(elem, "type");
+            /* Use the element as the value (contains "value" field) */
+            u64 ptr = ak_heap_txn_alloc(txn, type_hash, elem, ctx->run_id, req->taint);
+            if (ptr == 0) {
+                batch_err = -ENOMEM;
+                break;
+            }
+            results_ptr[op_count] = ptr;
+
+        } else if (runtime_strcmp(op_type, "write") == 0) {
+            u64 ptr = ak_json_extract_u64(elem, "ptr");
+            u64 version = ak_json_extract_u64(elem, "version");
+            s64 err = ak_heap_txn_write(txn, ptr, elem, version);
+            if (err != 0) {
+                batch_err = err;
+                break;
+            }
+            results_ptr[op_count] = ptr;
+
+        } else if (runtime_strcmp(op_type, "delete") == 0) {
+            u64 ptr = ak_json_extract_u64(elem, "ptr");
+            u64 version = ak_json_extract_u64(elem, "version");
+            s64 err = ak_heap_txn_delete(txn, ptr, version);
+            if (err != 0) {
+                batch_err = err;
+                break;
+            }
+            results_ptr[op_count] = ptr;
+
+        } else {
+            /* Unknown operation type */
+            batch_err = AK_E_SCHEMA_INVALID;
+            break;
+        }
+
+        op_count++;
+    }
+
+    /* Check for errors */
+    if (batch_err != 0) {
+        ak_heap_txn_rollback(txn);
+        deallocate(ctx->heap, results_ptr, sizeof(u64) * max_ops);
+        return ak_response_error(ctx->heap, req, batch_err);
+    }
+
+    /* Commit the transaction */
     s64 err = ak_heap_txn_commit(txn);
     if (err != 0) {
         ak_heap_txn_rollback(txn);
+        deallocate(ctx->heap, results_ptr, sizeof(u64) * max_ops);
         return ak_response_error(ctx->heap, req, err);
     }
 
-    buffer result = allocate_buffer(ctx->heap, 32);
-    if (!result)
-        return ak_response_error(ctx->heap, req, -ENOMEM);
+    /* Commit budget for successful operations */
+    if (ctx->budget && op_count > 0) {
+        ak_budget_commit(ctx->budget, AK_RESOURCE_HEAP_OBJECTS, op_count);
+    }
 
-    buffer_write(result, "{\"committed\":true}", 18);
+    /* Build result JSON */
+    buffer result = allocate_buffer(ctx->heap, 64 + op_count * 24);
+    if (!result) {
+        deallocate(ctx->heap, results_ptr, sizeof(u64) * max_ops);
+        return ak_response_error(ctx->heap, req, -ENOMEM);
+    }
+
+    buffer_write(result, "{\"committed\":true,\"results\":[", 29);
+
+    for (u64 i = 0; i < op_count; i++) {
+        if (i > 0)
+            buffer_write(result, ",", 1);
+
+        /* Write result pointer/status as number */
+        char num_buf[32];
+        int num_len = 0;
+        u64 v = results_ptr[i];
+        if (v == 0) {
+            num_buf[0] = '0';
+            num_len = 1;
+        } else {
+            char tmp[32];
+            while (v > 0) {
+                tmp[num_len++] = '0' + (v % 10);
+                v /= 10;
+            }
+            for (int j = 0; j < num_len; j++)
+                num_buf[j] = tmp[num_len - 1 - j];
+        }
+        buffer_write(result, num_buf, num_len);
+    }
+
+    buffer_write(result, "],\"op_count\":", 13);
+
+    /* Write op_count */
+    char count_buf[16];
+    int count_len = 0;
+    u64 c = op_count;
+    if (c == 0) {
+        count_buf[0] = '0';
+        count_len = 1;
+    } else {
+        char tmp[16];
+        while (c > 0) {
+            tmp[count_len++] = '0' + (c % 10);
+            c /= 10;
+        }
+        for (int j = 0; j < count_len; j++)
+            count_buf[j] = tmp[count_len - 1 - j];
+    }
+    buffer_write(result, count_buf, count_len);
+    buffer_write(result, "}", 1);
+
+    deallocate(ctx->heap, results_ptr, sizeof(u64) * max_ops);
 
     return ak_response_success(ctx->heap, req, result);
 }
@@ -1383,6 +1872,96 @@ void ak_revoke_run(ak_agent_context_t *ctx)
 }
 
 /* ============================================================
+ * PER-PROCESS CONTEXT MANAGEMENT
+ * ============================================================
+ *
+ * ARCHITECTURE NOTE: Nanos is a unikernel that runs a single application.
+ * While there is technically one "process" from the kernel's perspective,
+ * the Authority Kernel manages multiple logical agent contexts within
+ * that process (e.g., parent/child agents via AK_SYS_SPAWN).
+ *
+ * Context management strategy:
+ *   1. Root agent: Singleton context for the main Nanos process
+ *   2. Spawned agents: Managed via the agent registry (ak_state.agents)
+ *   3. Thread-safe: Protected by spinlock for concurrent access
+ *
+ * In a multi-process OS, context would be stored in the process struct.
+ * In Nanos unikernel, we use a single root context with explicit agent
+ * management for spawned sub-agents.
+ */
+
+/* Root agent context for the main Nanos process (singleton) */
+static ak_agent_context_t *ak_root_context = NULL;
+static struct spinlock ak_context_lock;
+static boolean ak_context_lock_initialized = false;
+
+/*
+ * Get or create the agent context for the current execution context.
+ *
+ * For root process: Returns/creates the singleton root context
+ * For spawned agents: Context is looked up via agent registry
+ *
+ * Returns NULL on failure (not initialized, allocation failed)
+ *
+ * THREAD SAFETY: Protected by ak_context_lock spinlock
+ */
+static ak_agent_context_t *ak_get_current_context(void)
+{
+    if (!ak_state.initialized || !ak_state.h)
+        return NULL;
+
+    /* Initialize lock on first use (safe: single-threaded during init) */
+    if (!ak_context_lock_initialized) {
+        spin_lock_init(&ak_context_lock);
+        ak_context_lock_initialized = true;
+    }
+
+    spin_lock(&ak_context_lock);
+
+    if (!ak_root_context) {
+        /*
+         * Create root context for the Nanos process.
+         * In Nanos unikernel, there is exactly one application process.
+         * PID is zeros for root; spawned agents get unique PIDs.
+         */
+        u8 root_pid[AK_TOKEN_ID_SIZE];
+        runtime_memset(root_pid, 0, AK_TOKEN_ID_SIZE);
+
+        ak_root_context = ak_context_create(ak_state.h, root_pid, NULL);
+        if (ak_root_context) {
+            /* Register root agent in registry for lookup */
+            ak_agent_registry_add(ak_root_context);
+        }
+    }
+
+    ak_agent_context_t *ctx = ak_root_context;
+    spin_unlock(&ak_context_lock);
+
+    return ctx;
+}
+
+/*
+ * Cleanup the root context (called during ak_shutdown).
+ *
+ * THREAD SAFETY: Protected by ak_context_lock spinlock
+ */
+void ak_cleanup_root_context(void)
+{
+    if (!ak_context_lock_initialized)
+        return;
+
+    spin_lock(&ak_context_lock);
+
+    if (ak_root_context) {
+        ak_agent_registry_remove(ak_root_context->pid);
+        ak_context_destroy(ak_state.h, ak_root_context);
+        ak_root_context = NULL;
+    }
+
+    spin_unlock(&ak_context_lock);
+}
+
+/* ============================================================
  * SYSCALL HANDLER (called from main kernel syscall dispatcher)
  * ============================================================ */
 
@@ -1390,7 +1969,7 @@ void ak_revoke_run(ak_agent_context_t *ctx)
  * Main syscall handler for Authority Kernel syscalls (1024-1100).
  *
  * Syscall convention:
- *   arg0: agent_id pointer (u8[16]) or 0 to use current
+ *   arg0: agent_id pointer (u8[16]) or 0 to use root context
  *   arg1: request buffer pointer
  *   arg2: request buffer length
  *   arg3: response buffer pointer (output)
@@ -1398,6 +1977,11 @@ void ak_revoke_run(ak_agent_context_t *ctx)
  *   arg5: flags (reserved)
  *
  * Returns bytes written to response buffer, or negative errno.
+ *
+ * CONTEXT MODEL (Nanos Unikernel):
+ *   - One root agent context (created on first syscall)
+ *   - Multiple spawned agents (via AK_SYS_SPAWN, in agent registry)
+ *   - arg0 can specify agent_id for supervisor/orchestrator patterns
  */
 sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
                              u64 arg3, u64 arg4, u64 arg5)
@@ -1406,16 +1990,29 @@ sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
     if (call < AK_SYS_BASE || call > AK_SYS_INFERENCE)
         return -ENOSYS;
 
-    /* Get or create agent context */
-    /* For now, use a simple global context - production would use per-process */
-    static ak_agent_context_t *current_ctx = 0;
+    ak_agent_context_t *current_ctx = NULL;
+
+    /*
+     * Agent context resolution:
+     * 1. If arg0 specifies an agent_id, look it up in the registry
+     * 2. Otherwise, use the root context (create if needed)
+     */
+    if (arg0 != 0) {
+        /* Caller specified an agent_id - look up in registry */
+        s64 idx = ak_agent_registry_find((u8 *)arg0);
+        if (idx >= 0 && ak_state.agents[idx].active) {
+            current_ctx = ak_state.agents[idx].ctx;
+        } else {
+            /* Unknown agent_id - fail with ESRCH (no such process) */
+            return -ESRCH;
+        }
+    }
+
     if (!current_ctx) {
-        if (!ak_state.h)
-            return -EAGAIN;  /* AK not initialized */
-        u8 default_pid[AK_TOKEN_ID_SIZE] = {0};
-        current_ctx = ak_context_create(ak_state.h, default_pid, 0);
+        /* Use root context (creates on first call) */
+        current_ctx = ak_get_current_context();
         if (!current_ctx)
-            return -ENOMEM;
+            return -EAGAIN;  /* AK not initialized or allocation failed */
     }
 
     /* Build request from syscall arguments */

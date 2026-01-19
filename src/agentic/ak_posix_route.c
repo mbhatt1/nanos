@@ -192,31 +192,60 @@ int ak_resolve_path_at(int dirfd, const char *path, char *out, u32 out_len)
  * SOCKET STATE HELPERS
  * ============================================================ */
 
+/*
+ * Get the bound address of a socket.
+ *
+ * This function attempts to retrieve the local address bound to a socket.
+ * It is used by listen() routing to determine what address the socket is
+ * listening on for policy authorization.
+ *
+ * Current Implementation:
+ *   Returns -ENOENT to indicate the bound address cannot be determined.
+ *   Callers should use the wildcard pattern "ip:*:*" for unbound/unknown sockets.
+ *
+ * Integration Note:
+ *   When integrated with Nanos, this should call getsockname() on the
+ *   socket to retrieve the actual bound address. The fd-to-socket
+ *   resolution would be done via:
+ *     struct sock *sock = resolve_socket(current->p, fd);
+ *     sock->getsockname(sock, addr, addrlen);
+ *
+ * Parameters:
+ *   fd      - Socket file descriptor
+ *   addr    - Output buffer for socket address
+ *   addrlen - Input: buffer size, Output: actual address size
+ *
+ * Returns:
+ *   0 on success (address retrieved)
+ *   -EINVAL if addr or addrlen is NULL, or buffer too small
+ *   -ENOENT if bound address cannot be determined (current stub behavior)
+ *   -EBADF if fd is invalid (when full integration available)
+ *   -EOPNOTSUPP if socket doesn't support getsockname (when full integration)
+ */
 int ak_get_socket_bound_addr(int fd, struct sockaddr *addr, socklen_t *addrlen)
 {
-    /*
-     * In full Nanos integration, this would:
-     *   1. Resolve fd to socket structure
-     *   2. Get bound address from socket PCB
-     *
-     * For now, return a placeholder indicating unknown address.
-     */
-    if (!addr || !addrlen || *addrlen < 8)
+    if (!addr || !addrlen || *addrlen < sizeof(struct sockaddr))
         return -EINVAL;
 
-    /* Return 0.0.0.0:0 as placeholder */
-    u8 *bytes = (u8 *)addr;
-    bytes[0] = 2;   /* AF_INET */
-    bytes[1] = 0;
-    bytes[2] = 0;   /* port high byte */
-    bytes[3] = 0;   /* port low byte */
-    bytes[4] = 0;   /* IP 0.0.0.0 */
-    bytes[5] = 0;
-    bytes[6] = 0;
-    bytes[7] = 0;
+    /*
+     * TODO: When integrated with Nanos kernel, resolve fd to socket
+     * and call getsockname() to get the actual bound address:
+     *
+     *   struct sock *sock = resolve_socket(current->p, fd);
+     *   if (sock && sock->getsockname) {
+     *       sysreturn rv = sock->getsockname(sock, addr, addrlen);
+     *       socket_release(sock);
+     *       return rv;
+     *   }
+     *
+     * Return -ENOENT when the bound address cannot be determined.
+     * Callers should use wildcard pattern "ip:*:*" for unbound/unknown sockets.
+     */
+    (void)fd;
+    (void)addr;
+    (void)addrlen;
 
-    *addrlen = 8;
-    return 0;
+    return -ENOENT;
 }
 
 /* ============================================================
@@ -611,8 +640,16 @@ sysreturn ak_route_listen(int fd, int backlog)
     }
 
     /*
-     * For listen(), we need to get the bound address from the socket.
-     * If socket isn't bound, use 0.0.0.0:0 as placeholder.
+     * Retrieve the socket's bound address for policy authorization.
+     *
+     * The bound address determines what the socket will listen on.
+     * If ak_get_socket_bound_addr() fails (-ENOENT), we fall back to
+     * ak_effect_from_listen() which uses "ip:*:*" as a wildcard target
+     * for unbound/unknown sockets.
+     *
+     * Policies can match wildcard addresses using patterns like:
+     *   - "ip:*:8080"     - Any address on port 8080
+     *   - "ip:*:*"        - Any network listen operation
      */
     u8 addr_buf[64];
     socklen_t addrlen = sizeof(addr_buf);
@@ -620,7 +657,10 @@ sysreturn ak_route_listen(int fd, int backlog)
 
     int err = ak_get_socket_bound_addr(fd, addr, &addrlen);
     if (err < 0) {
-        /* If we can't get the address, still authorize with fd */
+        /*
+         * Could not retrieve bound address (invalid fd or internal error).
+         * Fall back to using fd-based authorization without address info.
+         */
         ak_effect_req_t req;
         err = ak_effect_from_listen(&req, ctx, fd, backlog);
         if (err < 0)
@@ -634,11 +674,14 @@ sysreturn ak_route_listen(int fd, int backlog)
     req.op = AK_E_NET_LISTEN;
     req.trace_id = ak_trace_id_generate(ctx);
 
-    /* Canonicalize the bound address */
+    /*
+     * Canonicalize the bound address to target format.
+     * If canonicalization fails, use wildcard "ip:*:*" for unbound/unknown sockets.
+     */
     err = ak_canonicalize_sockaddr(addr, addrlen, req.target, AK_MAX_TARGET);
     if (err < 0) {
-        /* Fallback to placeholder */
-        runtime_strncpy(req.target, "ip:0.0.0.0:0", AK_MAX_TARGET);
+        /* Use wildcard target for unbound/unknown sockets */
+        runtime_strncpy(req.target, "ip:*:*", AK_MAX_TARGET);
     }
 
     /* Encode backlog in params */

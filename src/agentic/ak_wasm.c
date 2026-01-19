@@ -141,28 +141,24 @@ static boolean validate_wasm_header(buffer bytecode)
     return (magic == WASM_MAGIC) && (version == WASM_VERSION);
 }
 
+/* Wrapper for Nanos sha256 that uses buffers */
+static void ak_sha256(const u8 *data, u32 len, u8 *output)
+{
+    buffer src = alloca_wrap_buffer((void *)data, len);
+    buffer dst = alloca_wrap_buffer(output, 32);
+    sha256(dst, src);
+}
+
 static void compute_module_hash(buffer bytecode, u8 *hash_out)
 {
     /*
-     * Compute SHA256 of bytecode.
-     * In production, use proper crypto. For now, simple hash.
+     * Compute SHA-256 of bytecode for cryptographically secure
+     * module identification and integrity verification.
      */
     u64 len = buffer_length(bytecode);
     u8 *data = buffer_ref(bytecode, 0);
 
-    /* Simple hash - replace with SHA256 in production */
-    u64 h = 0xcbf29ce484222325ULL;
-    for (u64 i = 0; i < len; i++) {
-        h ^= data[i];
-        h *= 0x100000001b3ULL;
-    }
-
-    /* Fill hash output */
-    for (int i = 0; i < AK_HASH_SIZE; i++) {
-        hash_out[i] = (h >> (i % 8 * 8)) & 0xff;
-        if (i % 8 == 7)
-            h = h * 0x100000001b3ULL + i;
-    }
+    ak_sha256(data, (u32)len, hash_out);
 }
 
 ak_wasm_module_t *ak_wasm_module_load(

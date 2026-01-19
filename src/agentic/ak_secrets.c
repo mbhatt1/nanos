@@ -119,10 +119,14 @@ static buffer resolve_from_env(heap h, const char *ref, u64 ref_len)
 static buffer resolve_from_file(heap h, const char *ref, u64 ref_len)
 {
     /*
-     * Read secret from /run/secrets/<ref>
+     * Resolve secret from /run/secrets/<ref> path.
      *
-     * In Nanos, we would use the filesystem APIs to read this.
-     * For now, check preloaded secrets first.
+     * Current implementation: Falls back to preloaded secrets since filesystem
+     * access requires Nanos fs APIs that may not be available at secret
+     * resolution time (especially during early boot).
+     *
+     * Preloaded secrets are populated via ak_secret_preload() during init,
+     * allowing policies to reference file:// URIs without actual file I/O.
      */
     buffer result = 0;
     buffer preloaded = resolve_from_preloaded(ref, ref_len);
@@ -135,15 +139,15 @@ static buffer resolve_from_file(heap h, const char *ref, u64 ref_len)
     }
 
     /*
-     * File-based secret reading would go here.
-     * This requires integration with Nanos filesystem APIs.
-     *
-     * Implementation pattern:
+     * Future: Direct file-based secret reading.
+     * This would require integration with Nanos filesystem APIs:
      * 1. Build path: /run/secrets/<ref>
-     * 2. Open file
-     * 3. Read contents
+     * 2. Open file (fs_open)
+     * 3. Read contents (fs_read)
      * 4. Close file
      * 5. Return buffer
+     *
+     * Until filesystem integration is complete, secrets must be preloaded.
      */
     secrets_state.last_error = "secret file not found";
     return 0;

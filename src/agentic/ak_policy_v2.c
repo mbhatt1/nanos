@@ -643,8 +643,13 @@ static boolean parse_json_policy(ak_policy_v2_t *policy, const u8 *json, u64 len
                 if (local_strcmp(wasm_key, "modules") == 0) {
                     p = parse_string_array(p, end, add_wasm_module, policy);
                 } else if (local_strcmp(wasm_key, "hostcalls") == 0) {
-                    /* Add hostcalls to all existing WASM rules */
-                    /* For simplicity, skip for now - would need context */
+                    /* Design note: JSON policy format places hostcalls at the same
+                     * level as modules, but the data structure (ak_wasm_rule_v2_t)
+                     * supports per-module hostcalls. Global hostcalls would need to
+                     * be applied to all existing rules, which requires iterating
+                     * the rule list and duplicating strings. For simplicity, this
+                     * JSON parser ignores top-level hostcalls. Use TOML format for
+                     * per-module hostcall configuration. */
                     p = skip_value(p, end);
                 } else {
                     p = skip_value(p, end);
@@ -1018,8 +1023,10 @@ ak_policy_v2_t *ak_policy_v2_bootstrap(heap h)
 
     /*
      * 2. Check initrd /ak/policy.json
-     *    This would be called by the kernel during boot after initrd is mounted.
-     *    For now, we return fail-closed policy.
+     *    Policy loading from initrd is handled by ak_policy_v2_load_from_file()
+     *    which should be called after the filesystem is initialized. This
+     *    bootstrap function is called before filesystem init, so we proceed
+     *    to fail-closed behavior.
      */
 
     /*

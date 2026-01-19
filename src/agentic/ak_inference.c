@@ -20,6 +20,7 @@
 #include "ak_audit.h"
 #include "ak_compat.h"
 #include "ak_policy.h"
+#include "ak_stream.h"
 #include "ak_syscall.h"
 
 /* ============================================================
@@ -329,13 +330,42 @@ s64 ak_local_inference_init(ak_llm_local_config_t *config)
         return AK_E_LLM_NOT_CONFIGURED;
 
     /*
-     * Open virtio-serial device.
-     * The device path is typically /dev/vport0p1 or similar.
-     * The host must have an inference server connected to this port.
+     * Virtio-serial Device Initialization
+     *
+     * The local inference backend communicates with a host-side inference
+     * server via virtio-serial. This requires:
+     *
+     *   1. QEMU Configuration: The VM must be launched with a virtio-serial
+     *      device configured, e.g.:
+     *        -device virtio-serial-pci \
+     *        -chardev socket,id=inference,path=/tmp/inference.sock \
+     *        -device virtserialport,chardev=inference,name=inference
+     *
+     *   2. Host Server: An inference server (ollama, vLLM, or custom) must
+     *      be listening on the socket and implementing the length-prefixed
+     *      JSON protocol defined in this file.
+     *
+     *   3. Device Path: The device_path should match the virtio-serial port
+     *      name, typically /dev/vport0p1 or a named port.
+     *
+     * Device Opening Status:
+     *   The virtio-serial device driver integration with the Nanos file
+     *   descriptor API is pending. When implemented, this function will:
+     *     1. Open the device at config->device_path
+     *     2. Set non-blocking mode for async I/O
+     *     3. Validate connectivity with a health check
+     *     4. Set local_connected = true on success
+     *
+     * Current State:
+     *   Device remains unavailable (local_connected = false) until the
+     *   virtio-serial driver integration is complete. Callers should check
+     *   ak_local_inference_healthy() before attempting requests.
+     *
+     * Error Handling:
+     *   Returns 0 to indicate successful initialization of the local
+     *   inference subsystem configuration. The actual device availability
+     *   is tracked separately via local_connected flag.
      */
-
-    /* Device opening would go here - requires Nanos file descriptor support */
-    /* For now, mark as not available until device is opened */
 
     return 0;
 }
@@ -349,7 +379,35 @@ s64 ak_local_inference_init(ak_llm_local_config_t *config)
 
 /*
  * Write exactly 'len' bytes to virtio fd with timeout.
- * Returns 0 on success, negative error code on failure.
+ *
+ * This function implements reliable byte-stream writing to a virtio-serial
+ * device with timeout handling. It ensures all bytes are written before
+ * returning.
+ *
+ * Parameters:
+ *   fd         - Open file descriptor for virtio-serial device
+ *   buf        - Buffer containing data to write
+ *   len        - Number of bytes to write
+ *   timeout_ms - Maximum time to wait for write completion
+ *
+ * Returns:
+ *   0                       - Success, all bytes written
+ *   AK_E_LLM_INVALID_REQUEST - Invalid parameters
+ *   AK_E_LLM_TIMEOUT        - Write timed out
+ *   AK_E_LLM_NOT_CONFIGURED - Device not available
+ *   AK_E_LLM_CONNECTION_FAILED - Write error
+ *
+ * Implementation Notes:
+ *   The virtio-serial device presents as a standard byte stream to the guest.
+ *   When the device driver integration is complete, this function will use
+ *   the Nanos file descriptor write API with proper error handling:
+ *
+ *   ssize_t n = write(fd, buf + written, len - written);
+ *   if (n < 0) {
+ *       if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+ *       return AK_E_LLM_CONNECTION_FAILED;
+ *   }
+ *   written += n;
  */
 static s64 virtio_write_all(int fd, const u8 *buf, u64 len, u32 timeout_ms)
 {
@@ -365,10 +423,11 @@ static s64 virtio_write_all(int fd, const u8 *buf, u64 len, u32 timeout_ms)
             return AK_E_LLM_TIMEOUT;
 
         /*
-         * Write to virtio-serial device.
-         * In production, this would use the Nanos file descriptor write API.
-         * The virtio-serial device presents as a byte stream, so we can write
-         * directly without needing virtqueue management at this level.
+         * Virtio-serial write implementation.
+         *
+         * The device presents as a byte stream. Data is written in chunks
+         * up to the transmit buffer size for efficiency. The underlying
+         * virtio driver handles queueing to the virtqueue.
          */
         buffer tx_buf = ak_inf_state.virtio_tx_buf;
         buffer_clear(tx_buf);
@@ -376,15 +435,27 @@ static s64 virtio_write_all(int fd, const u8 *buf, u64 len, u32 timeout_ms)
         buffer_write(tx_buf, buf + written, chunk);
 
         /*
-         * Actual write to device would go here.
-         * For now, we return an error indicating the device isn't ready.
-         * When virtio-serial driver support is added to Nanos, this would be:
+         * Virtio-serial driver integration pending.
+         *
+         * When the Nanos virtio-serial driver exposes a file descriptor
+         * interface, this section will be implemented as:
+         *
          *   ssize_t n = write(fd, buffer_ref(tx_buf, 0), buffer_length(tx_buf));
+         *   if (n < 0) {
+         *       if (errno == EAGAIN || errno == EWOULDBLOCK) {
+         *           // Non-blocking - yield and retry
+         *           continue;
+         *       }
+         *       return AK_E_LLM_CONNECTION_FAILED;
+         *   }
+         *   written += n;
+         *
+         * Until then, return device-not-configured error to indicate
+         * the local inference backend is unavailable.
          */
         (void)fd;
         (void)tx_buf;
 
-        /* Device not implemented - return appropriate error */
         return AK_E_LLM_NOT_CONFIGURED;
     }
 
@@ -393,7 +464,36 @@ static s64 virtio_write_all(int fd, const u8 *buf, u64 len, u32 timeout_ms)
 
 /*
  * Read exactly 'len' bytes from virtio fd with timeout.
- * Returns 0 on success, negative error code on failure.
+ *
+ * This function implements reliable byte-stream reading from a virtio-serial
+ * device with timeout handling. It blocks until all requested bytes are
+ * received or an error/timeout occurs.
+ *
+ * Parameters:
+ *   fd         - Open file descriptor for virtio-serial device
+ *   buf        - Buffer to receive data
+ *   len        - Number of bytes to read
+ *   timeout_ms - Maximum time to wait for read completion
+ *
+ * Returns:
+ *   0                       - Success, all bytes read
+ *   AK_E_LLM_INVALID_REQUEST - Invalid parameters
+ *   AK_E_LLM_TIMEOUT        - Read timed out
+ *   AK_E_LLM_NOT_CONFIGURED - Device not available
+ *   AK_E_LLM_CONNECTION_FAILED - Read error or connection closed
+ *
+ * Implementation Notes:
+ *   The virtio-serial device presents as a standard byte stream to the guest.
+ *   When the device driver integration is complete, this function will use
+ *   the Nanos file descriptor read API with proper error handling:
+ *
+ *   ssize_t n = read(fd, buf + read_total, len - read_total);
+ *   if (n < 0) {
+ *       if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+ *       return AK_E_LLM_CONNECTION_FAILED;
+ *   }
+ *   if (n == 0) return AK_E_LLM_CONNECTION_FAILED; // EOF
+ *   read_total += n;
  */
 static s64 virtio_read_all(int fd, u8 *buf, u64 len, u32 timeout_ms)
 {
@@ -409,15 +509,42 @@ static s64 virtio_read_all(int fd, u8 *buf, u64 len, u32 timeout_ms)
             return AK_E_LLM_TIMEOUT;
 
         /*
-         * Read from virtio-serial device.
-         * In production, this would use the Nanos file descriptor read API.
-         * The virtio-serial device presents as a byte stream.
+         * Virtio-serial read implementation.
+         *
+         * The device presents as a byte stream. The receive buffer is used
+         * for staging data before copying to the output buffer.
          */
         buffer rx_buf = ak_inf_state.virtio_rx_buf;
+
+        /*
+         * Virtio-serial driver integration pending.
+         *
+         * When the Nanos virtio-serial driver exposes a file descriptor
+         * interface, this section will be implemented as:
+         *
+         *   buffer_clear(rx_buf);
+         *   u64 to_read = MIN(len - read_total, buffer_space(rx_buf));
+         *   ssize_t n = read(fd, buffer_ref(rx_buf, 0), to_read);
+         *   if (n < 0) {
+         *       if (errno == EAGAIN || errno == EWOULDBLOCK) {
+         *           // Non-blocking - yield and retry
+         *           continue;
+         *       }
+         *       return AK_E_LLM_CONNECTION_FAILED;
+         *   }
+         *   if (n == 0) {
+         *       // EOF - connection closed by host
+         *       return AK_E_LLM_CONNECTION_FAILED;
+         *   }
+         *   runtime_memcpy(buf + read_total, buffer_ref(rx_buf, 0), n);
+         *   read_total += n;
+         *
+         * Until then, return device-not-configured error to indicate
+         * the local inference backend is unavailable.
+         */
         (void)fd;
         (void)rx_buf;
 
-        /* Device not implemented - return appropriate error */
         return AK_E_LLM_NOT_CONFIGURED;
     }
 
@@ -1145,6 +1272,101 @@ ak_inference_response_t *ak_inference_complete(
     return res;
 }
 
+/*
+ * Stream callback adapter context.
+ *
+ * Bridges the ak_stream infrastructure's token callback to the
+ * user-provided ak_stream_callback_t function.
+ */
+typedef struct stream_callback_adapter {
+    ak_stream_callback_t user_callback;
+    void *user_ctx;
+    ak_inference_response_t *response;
+    boolean error_occurred;
+} stream_callback_adapter_t;
+
+/*
+ * Internal token callback for streaming.
+ *
+ * Invoked by ak_stream infrastructure for each token received.
+ * Forwards tokens to the user callback and tracks completion state.
+ */
+static void stream_token_callback(
+    ak_stream_session_t *session,
+    const char *token,
+    u32 token_len,
+    boolean is_final,
+    void *ctx)
+{
+    stream_callback_adapter_t *adapter = (stream_callback_adapter_t *)ctx;
+    (void)session;
+
+    if (!adapter || !adapter->user_callback)
+        return;
+
+    /* Forward to user callback */
+    adapter->user_callback(adapter->user_ctx, token, token_len, is_final);
+}
+
+/*
+ * Internal close callback for streaming.
+ *
+ * Invoked when the stream session closes (success, error, or timeout).
+ * Records the final state in the response structure.
+ */
+static void stream_close_callback(
+    ak_stream_session_t *session,
+    ak_stream_state_t reason,
+    void *ctx)
+{
+    stream_callback_adapter_t *adapter = (stream_callback_adapter_t *)ctx;
+
+    if (!adapter || !adapter->response)
+        return;
+
+    /* Record stream statistics in response */
+    adapter->response->usage.completion_tokens = (u32)session->tokens_sent;
+
+    /* Map stream close reason to response state */
+    switch (reason) {
+    case AK_STREAM_STATE_CLOSED:
+        /* Normal completion */
+        adapter->response->success = true;
+        adapter->response->finish_reason = AK_FINISH_STOP;
+        break;
+    case AK_STREAM_STATE_BUDGET:
+        adapter->response->success = false;
+        adapter->response->error_code = AK_E_BUDGET_EXCEEDED;
+        adapter->response->finish_reason = AK_FINISH_LENGTH;
+        runtime_memcpy(adapter->response->error_message, "Stream budget exceeded",
+                       sizeof("Stream budget exceeded"));
+        adapter->error_occurred = true;
+        break;
+    case AK_STREAM_STATE_TIMEOUT:
+        adapter->response->success = false;
+        adapter->response->error_code = AK_E_LLM_TIMEOUT;
+        adapter->response->finish_reason = AK_FINISH_ERROR;
+        runtime_memcpy(adapter->response->error_message, "Stream timeout",
+                       sizeof("Stream timeout"));
+        adapter->error_occurred = true;
+        break;
+    case AK_STREAM_STATE_ERROR:
+    default:
+        adapter->response->success = false;
+        adapter->response->error_code = AK_E_LLM_API_ERROR;
+        adapter->response->finish_reason = AK_FINISH_ERROR;
+        if (session->error_msg[0]) {
+            runtime_memcpy(adapter->response->error_message, session->error_msg,
+                           sizeof(adapter->response->error_message));
+        } else {
+            runtime_memcpy(adapter->response->error_message, "Stream error",
+                           sizeof("Stream error"));
+        }
+        adapter->error_occurred = true;
+        break;
+    }
+}
+
 ak_inference_response_t *ak_inference_stream(
     ak_agent_context_t *agent,
     ak_inference_request_t *req,
@@ -1152,13 +1374,273 @@ ak_inference_response_t *ak_inference_stream(
     ak_stream_callback_t callback,
     void *callback_ctx)
 {
+    ak_inference_response_t *res;
+
     /*
-     * Streaming requires server-sent events (SSE) support.
-     * For now, fall back to non-streaming completion.
+     * Streaming Inference Implementation
+     *
+     * This function provides streaming LLM inference using the ak_stream
+     * infrastructure. Tokens are delivered to the caller via callback as
+     * they are generated.
+     *
+     * Limitations:
+     *   - Streaming requires local inference via virtio-serial with a
+     *     streaming-capable host server, or external API with SSE support.
+     *   - If the underlying transport does not support streaming, this
+     *     function falls back to non-streaming completion and delivers
+     *     the entire response in a single callback invocation.
+     *
+     * The streaming session is:
+     *   - Budget-tracked (bytes and tokens)
+     *   - Capability-gated through the parent inference capability
+     *   - Audit-logged (session start/end)
      */
-    (void)callback;
-    (void)callback_ctx;
-    return ak_inference_complete(agent, req, cap);
+
+    /* Validate preconditions */
+    if (!ak_inf_state.initialized) {
+        res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
+        if (res == INVALID_ADDRESS)
+            return 0;
+        runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
+        res->success = false;
+        res->error_code = AK_E_LLM_NOT_CONFIGURED;
+        runtime_memcpy(res->error_message, "Inference subsystem not initialized",
+                       sizeof("Inference subsystem not initialized"));
+        return res;
+    }
+
+    /* Validate capability (INV-2: Capability Enforcement) */
+    if (!cap) {
+        ak_inf_state.stats.capability_denials++;
+        res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
+        if (res == INVALID_ADDRESS)
+            return 0;
+        runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
+        res->success = false;
+        res->error_code = AK_E_CAP_MISSING;
+        runtime_memcpy(res->error_message, "Missing inference capability",
+                       sizeof("Missing inference capability"));
+        return res;
+    }
+
+    s64 cap_result = ak_capability_validate(
+        cap, AK_CAP_INFERENCE, "*", "stream", agent->run_id);
+    if (cap_result != 0) {
+        ak_inf_state.stats.capability_denials++;
+        res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
+        if (res == INVALID_ADDRESS)
+            return 0;
+        runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
+        res->success = false;
+        res->error_code = cap_result;
+        runtime_memcpy(res->error_message, "Capability validation failed",
+                       sizeof("Capability validation failed"));
+        return res;
+    }
+
+    /* Check if callback is provided - if not, fall back to non-streaming */
+    if (!callback) {
+        return ak_inference_complete(agent, req, cap);
+    }
+
+    /* Check budget (INV-3: Budget Enforcement) */
+    if (agent->budget) {
+        u32 estimated_tokens = req->max_tokens > 0 ? req->max_tokens : 1024;
+        if (!ak_budget_check(agent->budget, AK_RESOURCE_LLM_TOKENS_OUT, estimated_tokens)) {
+            ak_inf_state.stats.budget_exceeded++;
+            res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
+            if (res == INVALID_ADDRESS)
+                return 0;
+            runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
+            res->success = false;
+            res->error_code = AK_E_BUDGET_EXCEEDED;
+            runtime_memcpy(res->error_message, "Token budget exceeded",
+                           sizeof("Token budget exceeded"));
+            return res;
+        }
+    }
+
+    /* Determine routing */
+    ak_llm_mode_t route = ak_inference_route(req->model);
+    if (route == AK_LLM_MODE_DISABLED) {
+        res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
+        if (res == INVALID_ADDRESS)
+            return 0;
+        runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
+        res->success = false;
+        res->error_code = AK_E_LLM_NOT_CONFIGURED;
+        runtime_memcpy(res->error_message, "No LLM backend configured for model",
+                       sizeof("No LLM backend configured for model"));
+        return res;
+    }
+
+    /*
+     * Check if streaming is supported for the selected backend.
+     *
+     * Local inference (virtio-serial): Streaming depends on host server
+     * capabilities. The current virtio protocol implementation does not
+     * support streaming - it uses request/response messaging.
+     *
+     * External API: Requires SSE support in the HTTP client, which is
+     * not yet implemented in the Nanos networking stack.
+     *
+     * When native streaming is unavailable, we perform non-streaming
+     * inference and deliver the complete response via callback.
+     */
+    boolean native_streaming_available = false;
+
+    /* Check for streaming support based on backend */
+    if (route == AK_LLM_EXTERNAL && ak_inf_state.config.api.stream) {
+        /*
+         * External API streaming requires SSE parsing in the HTTP response.
+         * This is not currently implemented - would require:
+         *   1. HTTP client with chunked transfer encoding support
+         *   2. SSE event parser (data: prefixed lines)
+         *   3. Async callback invocation for each event
+         * Mark as unavailable until HTTP streaming is implemented.
+         */
+        native_streaming_available = false;
+    }
+
+    if (route == AK_LLM_LOCAL && ak_inf_state.local_connected) {
+        /*
+         * Local streaming would require protocol extension:
+         *   1. Extended virtio protocol with streaming message type
+         *   2. Host server support for streaming responses
+         *   3. Incremental response parsing
+         * Mark as unavailable until protocol is extended.
+         */
+        native_streaming_available = false;
+    }
+
+    /* Allocate response structure */
+    res = allocate(ak_inf_state.h, sizeof(ak_inference_response_t));
+    if (res == INVALID_ADDRESS)
+        return 0;
+    runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
+
+    if (!native_streaming_available) {
+        /*
+         * Fallback: Perform non-streaming completion and deliver
+         * the entire response through the callback.
+         *
+         * This provides consistent API behavior while native streaming
+         * support is being developed. The callback receives:
+         *   1. Complete response content (done=false)
+         *   2. Empty final callback (done=true)
+         */
+        ak_inference_response_t *sync_res = ak_inference_complete(agent, req, cap);
+
+        if (!sync_res) {
+            res->success = false;
+            res->error_code = AK_E_LLM_API_ERROR;
+            runtime_memcpy(res->error_message, "Inference request failed",
+                           sizeof("Inference request failed"));
+            return res;
+        }
+
+        /* Deliver complete response via callback */
+        if (sync_res->success && sync_res->content) {
+            u8 *content = buffer_ref(sync_res->content, 0);
+            u64 content_len = buffer_length(sync_res->content);
+            callback(callback_ctx, (const char *)content, (u32)content_len, false);
+        }
+
+        /* Signal completion */
+        callback(callback_ctx, "", 0, true);
+
+        /* Copy response data */
+        runtime_memcpy(res, sync_res, sizeof(ak_inference_response_t));
+        res->content = sync_res->content;
+        sync_res->content = 0;  /* Transfer ownership */
+
+        /* Free the sync response (but not its content buffer) */
+        deallocate(ak_inf_state.h, sync_res, sizeof(ak_inference_response_t));
+
+        return res;
+    }
+
+    /*
+     * Native streaming path (when implemented).
+     *
+     * This code path will be enabled when the underlying transport
+     * supports streaming. The implementation will:
+     *   1. Create ak_stream_session with LLM_TOKENS type
+     *   2. Register token and close callbacks
+     *   3. Configure stop sequences from request
+     *   4. Start the streaming session
+     *   5. Forward tokens to user callback as they arrive
+     *   6. Return final response with usage statistics
+     */
+    ak_stream_budget_t stream_budget;
+    runtime_memset((u8 *)&stream_budget, 0, sizeof(stream_budget));
+    stream_budget.tokens_limit = req->max_tokens > 0 ? req->max_tokens : 4096;
+    stream_budget.timeout_ms = ak_inf_state.config.local.timeout_ms > 0 ?
+                               ak_inf_state.config.local.timeout_ms : 30000;
+    stream_budget.idle_timeout_ms = 10000;  /* 10 second idle timeout */
+
+    ak_stream_session_t *session = ak_stream_create(
+        ak_inf_state.h,
+        AK_STREAM_LLM_TOKENS,
+        &stream_budget,
+        agent,
+        cap
+    );
+
+    if (!session) {
+        res->success = false;
+        res->error_code = AK_E_LLM_API_ERROR;
+        runtime_memcpy(res->error_message, "Failed to create stream session",
+                       sizeof("Failed to create stream session"));
+        return res;
+    }
+
+    /* Set up callback adapter */
+    stream_callback_adapter_t adapter;
+    runtime_memset((u8 *)&adapter, 0, sizeof(adapter));
+    adapter.user_callback = callback;
+    adapter.user_ctx = callback_ctx;
+    adapter.response = res;
+    adapter.error_occurred = false;
+
+    /* Register callbacks */
+    ak_stream_on_token(session, stream_token_callback, &adapter);
+    ak_stream_on_close(session, stream_close_callback, &adapter);
+
+    /* Configure stop sequences if provided */
+    if (req->stop_sequences && req->stop_count > 0) {
+        ak_stream_set_stop_sequences(session, (const char **)req->stop_sequences, req->stop_count);
+    }
+
+    /* Start the streaming session */
+    s64 start_result = ak_stream_start(session);
+    if (start_result != 0) {
+        ak_stream_destroy(ak_inf_state.h, session);
+        res->success = false;
+        res->error_code = AK_E_LLM_API_ERROR;
+        runtime_memcpy(res->error_message, "Failed to start stream session",
+                       sizeof("Failed to start stream session"));
+        return res;
+    }
+
+    /*
+     * At this point, native streaming would proceed asynchronously.
+     * Since native streaming is not yet available, we fall back above.
+     * This code serves as the framework for future implementation.
+     *
+     * When native streaming is enabled:
+     *   - Tokens arrive via virtio or SSE
+     *   - Each token is delivered through ak_stream_send_token()
+     *   - stream_token_callback forwards to user
+     *   - On completion, stream_close_callback updates response
+     */
+
+    /* Clean up and return */
+    ak_stream_close(session);
+    ak_stream_destroy(ak_inf_state.h, session);
+
+    res->success = true;
+    return res;
 }
 
 ak_inference_response_t *ak_inference_embed(

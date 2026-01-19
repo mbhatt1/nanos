@@ -1008,18 +1008,37 @@ int ak_process_spawn(
     }
 
     /*
-     * NOTE: Actual fork/exec is done by the kernel.
-     * This function prepares the AK state for the new process.
-     * The kernel will call ak_process_register() after successful spawn.
+     * UNIKERNEL LIMITATION: Process spawning is not supported.
+     *
+     * Authority Nanos is a single-process unikernel by design. Traditional
+     * process spawning via fork/exec is intentionally unsupported because:
+     *
+     *   1. Unikernels run a single application per VM - there is no process
+     *      table, scheduler, or memory isolation between processes.
+     *
+     *   2. The security model relies on VM-level isolation rather than
+     *      process-level isolation. Each agent runs in its own VM.
+     *
+     *   3. For multi-agent scenarios, deploy multiple VMs rather than
+     *      spawning child processes within a single VM.
+     *
+     * The ak_process_authorize_spawn() check above validates that the spawn
+     * WOULD be permitted by policy, which is useful for:
+     *   - Policy validation and testing
+     *   - Audit logging of spawn attempts
+     *   - Future compatibility if spawn support is ever added
+     *
+     * Callers should check for ENOSYS and handle accordingly (e.g., by
+     * requesting the orchestrator to launch a new VM instead).
      */
+    result->success = false;
+    result->error_code = ENOSYS;
+    runtime_strncpy(result->error_msg,
+                   "Process spawning not supported in unikernel",
+                   sizeof(result->error_msg));
+    ak_process_state.stats.spawn_denied++;
 
-    /* For now, we don't actually spawn - just return success indicator */
-    /* The caller (kernel) will do the actual fork/exec and then call register */
-
-    result->success = true;
-    /* Child PID will be set by kernel after actual spawn */
-
-    return 0;
+    return -ENOSYS;
 }
 
 /* ============================================================
