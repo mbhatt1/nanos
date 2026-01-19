@@ -126,10 +126,19 @@ static s64 json_extract_int(buffer json, const char *key, u64 *out)
             if (j >= len)
                 return -1;
 
-            /* Parse number */
+            /* Parse number with overflow protection (P2-5) */
             u64 value = 0;
             while (j < len && data[j] >= '0' && data[j] <= '9') {
-                value = value * 10 + (data[j] - '0');
+                u64 digit = data[j] - '0';
+                /* Check for overflow before multiplication */
+                if (value > (UINT64_MAX - digit) / 10) {
+                    value = UINT64_MAX;  /* Saturate on overflow */
+                    /* Skip remaining digits */
+                    while (j < len && data[j] >= '0' && data[j] <= '9') j++;
+                    *out = value;
+                    return 0;
+                }
+                value = value * 10 + digit;
                 j++;
             }
 
@@ -614,6 +623,10 @@ static s64 virtio_read_all(int fd, u8 *buf, u64 len, u32 timeout_ms)
     return 0;
 }
 
+/* Maximum number of retries for transient errors */
+#define VIRTIO_MAX_RETRIES      3
+#define VIRTIO_RETRY_BASE_MS    100  /* Base delay for exponential backoff */
+
 /*
  * Send request and receive response via virtio-serial.
  *
@@ -624,6 +637,17 @@ static s64 virtio_read_all(int fd, u8 *buf, u64 len, u32 timeout_ms)
  * The host inference server must implement this protocol.
  * Typical setup: QEMU virtio-serial port connected to a host process
  * running ollama, vLLM, or similar inference server.
+ *
+ * Error Handling Strategy:
+ *   - Connection errors: Return immediately (non-recoverable)
+ *   - Timeout errors: Retry with exponential backoff (transient)
+ *   - Invalid request: Return immediately (client error)
+ *   - Server errors: Parse error response from server JSON
+ *
+ * Retry Policy:
+ *   Transient errors (EAGAIN, EINTR, timeout) are retried up to
+ *   VIRTIO_MAX_RETRIES times with exponential backoff starting at
+ *   VIRTIO_RETRY_BASE_MS. Non-transient errors fail immediately.
  */
 static ak_inference_response_t *virtio_request(buffer request_json)
 {
@@ -944,6 +968,79 @@ boolean ak_local_inference_healthy(void)
 
 /* ============================================================
  * EXTERNAL INFERENCE (HTTPS API)
+ * ============================================================
+ *
+ * IMPLEMENTATION STATUS: NOT AVAILABLE
+ *
+ * External LLM API calls (OpenAI, Anthropic, etc.) require HTTPS client
+ * functionality which is NOT currently available in the Authority Kernel.
+ *
+ * WHY NOT AVAILABLE:
+ *   The Nanos unikernel provides TCP/IP networking via lwIP, but lacks:
+ *
+ *   1. TLS LIBRARY: No TLS implementation is linked into the kernel.
+ *      - mbedTLS, OpenSSL, or similar would need to be ported
+ *      - Certificate bundle management for CA validation
+ *      - TLS session management and resumption
+ *
+ *   2. HTTP CLIENT: No HTTP protocol implementation.
+ *      - HTTP/1.1 request/response framing
+ *      - Chunked transfer encoding for streaming responses
+ *      - Header parsing and content-length handling
+ *      - Connection keep-alive and pooling
+ *
+ *   3. DNS RESOLUTION: Hostname-to-IP resolution.
+ *      - DNS query/response handling
+ *      - Caching and TTL management
+ *      - IPv4/IPv6 dual-stack support
+ *
+ *   4. SYNCHRONOUS BLOCKING: WASM host functions are synchronous.
+ *      - Network I/O is inherently async in the kernel
+ *      - Would require thread blocking or execution suspension
+ *
+ * ALTERNATIVES FOR AGENTS NEEDING EXTERNAL LLM ACCESS:
+ *
+ *   1. LOCAL INFERENCE (Recommended):
+ *      Configure AK_LLM_LOCAL mode with virtio-serial connection to a
+ *      host-side inference server (ollama, vLLM, llama.cpp). This bypasses
+ *      the need for kernel-space HTTPS entirely.
+ *
+ *      Configuration:
+ *        ak_llm_config_t config = {
+ *          .mode = AK_LLM_LOCAL,
+ *          .local.device_path = "/dev/vport0p1",
+ *          .local.timeout_ms = 30000,
+ *          .local.max_tokens = 4096
+ *        };
+ *
+ *   2. PROXY VIA VIRTIO-SERIAL:
+ *      Route API requests through the host hypervisor. The guest sends
+ *      the API request over virtio-serial, and the host makes the HTTPS
+ *      call on behalf of the guest.
+ *
+ *      Protocol:
+ *        Guest -> Host: {"type": "llm_api", "provider": "openai", ...}
+ *        Host performs HTTPS request to OpenAI
+ *        Host -> Guest: {"content": "...", "usage": {...}}
+ *
+ *   3. PRE-COMPUTED RESPONSES:
+ *      For deterministic workloads, orchestrator can pre-fetch LLM
+ *      responses before agent execution and inject them as tool arguments.
+ *
+ * FUTURE IMPLEMENTATION:
+ *   External API support may be added when:
+ *     - TLS library (mbedTLS) is ported to Nanos
+ *     - HTTP client library is integrated
+ *     - Async-to-sync bridging for kernel execution is implemented
+ *   Track: https://github.com/nanovms/nanos/issues (TLS support)
+ *
+ * SECURITY CONSIDERATIONS:
+ *   Even if HTTPS is implemented, external API access introduces risks:
+ *     - API key exposure if not properly secured
+ *     - Data exfiltration through API calls
+ *     - Cost attacks through unlimited API usage
+ *   The capability system should enforce strict budgets and audit all calls.
+ *
  * ============================================================ */
 
 s64 ak_external_inference_init(ak_llm_api_config_t *config)

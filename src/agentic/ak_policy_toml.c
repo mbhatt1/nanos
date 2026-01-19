@@ -287,9 +287,18 @@ static bool toml_parse_integer(ak_toml_parser_t *p, int64_t *out)
         return false;
     }
 
+    /* Parse with overflow protection (P2-5) */
     int64_t val = 0;
     while (!toml_at_end(p) && TOML_IS_DIGIT(toml_peek(p))) {
-        val = val * 10 + (toml_advance(p) - '0');
+        int64_t digit = toml_advance(p) - '0';
+        /* Check for overflow before multiplication */
+        if (val > (INT64_MAX - digit) / 10) {
+            val = INT64_MAX;  /* Saturate on overflow */
+            /* Skip remaining digits */
+            while (!toml_at_end(p) && TOML_IS_DIGIT(toml_peek(p))) toml_advance(p);
+            break;
+        }
+        val = val * 10 + digit;
     }
 
     *out = negative ? -val : val;

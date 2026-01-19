@@ -173,6 +173,54 @@ static buffer create_json_error(heap h, const char *error)
  * NETWORK HOST FUNCTIONS (AK_CAP_NET)
  * ============================================================ */
 
+/*
+ * ak_host_http_get - HTTP GET request from WASM sandbox
+ *
+ * NOT IMPLEMENTED - Returns AK_E_NOT_IMPLEMENTED
+ *
+ * WHY NOT IMPLEMENTED:
+ *   The Nanos unikernel does not include an HTTP client library suitable for
+ *   synchronous kernel-space calls. HTTP requests require:
+ *     - DNS resolution (async, may require multiple network round-trips)
+ *     - TCP connection establishment (3-way handshake)
+ *     - TLS handshake for HTTPS (computationally expensive, cert validation)
+ *     - HTTP protocol handling (chunked encoding, redirects, etc.)
+ *
+ *   These operations are inherently asynchronous and can take seconds to
+ *   complete. Blocking the WASM executor for this duration would:
+ *     - Stall other agents waiting for execution slots
+ *     - Risk timeout violations in the capability system
+ *     - Create unpredictable latency in tool execution
+ *
+ * ALTERNATIVES FOR AGENTS:
+ *   1. VIRTIO-SERIAL PROXY (Recommended):
+ *      Use ak_host_ipc_send() to request HTTP fetches from the host hypervisor.
+ *      The host-side orchestrator can perform the HTTP request asynchronously
+ *      and deliver results back via virtio-serial.
+ *
+ *      Example flow:
+ *        WASM tool -> ak_host_ipc_send({"type":"http_get","url":"..."})
+ *        Host receives request, performs HTTP GET
+ *        Host -> ak_host_ipc_recv() delivers response to WASM tool
+ *
+ *   2. PRE-FETCH PATTERN:
+ *      The orchestrator pre-fetches required data before invoking the tool,
+ *      passing the content as part of the tool's input arguments.
+ *
+ *   3. STREAMING RESPONSE:
+ *      For large responses, use ak_host_stream_* to receive data incrementally
+ *      from the host-side proxy.
+ *
+ * FUTURE IMPLEMENTATION:
+ *   This function may be implemented when Nanos adds support for:
+ *     - Asynchronous HTTP client library (e.g., libcurl port)
+ *     - Cooperative yield points allowing WASM to suspend during I/O
+ *     - HTTP connection pooling for capability-scoped connections
+ *   Track progress: https://github.com/nanovms/nanos/issues (HTTP client)
+ *
+ * Args: {"url": "https://example.com/api/data"}
+ * Returns: AK_E_NOT_IMPLEMENTED (always)
+ */
 s64 ak_host_http_get(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -197,21 +245,42 @@ s64 ak_host_http_get(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /*
-     * HTTP client functionality is not available from the WASM sandbox.
-     *
-     * HTTP requests require complex network stack integration (TCP, TLS,
-     * DNS resolution) that is not suitable for synchronous kernel-space
-     * execution. WASM tools requiring HTTP access should:
-     *
-     *   1. Use the IPC mechanism to communicate with a host-side HTTP proxy
-     *   2. Or have the orchestrator pre-fetch required data before tool invocation
-     *
-     * See docs/architecture/http-from-wasm.md for the recommended patterns.
-     */
+    /* See function header for rationale on NOT_IMPLEMENTED status */
     return AK_E_NOT_IMPLEMENTED;
 }
 
+/*
+ * ak_host_http_post - HTTP POST request from WASM sandbox
+ *
+ * NOT IMPLEMENTED - Returns AK_E_NOT_IMPLEMENTED
+ *
+ * WHY NOT IMPLEMENTED:
+ *   Same rationale as ak_host_http_get(). HTTP POST has additional complexity:
+ *     - Request body serialization and content-type handling
+ *     - Potential for large request payloads requiring memory management
+ *     - Response body parsing (JSON, form-urlencoded, etc.)
+ *
+ * ALTERNATIVES FOR AGENTS:
+ *   See ak_host_http_get() documentation for the recommended patterns:
+ *     1. VIRTIO-SERIAL PROXY - Use ak_host_ipc_send() with request body
+ *     2. PRE-FETCH PATTERN - Orchestrator handles HTTP interactions
+ *     3. STREAMING - Use ak_host_stream_* for incremental data transfer
+ *
+ *   For POST specifically, the IPC message should include the body:
+ *     ak_host_ipc_send({
+ *       "type": "http_post",
+ *       "url": "https://api.example.com/data",
+ *       "body": {"key": "value"},
+ *       "content_type": "application/json"
+ *     })
+ *
+ * FUTURE IMPLEMENTATION:
+ *   Will be implemented alongside ak_host_http_get() when Nanos adds
+ *   asynchronous HTTP client support. Same prerequisites apply.
+ *
+ * Args: {"url": "https://...", "body": "...", "content_type": "application/json"}
+ * Returns: AK_E_NOT_IMPLEMENTED (always)
+ */
 s64 ak_host_http_post(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -235,10 +304,42 @@ s64 ak_host_http_post(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* HTTP POST not implemented - see ak_host_http_get() for rationale */
+    /* See function header for rationale on NOT_IMPLEMENTED status */
     return AK_E_NOT_IMPLEMENTED;
 }
 
+/*
+ * ak_host_tcp_connect - Establish TCP connection from WASM sandbox
+ *
+ * STUB IMPLEMENTATION - Returns fake fd, does not create real connection
+ *
+ * CURRENT STATUS:
+ *   This function validates capabilities and returns a placeholder response
+ *   but does NOT establish a real TCP connection. The returned fd is not
+ *   usable for actual network I/O.
+ *
+ * WHY STUB:
+ *   TCP socket operations in Nanos require integration with the kernel's
+ *   network stack (lwIP). Current challenges:
+ *     - Socket descriptors must be tracked per-agent for capability enforcement
+ *     - Connections need timeout handling to prevent resource exhaustion
+ *     - DNS resolution for hostnames requires async operation
+ *
+ * ALTERNATIVES FOR AGENTS:
+ *   1. VIRTIO-SERIAL PROXY: Request TCP operations through host hypervisor
+ *      ak_host_ipc_send({"type":"tcp_connect","host":"...","port":8080})
+ *
+ *   2. Use ak_host_http_* alternatives (which also use IPC proxy pattern)
+ *
+ * FUTURE IMPLEMENTATION:
+ *   Will be fully implemented when:
+ *     - Per-agent socket descriptor tables are added
+ *     - Capability-aware socket wrappers are created for lwIP
+ *     - Connection pooling with timeout enforcement is implemented
+ *
+ * Args: {"host": "example.com", "port": 8080}
+ * Returns: {"fd": "1"} (stub - not a real file descriptor)
+ */
 s64 ak_host_tcp_connect(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -260,11 +361,25 @@ s64 ak_host_tcp_connect(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* TCP connect requires socket API integration */
+    /* STUB: Returns placeholder fd - see function header for implementation status */
     *result = create_json_result(ctx->agent->heap, "fd", "1", 1);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 
+/*
+ * ak_host_tcp_send - Send data over TCP connection from WASM sandbox
+ *
+ * STUB IMPLEMENTATION - Returns bytes_sent=0, does not send data
+ *
+ * CURRENT STATUS:
+ *   Validates capability but does not perform actual network I/O.
+ *   Depends on ak_host_tcp_connect() being fully implemented first.
+ *
+ * See ak_host_tcp_connect() for implementation rationale and alternatives.
+ *
+ * Args: {"fd": "1", "data": "base64-encoded-data"}
+ * Returns: {"bytes_sent": "0"} (stub)
+ */
 s64 ak_host_tcp_send(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -275,11 +390,25 @@ s64 ak_host_tcp_send(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* TCP send requires socket API integration */
+    /* STUB: Returns 0 bytes sent - see ak_host_tcp_connect() for status */
     *result = create_json_result(ctx->agent->heap, "bytes_sent", "0", 1);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 
+/*
+ * ak_host_tcp_recv - Receive data from TCP connection in WASM sandbox
+ *
+ * STUB IMPLEMENTATION - Returns empty data, does not receive
+ *
+ * CURRENT STATUS:
+ *   Validates capability but does not perform actual network I/O.
+ *   Depends on ak_host_tcp_connect() being fully implemented first.
+ *
+ * See ak_host_tcp_connect() for implementation rationale and alternatives.
+ *
+ * Args: {"fd": "1", "max_bytes": 4096}
+ * Returns: {"data": ""} (stub - always empty)
+ */
 s64 ak_host_tcp_recv(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -289,15 +418,51 @@ s64 ak_host_tcp_recv(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* TCP recv requires socket API integration */
+    /* STUB: Returns empty data - see ak_host_tcp_connect() for status */
     *result = create_json_result(ctx->agent->heap, "data", "", 0);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 
 /* ============================================================
  * FILESYSTEM HOST FUNCTIONS (AK_CAP_FS)
+ * ============================================================
+ *
+ * IMPLEMENTATION STATUS: STUB
+ *
+ * These filesystem functions validate capabilities but return placeholder
+ * data. They do NOT perform actual filesystem I/O yet.
+ *
+ * WHY STUB:
+ *   Filesystem access from the WASM sandbox requires careful integration
+ *   with Nanos VFS to ensure:
+ *     - Path canonicalization to prevent directory traversal attacks
+ *     - Capability scope enforcement (agent can only access allowed paths)
+ *     - Resource limit tracking (bytes read/written per capability)
+ *     - Proper handling of symlinks within capability boundaries
+ *
+ * ALTERNATIVES FOR AGENTS:
+ *   1. PRE-LOADED DATA: Orchestrator loads required files into tool arguments
+ *   2. VIRTIO-SERIAL PROXY: Request file operations through host hypervisor
+ *      ak_host_ipc_send({"type":"fs_read","path":"/data/config.json"})
+ *   3. SHARED MEMORY: For large files, use memory-mapped regions
+ *
+ * FUTURE IMPLEMENTATION:
+ *   Will be fully implemented when:
+ *     - Path canonicalization with symlink resolution is added
+ *     - VFS wrappers with capability checking are created
+ *     - Per-agent I/O quotas are enforced
+ *   The foundation exists in Nanos VFS (fs.h); integration is pending.
+ *
  * ============================================================ */
 
+/*
+ * ak_host_fs_read - Read file contents from WASM sandbox
+ *
+ * STUB IMPLEMENTATION - Returns empty content
+ *
+ * Args: {"path": "/path/to/file"}
+ * Returns: {"content": ""} (stub - always empty)
+ */
 s64 ak_host_fs_read(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -319,15 +484,19 @@ s64 ak_host_fs_read(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /*
-     * Filesystem read requires Nanos VFS integration.
-     * Capability already validated for the path.
-     */
-
+    /* STUB: Returns empty content - see section header for implementation status */
     *result = create_json_result(ctx->agent->heap, "content", "", 0);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 
+/*
+ * ak_host_fs_write - Write file contents from WASM sandbox
+ *
+ * STUB IMPLEMENTATION - Returns bytes_written=0, does not write
+ *
+ * Args: {"path": "/path/to/file", "content": "data to write"}
+ * Returns: {"bytes_written": "0"} (stub)
+ */
 s64 ak_host_fs_write(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -349,12 +518,24 @@ s64 ak_host_fs_write(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* Filesystem write requires Nanos VFS integration */
-
+    /* STUB: Returns 0 bytes written - see section header for implementation status */
     *result = create_json_result(ctx->agent->heap, "bytes_written", "0", 1);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 
+/*
+ * ak_host_fs_stat - Get file metadata from WASM sandbox
+ *
+ * IMPLEMENTED using Nanos VFS (when KERNEL defined)
+ *
+ * This function IS fully implemented because fsfile_open() and fsfile_get_length()
+ * are synchronous operations that don't require async I/O completion.
+ *
+ * Args: {"path": "/path/to/file"}
+ * Returns: {"size": 12345, "exists": true} on success
+ *          {"exists": false} if file not found
+ *          {"error": "..."} on error
+ */
 s64 ak_host_fs_stat(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -376,11 +557,79 @@ s64 ak_host_fs_stat(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* File stat requires Nanos VFS integration */
+#ifdef KERNEL
+    /*
+     * Open the file to get metadata.
+     *
+     * fsfile_open() is synchronous and safe to call from WASM context.
+     * We open, read metadata, then immediately release the handle.
+     */
+    sstring path_ss = isstring(path_buf, path_len);
+    fsfile f = fsfile_open(path_ss);
+    if (!f) {
+        /* File not found - return exists: false */
+        buffer res = allocate_buffer(ctx->agent->heap, 32);
+        if (res == INVALID_ADDRESS)
+            return AK_E_WASM_OOM;
+        buffer_write(res, "{\"exists\": false}", 17);
+        *result = res;
+        return 0;
+    }
+
+    /* Get file size - synchronous operation */
+    u64 file_size = fsfile_get_length(f);
+
+    /* Release file handle */
+    fsfile_release(f);
+
+    /* Build result JSON with file metadata */
+    buffer res = allocate_buffer(ctx->agent->heap, 128);
+    if (res == INVALID_ADDRESS)
+        return AK_E_WASM_OOM;
+
+    buffer_write(res, "{\"size\": ", 9);
+
+    /* Write file size as number */
+    char num_buf[32];
+    int num_len = 0;
+    u64 v = file_size;
+    if (v == 0) {
+        num_buf[num_len++] = '0';
+    } else {
+        char temp[32];
+        int temp_len = 0;
+        while (v > 0) {
+            temp[temp_len++] = '0' + (v % 10);
+            v /= 10;
+        }
+        for (int i = temp_len - 1; i >= 0; i--) {
+            num_buf[num_len++] = temp[i];
+        }
+    }
+    buffer_write(res, num_buf, num_len);
+    buffer_write(res, ", \"exists\": true}", 17);
+
+    *result = res;
+    return 0;
+
+#else
+    /*
+     * Non-kernel build: VFS not available.
+     * Return stub response for testing.
+     */
     *result = create_json_result(ctx->agent->heap, "size", "0", 1);
     return (*result) ? 0 : AK_E_WASM_OOM;
+#endif
 }
 
+/*
+ * ak_host_fs_list - List directory contents from WASM sandbox
+ *
+ * STUB IMPLEMENTATION - Returns empty entries array
+ *
+ * Args: {"path": "/path/to/directory"}
+ * Returns: {"entries": "[]"} (stub - real impl would list filenames)
+ */
 s64 ak_host_fs_list(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
@@ -402,7 +651,7 @@ s64 ak_host_fs_list(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* Directory listing requires Nanos VFS integration */
+    /* STUB: Returns empty array - see section header for implementation status */
     *result = create_json_result(ctx->agent->heap, "entries", "[]", 2);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
@@ -737,11 +986,16 @@ static s64 parse_json_integer(buffer args, const char *key)
     if (!val || val_len == 0)
         return -1;
 
-    /* Simple integer parsing */
+    /* Simple integer parsing with overflow protection (P2-5) */
     s64 result = 0;
     for (u64 i = 0; i < val_len; i++) {
         if (val[i] >= '0' && val[i] <= '9') {
-            result = result * 10 + (val[i] - '0');
+            s64 digit = val[i] - '0';
+            /* Check for overflow before multiplication */
+            if (result > (INT64_MAX - digit) / 10) {
+                return INT64_MAX;  /* Saturate on overflow */
+            }
+            result = result * 10 + digit;
         } else {
             break;
         }

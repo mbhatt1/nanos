@@ -315,6 +315,103 @@ static const u8 *parse_string_array(const u8 *p, const u8 *end,
 }
 
 /* ============================================================
+ * JSON SCHEMA VALIDATION (P2-2)
+ * ============================================================
+ * Validates policy JSON structure:
+ *   - Version field must be supported (currently "1.0")
+ *   - Unknown keys are safely skipped (already handled by parser)
+ *   - Required structural constraints are checked post-parse
+ */
+
+#define AK_POLICY_SUPPORTED_VERSION_MAJOR  1
+#define AK_POLICY_SUPPORTED_VERSION_MINOR  0
+
+/*
+ * Validate policy version string.
+ * Returns true if version is supported, false otherwise.
+ * Supported format: "MAJOR.MINOR" (e.g., "1.0")
+ */
+static boolean validate_policy_version(const char *version)
+{
+    if (!version || version[0] == '\0')
+        return true;  /* No version = accept (for backward compatibility) */
+
+    /* Parse major version */
+    int major = 0;
+    int minor = 0;
+    const char *p = version;
+
+    while (*p >= '0' && *p <= '9') {
+        major = major * 10 + (*p - '0');
+        p++;
+    }
+
+    if (*p != '.')
+        return false;  /* Invalid format */
+    p++;
+
+    while (*p >= '0' && *p <= '9') {
+        minor = minor * 10 + (*p - '0');
+        p++;
+    }
+
+    if (*p != '\0')
+        return false;  /* Trailing characters */
+
+    /* Check compatibility: major must match, minor can be <= supported */
+    if (major != AK_POLICY_SUPPORTED_VERSION_MAJOR)
+        return false;
+
+    if (minor > AK_POLICY_SUPPORTED_VERSION_MINOR)
+        return false;
+
+    return true;
+}
+
+/*
+ * Post-parse validation of policy structure.
+ * Called after JSON parsing to verify semantic constraints.
+ */
+static boolean validate_policy_schema(ak_policy_v2_t *policy)
+{
+    if (!policy)
+        return false;
+
+    /* Validate version if specified */
+    if (policy->version[0] != '\0') {
+        if (!validate_policy_version(policy->version)) {
+            rprintf("[AK] Policy version '%s' not supported (expected %d.%d or earlier)\n",
+                    policy->version,
+                    AK_POLICY_SUPPORTED_VERSION_MAJOR,
+                    AK_POLICY_SUPPORTED_VERSION_MINOR);
+            return false;
+        }
+    }
+
+    /* Validate budget constraints (must be reasonable) */
+    if (policy->budgets.tool_calls > 1000000) {
+        rprintf("[AK] Warning: tool_calls budget %llu exceeds recommended maximum\n",
+                (unsigned long long)policy->budgets.tool_calls);
+        /* Non-fatal: just warn */
+    }
+
+    if (policy->budgets.tokens > 100000000) {
+        rprintf("[AK] Warning: tokens budget %llu exceeds recommended maximum\n",
+                (unsigned long long)policy->budgets.tokens);
+        /* Non-fatal: just warn */
+    }
+
+    /* Validate profile count */
+    if (policy->profile_count > AK_POLICY_V2_MAX_PROFILES) {
+        rprintf("[AK] Too many profiles (%u > %u)\n",
+                policy->profile_count, AK_POLICY_V2_MAX_PROFILES);
+        return false;
+    }
+
+    return true;
+}
+
+/* ============================================================
  * RULE ADDITION HELPERS
  * ============================================================ */
 
@@ -960,6 +1057,12 @@ ak_policy_v2_t *ak_policy_v2_load(heap h, const u8 *json, u64 len)
 
     /* Parse JSON */
     if (!parse_json_policy(policy, json, len)) {
+        ak_policy_v2_destroy(policy);
+        return NULL;
+    }
+
+    /* Validate schema (P2-2: version and structural constraints) */
+    if (!validate_policy_schema(policy)) {
         ak_policy_v2_destroy(policy);
         return NULL;
     }

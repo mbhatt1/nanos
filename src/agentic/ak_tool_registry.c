@@ -220,10 +220,17 @@ int ak_version_parse(const char *version, u32 *major, u32 *minor, u32 *patch)
     if (*version == 'v' || *version == 'V')
         version++;
 
-    /* Parse major */
+    /* Parse major with overflow protection (P2-5) */
     u32 val = 0;
     while (local_isdigit(*version)) {
-        val = val * 10 + (*version - '0');
+        u32 digit = *version - '0';
+        /* Check for overflow before multiplication */
+        if (val > (UINT32_MAX - digit) / 10) {
+            val = UINT32_MAX;  /* Saturate on overflow */
+            while (local_isdigit(*version)) version++;  /* Skip remaining */
+            break;
+        }
+        val = val * 10 + digit;
         version++;
     }
     if (major) *major = val;
@@ -233,10 +240,16 @@ int ak_version_parse(const char *version, u32 *major, u32 *minor, u32 *patch)
         return 0;  /* Only major version */
     version++;
 
-    /* Parse minor */
+    /* Parse minor with overflow protection (P2-5) */
     val = 0;
     while (local_isdigit(*version)) {
-        val = val * 10 + (*version - '0');
+        u32 digit = *version - '0';
+        if (val > (UINT32_MAX - digit) / 10) {
+            val = UINT32_MAX;
+            while (local_isdigit(*version)) version++;
+            break;
+        }
+        val = val * 10 + digit;
         version++;
     }
     if (minor) *minor = val;
@@ -246,10 +259,16 @@ int ak_version_parse(const char *version, u32 *major, u32 *minor, u32 *patch)
         return 0;  /* Major.minor only */
     version++;
 
-    /* Parse patch */
+    /* Parse patch with overflow protection (P2-5) */
     val = 0;
     while (local_isdigit(*version)) {
-        val = val * 10 + (*version - '0');
+        u32 digit = *version - '0';
+        if (val > (UINT32_MAX - digit) / 10) {
+            val = UINT32_MAX;
+            while (local_isdigit(*version)) version++;
+            break;
+        }
+        val = val * 10 + digit;
         version++;
     }
     if (patch) *patch = val;

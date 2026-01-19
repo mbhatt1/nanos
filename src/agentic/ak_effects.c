@@ -1787,34 +1787,3 @@ void ak_effects_get_stats(ak_effects_stats_t *stats)
         return;
     runtime_memcpy(stats, &global_stats, sizeof(global_stats));
 }
-
-/* ============================================================
- * WEAK STUB FOR POLICY V2 CHECK
- * ============================================================
- * This is a stub that Agent B will override with real implementation.
- * Default behavior: deny everything.
- */
-
-__attribute__((weak))
-boolean ak_policy_v2_check(struct ak_policy_v2 *p,
-                           const ak_effect_req_t *req,
-                           ak_decision_t *decision_out)
-{
-    (void)p;
-
-    if (!decision_out)
-        return false;
-
-    /* Default deny with helpful info */
-    decision_out->allow = false;
-    decision_out->reason_code = AK_DENY_NO_CAP;
-    decision_out->errno_equiv = EPERM;
-    runtime_strncpy(decision_out->missing_cap, "policy.stub", AK_MAX_CAPSTR);
-    runtime_strncpy(decision_out->detail,
-                    "Using stub policy checker - always denies", AK_MAX_DETAIL);
-
-    /* Generate suggestion based on effect type */
-    ak_generate_suggestion(req, decision_out->suggested_snippet, AK_MAX_SUGGEST);
-
-    return false;
-}

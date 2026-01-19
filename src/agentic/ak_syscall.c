@@ -1453,6 +1453,11 @@ ak_response_t *ak_handle_spawn(ak_agent_context_t *ctx, ak_request_t *req)
     /* Register in agent registry */
     s64 slot = ak_agent_registry_add(child);
     if (slot < 0) {
+        /* BUG-A9-008 FIX: Clean up budget and seq_tracker before deallocating context */
+        if (child->budget)
+            ak_budget_destroy(ctx->heap, child->budget);
+        if (child->seq_tracker)
+            ak_seq_tracker_destroy(ctx->heap, child->seq_tracker);
         deallocate(ctx->heap, child, sizeof(ak_agent_context_t));
         return ak_response_error(ctx->heap, req, AK_E_BUDGET_EXCEEDED);
     }

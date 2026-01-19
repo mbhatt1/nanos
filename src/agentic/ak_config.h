@@ -161,7 +161,7 @@
 
 /* Enable WASM sandbox for tool execution */
 #ifndef AK_ENABLE_WASM
-#define AK_ENABLE_WASM                  0       /* Requires WASM runtime */
+#define AK_ENABLE_WASM                  1       /* Enabled by default for secure tool execution */
 #endif
 
 /* Enable remote anchor posting */
