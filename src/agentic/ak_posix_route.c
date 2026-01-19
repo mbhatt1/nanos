@@ -218,7 +218,7 @@ int ak_resolve_path_at(int dirfd, const char *path, char *out, u32 out_len)
  * Returns:
  *   0 on success (address retrieved)
  *   -EINVAL if addr or addrlen is NULL, or buffer too small
- *   -ENOENT if bound address cannot be determined (current stub behavior)
+ *   -ENOENT if bound address cannot be determined (see DESIGN DECISION below)
  *   -EBADF if fd is invalid (when full integration available)
  *   -EOPNOTSUPP if socket doesn't support getsockname (when full integration)
  */
