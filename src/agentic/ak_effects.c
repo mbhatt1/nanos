@@ -26,6 +26,9 @@ extern boolean ak_policy_v2_check(struct ak_policy_v2 *p,
                                    const ak_effect_req_t *req,
                                    ak_decision_t *decision_out);
 
+/* Forward declaration for socket address lookup (implemented in ak_posix_route.c) */
+extern int ak_get_socket_bound_addr(int fd, struct sockaddr *addr, socklen_t *addrlen);
+
 /* Forward declarations for helper functions */
 static int ak_format_u8(char *buf, u8 val);
 static int ak_format_u16(char *buf, u16 val);
@@ -839,9 +842,21 @@ int ak_effect_from_listen(ak_effect_req_t *req, ak_ctx_t *ctx,
 
     ak_effect_req_init(req, ctx, AK_E_NET_LISTEN);
 
-    /* Target would be socket address - but we need fd resolution */
-    /* For now, use placeholder */
-    runtime_strncpy(req->target, "ip:0.0.0.0:0", AK_MAX_TARGET);
+    /* Look up the socket's bound address from the FD */
+    u8 addr_buf[64];
+    socklen_t addrlen = sizeof(addr_buf);
+    struct sockaddr *addr = (struct sockaddr *)addr_buf;
+
+    int err = ak_get_socket_bound_addr(fd, addr, &addrlen);
+    if (err == 0) {
+        /* Successfully retrieved bound address - canonicalize it */
+        err = ak_canonicalize_sockaddr(addr, addrlen, req->target, AK_MAX_TARGET);
+    }
+
+    if (err != 0) {
+        /* FD not found or not a socket - use wildcard for unbound sockets */
+        runtime_strncpy(req->target, "ip:*:*", AK_MAX_TARGET);
+    }
 
     char *p = (char *)req->params;
     int len = 0;

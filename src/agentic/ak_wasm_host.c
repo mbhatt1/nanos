@@ -190,18 +190,18 @@ s64 ak_host_http_get(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
         return cap_result;
 
     /*
-     * HTTP GET implementation requires network stack integration.
-     * In production, this would:
-     *   1. Parse URL (host, port, path)
-     *   2. Establish TCP/TLS connection
-     *   3. Send HTTP request
-     *   4. Read and parse response
+     * HTTP client functionality is not available from the WASM sandbox.
      *
-     * Returns capability-validated placeholder for now.
+     * HTTP requests require complex network stack integration (TCP, TLS,
+     * DNS resolution) that is not suitable for synchronous kernel-space
+     * execution. WASM tools requiring HTTP access should:
+     *
+     *   1. Use the IPC mechanism to communicate with a host-side HTTP proxy
+     *   2. Or have the orchestrator pre-fetch required data before tool invocation
+     *
+     * See docs/architecture/http-from-wasm.md for the recommended patterns.
      */
-
-    *result = create_json_result(ctx->agent->heap, "status", "200", 3);
-    return (*result) ? 0 : AK_E_WASM_OOM;
+    return AK_E_NOT_IMPLEMENTED;
 }
 
 s64 ak_host_http_post(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
@@ -227,10 +227,8 @@ s64 ak_host_http_post(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* HTTP POST requires network stack integration (see ak_host_http_get) */
-
-    *result = create_json_result(ctx->agent->heap, "status", "200", 3);
-    return (*result) ? 0 : AK_E_WASM_OOM;
+    /* HTTP POST not implemented - see ak_host_http_get() for rationale */
+    return AK_E_NOT_IMPLEMENTED;
 }
 
 s64 ak_host_tcp_connect(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)

@@ -107,6 +107,7 @@
 #define AK_E_TOOL_NOT_FOUND     (-4403)
 #define AK_E_LOG_FULL           (-4404)
 #define AK_E_LOG_CORRUPT        (-4405)
+#define AK_E_NOT_IMPLEMENTED    (-4406)  /* Feature not implemented */
 
 /* IPC errors (4500-4599) */
 #define AK_E_IPC_INVALID        (-4500)  /* Invalid IPC frame */
