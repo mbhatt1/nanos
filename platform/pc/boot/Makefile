@@ -39,7 +39,15 @@ CFLAGS+= \
 	-I$(SRCDIR)/runtime \
 	-I$(SRCDIR)/kernel \
 	-I$(SRCDIR)/x86_64
+
+# Linux linker flags with GNU-specific options
+ifeq ($(UNAME_s),Darwin)
+# macOS linker doesn't support -z, --gc-sections, -nostdlib, etc.
+LDFLAGS+=	-T linker_script
+else
+# Linux linker supports GNU flags
 LDFLAGS+=	-z noexecstack --gc-sections -T linker_script
+endif
 AFLAGS+=	-I$(SRCDIR)/x86_64 -felf
 
 NASMFLAGS	= -l $@.lst -I $(SRCDIR)/x86_64/ -dSTAGE2SIZE=$(shell $(SIZE_CMD) $(OBJDIR)/stage2.pad)
@@ -95,7 +103,15 @@ CFLAGS-uefi= \
 	-I$(SRCDIR) -I$(SRCDIR)/boot -I$(SRCDIR)/kernel -I$(SRCDIR)/runtime \
 	-I$(SRCDIR)/fs -I$(SRCDIR)/x86_64 -I$(OBJDIR) \
 	-DBOOT -DUEFI -DEFIAPI="__attribute__((ms_abi))"
+
+# UEFI linker flags: macOS and Linux need different options
+ifeq ($(UNAME_s),Darwin)
+# macOS linker doesn't support -z, -nostdlib, -shared, -Bsymbolic
+LDLAGS-uefi= -T $(SRCDIR)/x86_64/uefi.lds
+else
+# Linux linker supports GNU flags
 LDLAGS-uefi= -z noexecstack -nostdlib -shared -Bsymbolic -T $(SRCDIR)/x86_64/uefi.lds
+endif
 
 DEPFILES+= $(DEPS-uefi)
 
