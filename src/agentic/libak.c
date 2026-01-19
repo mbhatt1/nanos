@@ -2,11 +2,13 @@
  * libak - The Authority Kernel C Library Implementation
  */
 
-#include "libak.h"
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/syscall.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include "libak.h"
 
 /* ============================================================================
    SYSCALL WRAPPER

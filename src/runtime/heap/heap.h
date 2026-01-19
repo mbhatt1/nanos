@@ -66,9 +66,8 @@ backed_heap reserve_backed_heap_wrapper(heap meta, backed_heap parent, bytes res
 
 static inline void *page_of(void *x, bytes pagesize)
 {
-    /* Use uintptr_t for portable pointer-to-integer conversions */
-    return((void *)((uintptr_t)x &
-                    (~((uintptr_t)pagesize-1))));
+    return((void *)((u64)x &
+                    (~((u64)pagesize-1))));
 }
 
 static inline int subdivide(int quantum, int per, int s, int o)
