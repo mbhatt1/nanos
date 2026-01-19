@@ -2,6 +2,8 @@ include ../vars.mk
 
 override ARCH=$(HOST_ARCH)
 override CROSS_COMPILE=
+# Always use native compiler for build tools, not cross-compiler
+override CC=gcc
 ifeq ($(shell uname -s),Darwin)
 override CC=cc
 endif
