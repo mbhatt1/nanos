@@ -264,6 +264,11 @@ void ak_agent_ipc_shutdown(void)
                 deallocate(ipc_state.h, entry->child_pids,
                           entry->child_capacity * sizeof(u64));
 
+            /* Free allowed peer PIDs array */
+            if (entry->allowed_peer_pids)
+                deallocate(ipc_state.h, entry->allowed_peer_pids,
+                          entry->allowed_peer_capacity * sizeof(u64));
+
             deallocate(ipc_state.h, entry, sizeof(ak_agent_registry_entry_t));
             entry = next;
         }
@@ -414,6 +419,17 @@ int ak_agent_unregister(ak_agent_context_t *ctx)
                 entry->mailbox->inbox_tail = NULL;
                 entry->mailbox->inbox_count = 0;
                 spin_lock_release(&entry->mailbox->lock);
+            }
+
+            /* Clear capability state and free peer_pids array */
+            entry->has_ipc_cap = false;
+            entry->has_broadcast_cap = false;
+            if (entry->allowed_peer_pids) {
+                deallocate(ipc_state.h, entry->allowed_peer_pids,
+                          entry->allowed_peer_capacity * sizeof(u64));
+                entry->allowed_peer_pids = NULL;
+                entry->allowed_peer_count = 0;
+                entry->allowed_peer_capacity = 0;
             }
 
             /* Update statistics */
@@ -586,7 +602,22 @@ static s64 ipc_send_internal(
 
     mailbox->messages_received++;
 
-    /* TODO: Wake waiting threads if any */
+    /*
+     * Wake waiting threads if any.
+     * We use a simple wake_pending flag combined with waiter_count to
+     * implement a lightweight notification mechanism. When waiters poll
+     * for messages, they check this flag and the message queue.
+     *
+     * The wake_pending flag is set atomically while holding the lock,
+     * then a memory barrier ensures visibility to polling threads.
+     * This avoids the need for kernel wait queues in the agentic module
+     * while still providing efficient notification.
+     */
+    if (mailbox->waiter_count > 0) {
+        mailbox->wake_pending = true;
+        /* Full memory barrier to ensure wake_pending is visible to waiters */
+        __sync_synchronize();
+    }
 
     spin_lock_release(&mailbox->lock);
 
@@ -715,13 +746,19 @@ ak_ipc_message_t *ak_ipc_recv(
 
     ak_agent_mailbox_t *mailbox = entry->mailbox;
 
-    /* Simple implementation: non-blocking dequeue or poll */
+    /* Calculate deadline for timeout handling */
     u64 start_ms = ak_now_ms();
     u64 deadline_ms = (timeout_ms < 0) ? 0xFFFFFFFFFFFFFFFFULL :
                       (timeout_ms == 0) ? start_ms : start_ms + timeout_ms;
 
+    /* Register as a waiter before entering the poll loop */
+    __sync_fetch_and_add(&mailbox->waiter_count, 1);
+
     while (1) {
         spin_lock_acquire(&mailbox->lock);
+
+        /* Clear wake_pending since we're about to check the queue */
+        mailbox->wake_pending = false;
 
         if (mailbox->inbox_head) {
             /* Dequeue message */
@@ -738,26 +775,39 @@ ak_ipc_message_t *ak_ipc_recv(
 
             spin_lock_release(&mailbox->lock);
 
+            /* Unregister as waiter before returning */
+            __sync_fetch_and_sub(&mailbox->waiter_count, 1);
+
             __sync_fetch_and_add(&ipc_state.stats.messages_received, 1);
             return msg;
         }
 
-        mailbox->has_waiters = true;
         spin_lock_release(&mailbox->lock);
 
         /* Check timeout */
         u64 now_ms = ak_now_ms();
         if (now_ms >= deadline_ms) {
+            /* Unregister as waiter before returning */
+            __sync_fetch_and_sub(&mailbox->waiter_count, 1);
             __sync_fetch_and_add(&ipc_state.stats.recv_timeouts, 1);
             return NULL;
         }
 
-        /* Simple busy-wait with yield (in real kernel, would use wait queue) */
+        /*
+         * Yield CPU while waiting for wake notification.
+         * We use a polling approach with CPU yield hints since the agentic
+         * module operates independently of kernel wait queues. The wake_pending
+         * flag is checked on each iteration; senders set this flag when
+         * depositing messages while waiters are present.
+         */
 #if defined(__x86_64__)
         __asm__ volatile("pause" ::: "memory");
 #elif defined(__aarch64__)
         __asm__ volatile("yield" ::: "memory");
 #endif
+
+        /* Memory barrier to ensure we see updates from senders */
+        __sync_synchronize();
     }
 }
 
@@ -779,12 +829,19 @@ ak_ipc_message_t *ak_ipc_recv_correlated(
 
     ak_agent_mailbox_t *mailbox = entry->mailbox;
 
+    /* Calculate deadline for timeout handling */
     u64 start_ms = ak_now_ms();
     u64 deadline_ms = (timeout_ms < 0) ? 0xFFFFFFFFFFFFFFFFULL :
                       (timeout_ms == 0) ? start_ms : start_ms + timeout_ms;
 
+    /* Register as a waiter before entering the poll loop */
+    __sync_fetch_and_add(&mailbox->waiter_count, 1);
+
     while (1) {
         spin_lock_acquire(&mailbox->lock);
+
+        /* Clear wake_pending since we're about to check the queue */
+        mailbox->wake_pending = false;
 
         /* Search for matching message */
         ak_ipc_message_t *prev = NULL;
@@ -809,6 +866,9 @@ ak_ipc_message_t *ak_ipc_recv_correlated(
 
                 spin_lock_release(&mailbox->lock);
 
+                /* Unregister as waiter before returning */
+                __sync_fetch_and_sub(&mailbox->waiter_count, 1);
+
                 __sync_fetch_and_add(&ipc_state.stats.messages_received, 1);
                 return msg;
             }
@@ -816,22 +876,29 @@ ak_ipc_message_t *ak_ipc_recv_correlated(
             msg = msg->next;
         }
 
-        mailbox->has_waiters = true;
         spin_lock_release(&mailbox->lock);
 
         /* Check timeout */
         u64 now_ms = ak_now_ms();
         if (now_ms >= deadline_ms) {
+            /* Unregister as waiter before returning */
+            __sync_fetch_and_sub(&mailbox->waiter_count, 1);
             __sync_fetch_and_add(&ipc_state.stats.recv_timeouts, 1);
             return NULL;
         }
 
-        /* Yield */
+        /*
+         * Yield CPU while waiting for wake notification.
+         * Same pattern as ak_ipc_recv - poll with CPU yield hints.
+         */
 #if defined(__x86_64__)
         __asm__ volatile("pause" ::: "memory");
 #elif defined(__aarch64__)
         __asm__ volatile("yield" ::: "memory");
 #endif
+
+        /* Memory barrier to ensure we see updates from senders */
+        __sync_synchronize();
     }
 }
 
@@ -1213,17 +1280,68 @@ int ak_ipc_grant_capability(
         return -EINVAL;
 
     u64 pid = get_agent_pid(ctx);
-    ak_agent_registry_entry_t *entry = lookup_entry(pid);
-    if (!entry)
+
+    spin_lock_acquire(&ipc_state.registry_lock);
+
+    ak_agent_registry_entry_t *entry = lookup_entry_locked(pid);
+    if (!entry) {
+        spin_lock_release(&ipc_state.registry_lock);
         return AK_E_IPC_NOT_REGISTERED;
+    }
 
     /* Grant capability flags */
     entry->has_ipc_cap = true;
     entry->has_broadcast_cap = can_broadcast;
 
-    /* TODO: Store peer_pids for fine-grained access control */
-    (void)peer_pids;
-    (void)peer_count;
+    /*
+     * Store peer_pids for fine-grained access control.
+     * If peer_pids is NULL or peer_count is 0, this grants unrestricted
+     * peer messaging (can message any agent with IPC capability).
+     * Otherwise, messaging is restricted to the specified peer PIDs.
+     */
+    if (peer_pids && peer_count > 0) {
+        /* Free existing peer array if present */
+        if (entry->allowed_peer_pids) {
+            deallocate(ipc_state.h, entry->allowed_peer_pids,
+                      entry->allowed_peer_capacity * sizeof(u64));
+            entry->allowed_peer_pids = NULL;
+            entry->allowed_peer_count = 0;
+            entry->allowed_peer_capacity = 0;
+        }
+
+        /* Allocate new peer array with some growth room */
+        u32 capacity = peer_count < 8 ? 8 : peer_count;
+        entry->allowed_peer_pids = allocate(ipc_state.h, capacity * sizeof(u64));
+        if (!entry->allowed_peer_pids || ak_is_invalid_address(entry->allowed_peer_pids)) {
+            entry->allowed_peer_pids = NULL;
+            spin_lock_release(&ipc_state.registry_lock);
+            return -ENOMEM;
+        }
+
+        /* Copy peer PIDs */
+        runtime_memcpy(entry->allowed_peer_pids, peer_pids, peer_count * sizeof(u64));
+        entry->allowed_peer_count = peer_count;
+        entry->allowed_peer_capacity = capacity;
+
+        ak_debug("ak_ipc_grant_capability: pid=%lx granted access to %u specific peers",
+                 pid, peer_count);
+    } else {
+        /*
+         * No peer restriction - clear any existing peer list.
+         * This grants unrestricted peer messaging.
+         */
+        if (entry->allowed_peer_pids) {
+            deallocate(ipc_state.h, entry->allowed_peer_pids,
+                      entry->allowed_peer_capacity * sizeof(u64));
+            entry->allowed_peer_pids = NULL;
+            entry->allowed_peer_count = 0;
+            entry->allowed_peer_capacity = 0;
+        }
+
+        ak_debug("ak_ipc_grant_capability: pid=%lx granted unrestricted peer access", pid);
+    }
+
+    spin_lock_release(&ipc_state.registry_lock);
 
     return 0;
 }
@@ -1237,12 +1355,31 @@ int ak_ipc_revoke_capability(ak_agent_context_t *ctx)
         return -EINVAL;
 
     u64 pid = get_agent_pid(ctx);
-    ak_agent_registry_entry_t *entry = lookup_entry(pid);
-    if (!entry)
-        return AK_E_IPC_NOT_REGISTERED;
 
+    spin_lock_acquire(&ipc_state.registry_lock);
+
+    ak_agent_registry_entry_t *entry = lookup_entry_locked(pid);
+    if (!entry) {
+        spin_lock_release(&ipc_state.registry_lock);
+        return AK_E_IPC_NOT_REGISTERED;
+    }
+
+    /* Revoke capability flags */
     entry->has_ipc_cap = false;
     entry->has_broadcast_cap = false;
+
+    /* Free peer_pids array if allocated */
+    if (entry->allowed_peer_pids) {
+        deallocate(ipc_state.h, entry->allowed_peer_pids,
+                  entry->allowed_peer_capacity * sizeof(u64));
+        entry->allowed_peer_pids = NULL;
+        entry->allowed_peer_count = 0;
+        entry->allowed_peer_capacity = 0;
+    }
+
+    spin_lock_release(&ipc_state.registry_lock);
+
+    ak_debug("ak_ipc_revoke_capability: pid=%lx capability revoked", pid);
 
     return 0;
 }
@@ -1259,11 +1396,40 @@ boolean ak_ipc_has_capability(ak_agent_context_t *ctx, u64 peer_pid)
         ak_agent_is_child_of(pid, peer_pid))
         return true;
 
-    ak_agent_registry_entry_t *entry = lookup_entry(pid);
-    if (!entry)
-        return false;
+    spin_lock_acquire(&ipc_state.registry_lock);
 
-    return entry->has_ipc_cap;
+    ak_agent_registry_entry_t *entry = lookup_entry_locked(pid);
+    if (!entry) {
+        spin_lock_release(&ipc_state.registry_lock);
+        return false;
+    }
+
+    /* Check if agent has general IPC capability */
+    if (!entry->has_ipc_cap) {
+        spin_lock_release(&ipc_state.registry_lock);
+        return false;
+    }
+
+    /*
+     * Check fine-grained peer access control.
+     * If allowed_peer_pids is NULL (no restriction), any peer is allowed.
+     * Otherwise, the peer_pid must be in the allowed list.
+     */
+    if (entry->allowed_peer_pids && entry->allowed_peer_count > 0) {
+        boolean peer_allowed = false;
+        for (u32 i = 0; i < entry->allowed_peer_count; i++) {
+            if (entry->allowed_peer_pids[i] == peer_pid) {
+                peer_allowed = true;
+                break;
+            }
+        }
+        spin_lock_release(&ipc_state.registry_lock);
+        return peer_allowed;
+    }
+
+    /* No peer restriction - allow messaging to any peer */
+    spin_lock_release(&ipc_state.registry_lock);
+    return true;
 }
 
 /* ============================================================

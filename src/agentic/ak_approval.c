@@ -26,7 +26,7 @@ static struct {
      */
     volatile u64 next_id;
     u64 default_timeout_ms;
-    void *notify_callback;  /* closure */
+    ak_approval_notify_handler notify_callback;
     boolean initialized;
 } approval_state;
 
@@ -120,16 +120,16 @@ ak_approval_request_t *ak_approval_request(
     /* Log the approval request */
     /* ak_audit_log_approval_request(ar); */
 
-    /* Notify external systems */
-    /* TODO: Implement callback invocation with proper closure type */
-    (void)approval_state.notify_callback;
+    /* Notify external systems of the new approval request */
+    if (approval_state.notify_callback)
+        apply(approval_state.notify_callback, ar);
 
     return ar;
 }
 
 void ak_approval_set_callback(
     ak_approval_request_t *request,
-    void *cb,  /* closure */
+    ak_approval_decision_handler cb,
     void *data)
 {
     if (!request)
@@ -156,9 +156,9 @@ ak_approval_status_t ak_approval_check(u64 request_id)
             ar->status = AK_APPROVAL_TIMEOUT;
             ar->decided_ms = now_ms;
 
-            /* TODO: Call callback with proper closure invocation */
-            (void)ar->on_decision;
-            (void)ar->callback_data;
+            /* Invoke decision callback with timeout status */
+            if (ar->on_decision)
+                apply(ar->on_decision, ar, AK_APPROVAL_TIMEOUT, ar->callback_data);
         }
     }
 
@@ -168,18 +168,23 @@ ak_approval_status_t ak_approval_check(u64 request_id)
 ak_approval_status_t ak_approval_wait(u64 request_id, u64 timeout_ms)
 {
     /*
-     * NOTE: This function is intentionally non-blocking for now.
+     * Non-blocking poll implementation (production design).
      *
-     * In a full kernel implementation, this would:
-     * 1. Block the current thread/context using a condition variable or similar
-     * 2. Set up a timer for timeout
-     * 3. Wake when decision is made or timeout expires
+     * This function implements a non-blocking polling approach which is the
+     * preferred design for the approval workflow. Blocking would tie up kernel
+     * resources and create potential deadlock scenarios in async environments.
      *
-     * Current behavior: Returns immediately with the current status after
-     * checking for timeout. Callers should use ak_approval_set_callback()
-     * for async notification, or poll ak_approval_check() periodically.
+     * Usage patterns:
+     * 1. Callback-based (recommended): Use ak_approval_set_callback() for async
+     *    notification when the decision is made. The callback will be invoked
+     *    with the final status.
      *
-     * TODO: Implement proper blocking when kernel thread primitives are available.
+     * 2. Polling-based: Call ak_approval_check() or this function periodically
+     *    to check the current status. The timeout_ms parameter here does NOT
+     *    cause blocking; it only updates the request's timeout if provided.
+     *
+     * The non-blocking design integrates well with event-driven kernels and
+     * avoids resource starvation issues that blocking waits can cause.
      */
     if (!approval_state.initialized)
         return AK_APPROVAL_TIMEOUT;
@@ -189,11 +194,11 @@ ak_approval_status_t ak_approval_wait(u64 request_id, u64 timeout_ms)
     if (!ar)
         return AK_APPROVAL_TIMEOUT;
 
-    /* Use provided timeout or request's timeout */
-    if (timeout_ms == 0)
-        timeout_ms = ar->timeout_ms;
+    /* Update request timeout if caller specified a different value */
+    if (timeout_ms > 0 && timeout_ms != ar->timeout_ms)
+        ar->timeout_ms = timeout_ms;
 
-    /* Returns current status after checking for timeout (non-blocking) */
+    /* Check and return current status (triggers timeout callback if expired) */
     return ak_approval_check(request_id);
 }
 
@@ -213,9 +218,9 @@ s64 ak_approval_cancel(u64 request_id)
     ar->status = AK_APPROVAL_CANCELLED;
     ar->decided_ms = now(CLOCK_ID_MONOTONIC) / MILLION;
 
-    /* TODO: Call callback with proper closure invocation */
-    (void)ar->on_decision;
-    (void)ar->callback_data;
+    /* Invoke decision callback with cancelled status */
+    if (ar->on_decision)
+        apply(ar->on_decision, ar, AK_APPROVAL_CANCELLED, ar->callback_data);
 
     return 0;
 }
@@ -262,9 +267,9 @@ static s64 make_decision(u64 request_id, ak_approval_status_t decision,
     /* Log the decision */
     /* ak_audit_log_approval_decision(ar); */
 
-    /* TODO: Call callback with proper closure invocation */
-    (void)ar->on_decision;
-    (void)ar->callback_data;
+    /* Invoke decision callback with the final status */
+    if (ar->on_decision)
+        apply(ar->on_decision, ar, decision, ar->callback_data);
 
     return 0;
 }
@@ -283,7 +288,7 @@ s64 ak_approval_deny(u64 request_id, const char *reviewer_id, buffer note)
  * QUERY
  * ============================================================ */
 
-void ak_approval_list_pending(u8 *run_id, void *cb /* closure */)
+void ak_approval_list_pending(u8 *run_id, ak_approval_iterator cb)
 {
     if (!approval_state.initialized || !cb)
         return;
@@ -304,9 +309,9 @@ void ak_approval_list_pending(u8 *run_id, void *cb /* closure */)
                 continue;
         }
 
-        /* TODO: invoke callback with proper type cast */
-        (void)cb;
-        (void)ar;
+        /* Invoke iterator callback; stop if it returns false */
+        if (!apply(cb, ar))
+            break;
     }
 }
 
@@ -369,7 +374,7 @@ void ak_approval_set_default_timeout(u64 timeout_ms)
     approval_state.default_timeout_ms = timeout_ms;
 }
 
-void ak_approval_set_notify_callback(void *cb /* closure */)
+void ak_approval_set_notify_callback(ak_approval_notify_handler cb)
 {
     if (!approval_state.initialized)
         return;

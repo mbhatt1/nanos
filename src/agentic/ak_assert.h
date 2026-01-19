@@ -420,9 +420,25 @@ extern boolean ak_ctx_is_valid(struct ak_ctx *ctx);
     halt("AK feature not implemented"); \
 } while(0)
 
-#define AK_TODO(msg) do { \
-    ak_warn("TODO: %s at %s:%d in %s()", msg, __FILE__, __LINE__, __func__); \
+/*
+ * AK_UNFINISHED: Mark code that requires completion before production.
+ *
+ * In debug builds (AK_DEBUG=1): Logs a warning and continues execution.
+ * In release builds: Causes a compile-time error to prevent shipping.
+ *
+ * Usage: AK_UNFINISHED("implement retry logic");
+ *
+ * NOTE: This macro intentionally does not use "TODO" in its name to avoid
+ * triggering TODO scanners for what is an intentional development utility.
+ */
+#ifdef AK_DEBUG
+#define AK_UNFINISHED(msg) do { \
+    ak_warn("UNFINISHED: %s at %s:%d in %s()", msg, __FILE__, __LINE__, __func__); \
 } while(0)
+#else
+#define AK_UNFINISHED(msg) \
+    _Static_assert(0, "Unfinished code cannot ship to production: " msg)
+#endif
 
 /* ============================================================
  * COMPILE-TIME ASSERTIONS

@@ -995,19 +995,235 @@ s64 ak_heap_restore(buffer snapshot)
     return 0;
 }
 
+/*
+ * Write unsigned integer to buffer as decimal string.
+ * Helper for canonical JSON serialization.
+ */
+static void serialize_write_u64(buffer out, u64 val)
+{
+    if (val == 0) {
+        buffer_write(out, "0", 1);
+        return;
+    }
+
+    char tmp[24];
+    int len = 0;
+    while (val > 0) {
+        tmp[len++] = '0' + (val % 10);
+        val /= 10;
+    }
+
+    /* Reverse into output */
+    for (int i = len - 1; i >= 0; i--)
+        buffer_write(out, &tmp[i], 1);
+}
+
+/*
+ * Escape and write JSON string value with surrounding quotes.
+ * Handles all JSON escape sequences per RFC 8259.
+ * Control characters (0x00-0x1F) are escaped as \uXXXX.
+ *
+ * Note: Currently unused but kept for future extensibility when
+ * serializing string fields that require escaping.
+ */
+__attribute__((unused))
+static void serialize_write_json_string(buffer out, const char *str, u64 len)
+{
+    static const char hex_digits[] = "0123456789abcdef";
+
+    buffer_write(out, "\"", 1);
+
+    for (u64 i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)str[i];
+        switch (c) {
+        case '"':
+            buffer_write(out, "\\\"", 2);
+            break;
+        case '\\':
+            buffer_write(out, "\\\\", 2);
+            break;
+        case '\b':
+            buffer_write(out, "\\b", 2);
+            break;
+        case '\f':
+            buffer_write(out, "\\f", 2);
+            break;
+        case '\n':
+            buffer_write(out, "\\n", 2);
+            break;
+        case '\r':
+            buffer_write(out, "\\r", 2);
+            break;
+        case '\t':
+            buffer_write(out, "\\t", 2);
+            break;
+        default:
+            if (c < 0x20) {
+                /* Control character - escape as \u00XX */
+                char escape[6] = {'\\', 'u', '0', '0',
+                                  hex_digits[(c >> 4) & 0x0F],
+                                  hex_digits[c & 0x0F]};
+                buffer_write(out, escape, 6);
+            } else {
+                buffer_write(out, (char *)&c, 1);
+            }
+            break;
+        }
+    }
+
+    buffer_write(out, "\"", 1);
+}
+
+/*
+ * Write hex-encoded byte array as JSON string.
+ * Used for owner_run_id and other binary fields.
+ */
+static void serialize_write_hex_string(buffer out, const u8 *data, u64 len)
+{
+    static const char hex_digits[] = "0123456789abcdef";
+
+    buffer_write(out, "\"", 1);
+
+    for (u64 i = 0; i < len; i++) {
+        char hex[2];
+        hex[0] = hex_digits[(data[i] >> 4) & 0x0F];
+        hex[1] = hex_digits[data[i] & 0x0F];
+        buffer_write(out, hex, 2);
+    }
+
+    buffer_write(out, "\"", 1);
+}
+
+/*
+ * Get taint level name for serialization.
+ * Returns canonical string representation.
+ */
+static const char *taint_to_string(ak_taint_t taint)
+{
+    switch (taint) {
+    case AK_TAINT_TRUSTED:        return "trusted";
+    case AK_TAINT_SANITIZED_URL:  return "sanitized_url";
+    case AK_TAINT_SANITIZED_PATH: return "sanitized_path";
+    case AK_TAINT_SANITIZED_SQL:  return "sanitized_sql";
+    case AK_TAINT_SANITIZED_CMD:  return "sanitized_cmd";
+    case AK_TAINT_SANITIZED_HTML: return "sanitized_html";
+    case AK_TAINT_UNTRUSTED:      return "untrusted";
+    default:                      return "unknown";
+    }
+}
+
+/*
+ * Calculate string length.
+ */
+static u64 str_len(const char *s)
+{
+    u64 len = 0;
+    while (s[len]) len++;
+    return len;
+}
+
 buffer ak_heap_serialize_object(heap h, u64 ptr)
 {
     /*
-     * Serialize a single object to JSON format.
-     * Used for incremental state sync.
+     * Serialize a single heap object to canonical JSON format.
      *
-     * TODO: Implement proper object serialization
+     * Output format (canonical - keys in fixed order, no whitespace):
+     * {
+     *   "ptr": <u64>,
+     *   "type_hash": <u64>,
+     *   "version": <u64>,
+     *   "created_ms": <u64>,
+     *   "modified_ms": <u64>,
+     *   "taint": "<string>",
+     *   "deleted": <boolean>,
+     *   "owner_run_id": "<hex-string>",
+     *   "value": <embedded-json>
+     * }
+     *
+     * Properties:
+     *   - Deterministic: same object always produces same output
+     *   - Canonical: keys in fixed order for consistent hashing
+     *   - Complete: includes all object metadata and value
+     *
+     * Used for:
+     *   - State snapshots (crash recovery)
+     *   - Audit logging (INV-4 compliance)
+     *   - State sync between VMs
      */
-    (void)ptr;
-    buffer result = allocate_buffer(h, 64);
+
+    ak_heap_object_t *obj = find_object(ptr);
+    if (!obj)
+        return NULL;
+
+    /* Estimate buffer size:
+     * - Fixed overhead for keys/formatting: ~200 bytes
+     * - owner_run_id hex: 32 bytes
+     * - Numbers (max 20 digits each * 5): ~100 bytes
+     * - Taint string: ~20 bytes
+     * - Value: variable
+     */
+    u64 value_len = obj->value ? buffer_length(obj->value) : 4; /* "null" */
+    u64 initial_size = 400 + value_len;
+
+    buffer result = allocate_buffer(h, initial_size);
     if (!result || result == INVALID_ADDRESS)
         return NULL;
-    bprintf(result, "{\"ptr\":%ld}", ptr);
+
+    /* Start object */
+    buffer_write(result, "{", 1);
+
+    /* "ptr":<u64> - canonical key order starts with ptr */
+    buffer_write(result, "\"ptr\":", 6);
+    serialize_write_u64(result, obj->ptr);
+
+    /* "type_hash":<u64> */
+    buffer_write(result, ",\"type_hash\":", 13);
+    serialize_write_u64(result, obj->type_hash);
+
+    /* "version":<u64> */
+    buffer_write(result, ",\"version\":", 11);
+    serialize_write_u64(result, obj->version);
+
+    /* "created_ms":<u64> */
+    buffer_write(result, ",\"created_ms\":", 14);
+    serialize_write_u64(result, obj->created_ms);
+
+    /* "modified_ms":<u64> */
+    buffer_write(result, ",\"modified_ms\":", 15);
+    serialize_write_u64(result, obj->modified_ms);
+
+    /* "taint":"<string>" */
+    buffer_write(result, ",\"taint\":\"", 10);
+    const char *taint_str = taint_to_string(obj->taint);
+    buffer_write(result, taint_str, str_len(taint_str));
+    buffer_write(result, "\"", 1);
+
+    /* "deleted":<boolean> */
+    buffer_write(result, ",\"deleted\":", 11);
+    if (obj->deleted) {
+        buffer_write(result, "true", 4);
+    } else {
+        buffer_write(result, "false", 5);
+    }
+
+    /* "owner_run_id":"<hex-string>" */
+    buffer_write(result, ",\"owner_run_id\":", 16);
+    serialize_write_hex_string(result, obj->owner_run_id, AK_TOKEN_ID_SIZE);
+
+    /* "value":<embedded-json> or null */
+    buffer_write(result, ",\"value\":", 9);
+    if (obj->value && buffer_length(obj->value) > 0) {
+        /* Value is already JSON - embed directly for canonical output.
+         * The value is stored as valid JSON, so we can include it as-is.
+         * This preserves the exact stored representation for hashing. */
+        buffer_write(result, buffer_ref(obj->value, 0), buffer_length(obj->value));
+    } else {
+        buffer_write(result, "null", 4);
+    }
+
+    /* Close object */
+    buffer_write(result, "}", 1);
+
     return result;
 }
 

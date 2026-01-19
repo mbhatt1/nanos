@@ -29,6 +29,41 @@ typedef enum ak_approval_status {
     AK_APPROVAL_CANCELLED,      /* Cancelled by requester */
 } ak_approval_status_t;
 
+/* Forward declaration for closure types */
+struct ak_approval_request;
+
+/*
+ * Closure type for approval decision callbacks.
+ * Called when a decision is made (granted, denied, timeout, or cancelled).
+ *
+ * @param request   The approval request
+ * @param status    The final status
+ * @param data      User-provided callback data
+ */
+closure_type(ak_approval_decision_handler, void,
+             struct ak_approval_request *request,
+             ak_approval_status_t status,
+             void *data);
+
+/*
+ * Closure type for approval notification callbacks.
+ * Called when a new approval request is created.
+ *
+ * @param request   The newly created approval request
+ */
+closure_type(ak_approval_notify_handler, void,
+             struct ak_approval_request *request);
+
+/*
+ * Closure type for iterating over approval requests.
+ * Called for each matching request during enumeration.
+ *
+ * @param request   The approval request
+ * @return          true to continue iteration, false to stop
+ */
+closure_type(ak_approval_iterator, boolean,
+             struct ak_approval_request *request);
+
 /* ============================================================
  * APPROVAL REQUEST
  * ============================================================ */
@@ -57,9 +92,9 @@ typedef struct ak_approval_request {
     char reviewer_id[64];       /* Who approved/denied */
     buffer reviewer_note;       /* Optional note from reviewer */
 
-    /* Callback */
-    void *on_decision;  /* closure */        /* Called when decision is made */
-    void *callback_data;        /* Data for callback */
+    /* Callback - invoked when a decision is made */
+    ak_approval_decision_handler on_decision;
+    void *callback_data;
 
     /* Linkage for pending queue */
     struct ak_approval_request *next;
@@ -96,12 +131,12 @@ ak_approval_request_t *ak_approval_request(
  * Set callback for when decision is made.
  *
  * @param request       Approval request
- * @param cb            Callback closure
- * @param data          User data for callback
+ * @param cb            Callback closure (ak_approval_decision_handler)
+ * @param data          User data passed to callback
  */
 void ak_approval_set_callback(
     ak_approval_request_t *request,
-    void *cb,  /* closure */
+    ak_approval_decision_handler cb,
     void *data
 );
 
@@ -162,9 +197,10 @@ s64 ak_approval_deny(u64 request_id, const char *reviewer_id, buffer note);
  * Get pending approvals for a run.
  *
  * @param run_id        Run ID to query (NULL for all)
- * @param cb            Callback for each pending request
+ * @param cb            Iterator callback for each pending request
+ *                      Returns true to continue, false to stop
  */
-void ak_approval_list_pending(u8 *run_id, void *cb /* closure */);
+void ak_approval_list_pending(u8 *run_id, ak_approval_iterator cb);
 
 /*
  * Get approval request by ID.
@@ -196,8 +232,8 @@ void ak_approval_set_default_timeout(u64 timeout_ms);
  * Called when a new approval request is created, allowing
  * external systems to be notified (e.g., send alert).
  *
- * @param cb            Callback closure
+ * @param cb            Notification callback closure
  */
-void ak_approval_set_notify_callback(void *cb /* closure */);
+void ak_approval_set_notify_callback(ak_approval_notify_handler cb);
 
 #endif /* AK_APPROVAL_H */

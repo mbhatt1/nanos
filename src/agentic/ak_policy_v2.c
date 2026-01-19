@@ -121,41 +121,24 @@ static int local_strncmp(const char *s1, const char *s2, u64 n)
  * HASH COMPUTATION
  * ============================================================ */
 
+/* Wrapper for Nanos sha256 that uses buffers */
+static void ak_sha256(const u8 *data, u32 len, u8 *output)
+{
+    buffer src = alloca_wrap_buffer((void *)data, len);
+    buffer dst = alloca_wrap_buffer(output, 32);
+    sha256(dst, src);
+}
+
 /*
- * Compute non-cryptographic hash for policy identification.
- * Uses FNV-1a with mixing - NOT cryptographically secure.
- * TODO: Replace with SHA-256 for production.
+ * Compute cryptographically secure hash for policy identification.
+ * Uses SHA-256 for collision resistance and integrity verification.
  */
 static void compute_policy_hash(const u8 *json, u64 len, u8 *hash_out)
 {
     runtime_memset(hash_out, 0, AK_HASH_SIZE);
     if (!json || len == 0) return;
 
-    u64 hash1 = 0xcbf29ce484222325ULL;
-    u64 hash2 = 0x84222325cbf29ce4ULL;
-
-    for (u64 i = 0; i < len; i++) {
-        hash1 ^= json[i];
-        hash1 *= 0x100000001b3ULL;
-        hash2 ^= json[i];
-        hash2 *= 0x00000100000001b3ULL;
-        hash2 = (hash2 << 13) | (hash2 >> 51);
-    }
-
-    /* Final mixing */
-    hash1 ^= hash1 >> 33;
-    hash1 *= 0xff51afd7ed558ccdULL;
-    hash1 ^= hash1 >> 33;
-
-    hash2 ^= hash2 >> 33;
-    hash2 *= 0xc4ceb9fe1a85ec53ULL;
-    hash2 ^= hash2 >> 33;
-
-    /* Expand to full hash size */
-    for (u64 i = 0; i < AK_HASH_SIZE; i++) {
-        u64 h = (i < AK_HASH_SIZE / 2) ? hash1 : hash2;
-        hash_out[i] = (u8)(h >> ((i % 8) * 8));
-    }
+    ak_sha256(json, (u32)len, hash_out);
 }
 
 /* ============================================================

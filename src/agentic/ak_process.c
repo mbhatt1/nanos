@@ -46,6 +46,211 @@ static struct {
  * INTERNAL HELPERS
  * ============================================================ */
 
+/* Forward declaration for pattern matching */
+boolean ak_pattern_match(const char *pattern, const char *resource);
+
+/*
+ * Check if child's FS rules are subsumed by parent's FS rules.
+ * A child rule is subsumed if there exists a parent rule that:
+ *   - Pattern covers the child pattern (child pattern matches parent pattern)
+ *   - Parent grants at least the same permissions (read/write)
+ */
+static boolean fs_rules_subsumed(ak_fs_rule_v2_t *parent_rules, ak_fs_rule_v2_t *child_rules)
+{
+    /* Empty child rules are always subsumed */
+    if (!child_rules)
+        return true;
+
+    /* If child has rules but parent has none, not subsumed (fail-closed) */
+    if (!parent_rules)
+        return false;
+
+    /* Each child rule must be covered by at least one parent rule */
+    for (ak_fs_rule_v2_t *child = child_rules; child; child = child->next) {
+        boolean covered = false;
+
+        for (ak_fs_rule_v2_t *parent = parent_rules; parent; parent = parent->next) {
+            /* Check if parent pattern covers child pattern */
+            if (!ak_pattern_match(parent->pattern, child->pattern))
+                continue;
+
+            /* Check permissions - child cannot have more than parent */
+            if (child->read && !parent->read)
+                continue;
+            if (child->write && !parent->write)
+                continue;
+
+            /* This parent rule covers the child rule */
+            covered = true;
+            break;
+        }
+
+        if (!covered)
+            return false;
+    }
+
+    return true;
+}
+
+/*
+ * Check if child's NET rules are subsumed by parent's NET rules.
+ */
+static boolean net_rules_subsumed(ak_net_rule_v2_t *parent_rules, ak_net_rule_v2_t *child_rules)
+{
+    if (!child_rules)
+        return true;
+
+    if (!parent_rules)
+        return false;
+
+    for (ak_net_rule_v2_t *child = child_rules; child; child = child->next) {
+        boolean covered = false;
+
+        for (ak_net_rule_v2_t *parent = parent_rules; parent; parent = parent->next) {
+            if (!ak_pattern_match(parent->pattern, child->pattern))
+                continue;
+
+            /* Check permissions - child cannot have more than parent */
+            if (child->connect && !parent->connect)
+                continue;
+            if (child->bind && !parent->bind)
+                continue;
+            if (child->listen && !parent->listen)
+                continue;
+
+            covered = true;
+            break;
+        }
+
+        if (!covered)
+            return false;
+    }
+
+    return true;
+}
+
+/*
+ * Check if child's TOOL rules are subsumed by parent's TOOL rules.
+ * Child's allowed tools must be a subset of parent's allowed tools.
+ */
+static boolean tool_rules_subsumed(ak_tool_rule_v2_t *parent_rules, ak_tool_rule_v2_t *child_rules)
+{
+    if (!child_rules)
+        return true;
+
+    if (!parent_rules)
+        return false;
+
+    /* Each allowed tool in child must be allowed by parent */
+    for (ak_tool_rule_v2_t *child = child_rules; child; child = child->next) {
+        if (!child->allow)
+            continue;  /* Deny rules don't need coverage */
+
+        boolean covered = false;
+
+        for (ak_tool_rule_v2_t *parent = parent_rules; parent; parent = parent->next) {
+            if (!parent->allow)
+                continue;  /* Only check allow rules */
+
+            if (ak_pattern_match(parent->pattern, child->pattern)) {
+                covered = true;
+                break;
+            }
+        }
+
+        if (!covered)
+            return false;
+    }
+
+    return true;
+}
+
+/*
+ * Check if child's budgets are subsumed by parent's budgets.
+ * Child budgets must not exceed parent budgets.
+ * A budget of 0 means unlimited, so child's 0 is only valid if parent's is 0.
+ */
+static boolean budgets_subsumed(const ak_budgets_v2_t *parent, const ak_budgets_v2_t *child)
+{
+    /* CPU budget */
+    if (parent->cpu_ns > 0 && (child->cpu_ns == 0 || child->cpu_ns > parent->cpu_ns))
+        return false;
+
+    /* Wall time budget */
+    if (parent->wall_ns > 0 && (child->wall_ns == 0 || child->wall_ns > parent->wall_ns))
+        return false;
+
+    /* Byte budget */
+    if (parent->bytes > 0 && (child->bytes == 0 || child->bytes > parent->bytes))
+        return false;
+
+    /* Token budget */
+    if (parent->tokens > 0 && (child->tokens == 0 || child->tokens > parent->tokens))
+        return false;
+
+    /* Tool calls budget */
+    if (parent->tool_calls > 0 && (child->tool_calls == 0 || child->tool_calls > parent->tool_calls))
+        return false;
+
+    return true;
+}
+
+/*
+ * Check if child policy is properly subsumed by parent policy.
+ *
+ * A child policy is subsumed if:
+ *   1. Child's FS rules are subset of parent's
+ *   2. Child's NET rules are subset of parent's
+ *   3. Child's TOOL rules are subset of parent's
+ *   4. Child's budgets don't exceed parent's
+ *
+ * This ensures monotonic attenuation: a child process cannot have
+ * more privileges than its parent.
+ *
+ * @param parent    Parent policy (current policy)
+ * @param child     Child policy (proposed new policy)
+ * @return          true if child is properly subsumed by parent
+ */
+static boolean ak_policy_is_subsumed(ak_policy_v2_t *parent, ak_policy_v2_t *child)
+{
+    if (!parent || !child)
+        return false;
+
+    /* Fail-closed parent cannot subsume anything except fail-closed child */
+    if (parent->fail_closed)
+        return child->fail_closed;
+
+    /* Fail-closed child is always subsumed (no permissions) */
+    if (child->fail_closed)
+        return true;
+
+    /* Check FS rules */
+    if (!fs_rules_subsumed(parent->fs_rules, child->fs_rules)) {
+        ak_debug("ak_process: policy subsumption failed - FS rules");
+        return false;
+    }
+
+    /* Check NET rules */
+    if (!net_rules_subsumed(parent->net_rules, child->net_rules)) {
+        ak_debug("ak_process: policy subsumption failed - NET rules");
+        return false;
+    }
+
+    /* Check TOOL rules */
+    if (!tool_rules_subsumed(parent->tool_rules, child->tool_rules)) {
+        ak_debug("ak_process: policy subsumption failed - TOOL rules");
+        return false;
+    }
+
+    /* Check budgets */
+    if (!budgets_subsumed(&parent->budgets, &child->budgets)) {
+        ak_debug("ak_process: policy subsumption failed - budgets exceeded");
+        return false;
+    }
+
+    return true;
+}
+
 /* Simple hash function for PID -> bucket */
 static u32 pid_hash(u64 pid)
 {
@@ -432,8 +637,12 @@ int ak_process_set_policy(u64 pid, ak_policy_v2_t *policy)
         return -ENOENT;
     }
 
-    /* TODO: Validate that new policy is subset of current */
-    /* For now, allow any policy change */
+    /* Validate that new policy is subset of current (monotonic attenuation) */
+    if (entry->policy && !ak_policy_is_subsumed(entry->policy, policy)) {
+        process_unlock();
+        ak_warn("ak_process: policy change denied - not a subset of current policy");
+        return -EPERM;
+    }
 
     /* Free old policy if owned */
     if (entry->policy_owned && entry->policy) {
@@ -740,8 +949,17 @@ boolean ak_process_authorize_spawn(
 
     /* Check child policy subset of parent if provided */
     if (req->child_policy && parent->policy) {
-        /* TODO: Implement policy subsumption check */
-        /* For now, allow any child policy */
+        if (!ak_policy_is_subsumed(parent->policy, req->child_policy)) {
+            decision->reason_code = AK_DENY_NO_CAP;
+            decision->errno_equiv = EPERM;
+            runtime_strncpy(decision->missing_cap, "spawn.policy",
+                           AK_MAX_CAPSTR);
+            runtime_strncpy(decision->detail,
+                           "Child policy exceeds parent policy (not a subset)",
+                           AK_MAX_DETAIL);
+            ak_warn("ak_process: spawn denied - child policy exceeds parent");
+            return false;
+        }
     }
 
     /* Check child count limit */

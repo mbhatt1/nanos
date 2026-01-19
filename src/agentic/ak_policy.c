@@ -41,69 +41,25 @@ void ak_policy_init(heap h)
  * POLICY LOADING
  * ============================================================ */
 
+/* Wrapper for Nanos sha256 that uses buffers */
+static void ak_sha256(const u8 *data, u32 len, u8 *output)
+{
+    buffer src = alloca_wrap_buffer((void *)data, len);
+    buffer dst = alloca_wrap_buffer(output, 32);
+    sha256(dst, src);
+}
+
+/*
+ * Compute cryptographically secure hash for policy identification.
+ * Uses SHA-256 for collision resistance and integrity verification.
+ */
 static void compute_hash(buffer data, u8 *hash_out)
 {
-    /*
-     * WARNING: This hash function is NOT cryptographically secure!
-     * It uses FNV-1a with additional mixing, which provides reasonable
-     * distribution for hash tables but does NOT provide:
-     *   - Collision resistance
-     *   - Pre-image resistance
-     *   - Second pre-image resistance
-     *
-     * TODO: Replace with SHA-256 for cryptographic applications.
-     * Integration with platform crypto (e.g., mbedtls) is required
-     * for production policy verification and integrity checking.
-     *
-     * Current use is limited to:
-     *   - Policy identification (non-security-critical)
-     *   - Version tracking
-     */
     runtime_memset(hash_out, 0, AK_HASH_SIZE);
     if (data && buffer_length(data) > 0) {
         u8 *p = buffer_ref(data, 0);
         u64 len = buffer_length(data);
-
-        /* FNV-1a constants */
-        u64 hash1 = 0xcbf29ce484222325ULL;
-        u64 hash2 = 0x84222325cbf29ce4ULL;  /* Second hash for better mixing */
-
-        for (u64 i = 0; i < len; i++) {
-            /* Primary FNV-1a */
-            hash1 ^= p[i];
-            hash1 *= 0x100000001b3ULL;
-
-            /* Secondary hash with different constant for independence */
-            hash2 ^= p[i];
-            hash2 *= 0x00000100000001b3ULL;
-            hash2 = (hash2 << 13) | (hash2 >> 51);  /* Rotate for avalanche */
-        }
-
-        /* Final mixing - improves avalanche effect */
-        hash1 ^= hash1 >> 33;
-        hash1 *= 0xff51afd7ed558ccdULL;
-        hash1 ^= hash1 >> 33;
-        hash1 *= 0xc4ceb9fe1a85ec53ULL;
-        hash1 ^= hash1 >> 33;
-
-        hash2 ^= hash2 >> 33;
-        hash2 *= 0xc4ceb9fe1a85ec53ULL;
-        hash2 ^= hash2 >> 33;
-
-        /* Expand to full hash size using both hash values */
-        for (u64 i = 0; i < AK_HASH_SIZE; i++) {
-            u64 h = (i < AK_HASH_SIZE / 2) ? hash1 : hash2;
-            u64 shift = (i % 8) * 8;
-            hash_out[i] = (u8)(h >> shift);
-
-            /* Additional mixing every 8 bytes */
-            if (i % 8 == 7) {
-                hash1 ^= hash2;
-                hash1 *= 0xff51afd7ed558ccdULL;
-                hash2 ^= hash1;
-                hash2 *= 0xc4ceb9fe1a85ec53ULL;
-            }
-        }
+        ak_sha256(p, (u32)len, hash_out);
     }
 }
 

@@ -135,8 +135,8 @@ typedef struct ak_agent_mailbox {
     u64 lock;                       /* Spin lock for thread safety */
 
     /* Waiting threads (for blocking receive) */
-    /* Note: In nanos, this would integrate with kernel wait queues */
-    boolean has_waiters;            /* True if threads waiting */
+    volatile u32 waiter_count;      /* Number of threads waiting for messages */
+    volatile boolean wake_pending;  /* Wake signal pending for waiters */
 } ak_agent_mailbox_t;
 
 /* ============================================================
@@ -173,6 +173,11 @@ typedef struct ak_agent_registry_entry {
     /* Capabilities granted to this agent */
     boolean has_ipc_cap;            /* Has general IPC capability */
     boolean has_broadcast_cap;      /* Can broadcast messages */
+
+    /* Fine-grained peer access control */
+    u64 *allowed_peer_pids;         /* Array of allowed peer PIDs (NULL = any) */
+    u32 allowed_peer_count;         /* Number of allowed peers */
+    u32 allowed_peer_capacity;      /* Allocated capacity for peer array */
 
     /* Hash table linkage */
     struct ak_agent_registry_entry *next;

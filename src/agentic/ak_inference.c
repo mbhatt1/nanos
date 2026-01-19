@@ -341,7 +341,99 @@ s64 ak_local_inference_init(ak_llm_local_config_t *config)
 }
 
 /*
+ * Virtio-serial I/O timeout in milliseconds.
+ * Used for both write and read operations.
+ */
+#define VIRTIO_IO_TIMEOUT_MS    30000
+#define VIRTIO_MAX_RESPONSE_SIZE (1024 * 1024)  /* 1MB max response */
+
+/*
+ * Write exactly 'len' bytes to virtio fd with timeout.
+ * Returns 0 on success, negative error code on failure.
+ */
+static s64 virtio_write_all(int fd, const u8 *buf, u64 len, u32 timeout_ms)
+{
+    if (fd < 0 || !buf || len == 0)
+        return AK_E_LLM_INVALID_REQUEST;
+
+    u64 written = 0;
+    u64 start_ms = now(CLOCK_ID_MONOTONIC) / MILLION;
+
+    while (written < len) {
+        u64 elapsed = (now(CLOCK_ID_MONOTONIC) / MILLION) - start_ms;
+        if (elapsed >= timeout_ms)
+            return AK_E_LLM_TIMEOUT;
+
+        /*
+         * Write to virtio-serial device.
+         * In production, this would use the Nanos file descriptor write API.
+         * The virtio-serial device presents as a byte stream, so we can write
+         * directly without needing virtqueue management at this level.
+         */
+        buffer tx_buf = ak_inf_state.virtio_tx_buf;
+        buffer_clear(tx_buf);
+        u64 chunk = MIN(len - written, buffer_space(tx_buf));
+        buffer_write(tx_buf, buf + written, chunk);
+
+        /*
+         * Actual write to device would go here.
+         * For now, we return an error indicating the device isn't ready.
+         * When virtio-serial driver support is added to Nanos, this would be:
+         *   ssize_t n = write(fd, buffer_ref(tx_buf, 0), buffer_length(tx_buf));
+         */
+        (void)fd;
+        (void)tx_buf;
+
+        /* Device not implemented - return appropriate error */
+        return AK_E_LLM_NOT_CONFIGURED;
+    }
+
+    return 0;
+}
+
+/*
+ * Read exactly 'len' bytes from virtio fd with timeout.
+ * Returns 0 on success, negative error code on failure.
+ */
+static s64 virtio_read_all(int fd, u8 *buf, u64 len, u32 timeout_ms)
+{
+    if (fd < 0 || !buf || len == 0)
+        return AK_E_LLM_INVALID_REQUEST;
+
+    u64 read_total = 0;
+    u64 start_ms = now(CLOCK_ID_MONOTONIC) / MILLION;
+
+    while (read_total < len) {
+        u64 elapsed = (now(CLOCK_ID_MONOTONIC) / MILLION) - start_ms;
+        if (elapsed >= timeout_ms)
+            return AK_E_LLM_TIMEOUT;
+
+        /*
+         * Read from virtio-serial device.
+         * In production, this would use the Nanos file descriptor read API.
+         * The virtio-serial device presents as a byte stream.
+         */
+        buffer rx_buf = ak_inf_state.virtio_rx_buf;
+        (void)fd;
+        (void)rx_buf;
+
+        /* Device not implemented - return appropriate error */
+        return AK_E_LLM_NOT_CONFIGURED;
+    }
+
+    return 0;
+}
+
+/*
  * Send request and receive response via virtio-serial.
+ *
+ * Protocol (length-prefixed JSON):
+ *   Request:  [4 bytes: length (big-endian)][N bytes: JSON request]
+ *   Response: [4 bytes: length (big-endian)][M bytes: JSON response]
+ *
+ * The host inference server must implement this protocol.
+ * Typical setup: QEMU virtio-serial port connected to a host process
+ * running ollama, vLLM, or similar inference server.
  */
 static ak_inference_response_t *virtio_request(buffer request_json)
 {
@@ -351,33 +443,225 @@ static ak_inference_response_t *virtio_request(buffer request_json)
         return 0;
     runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
 
+    /* Check connection state */
     if (!ak_inf_state.local_connected || ak_inf_state.local_fd < 0) {
         res->success = false;
         res->error_code = AK_E_LLM_CONNECTION_FAILED;
-        runtime_memcpy(res->error_message, "Local inference not available",
-                       sizeof("Local inference not available"));
+        runtime_memcpy(res->error_message, "Local inference not connected",
+                       sizeof("Local inference not connected"));
+        return res;
+    }
+
+    /* Validate request */
+    if (!request_json || buffer_length(request_json) == 0) {
+        res->success = false;
+        res->error_code = AK_E_LLM_INVALID_REQUEST;
+        runtime_memcpy(res->error_message, "Empty request",
+                       sizeof("Empty request"));
+        return res;
+    }
+
+    u32 req_len = buffer_length(request_json);
+    u32 timeout_ms = ak_inf_state.config.local.timeout_ms;
+    if (timeout_ms == 0)
+        timeout_ms = VIRTIO_IO_TIMEOUT_MS;
+
+    /*
+     * Step 1: Send length prefix (4 bytes, big-endian)
+     */
+    u8 len_buf[4];
+    len_buf[0] = (req_len >> 24) & 0xFF;
+    len_buf[1] = (req_len >> 16) & 0xFF;
+    len_buf[2] = (req_len >> 8) & 0xFF;
+    len_buf[3] = req_len & 0xFF;
+
+    s64 write_result = virtio_write_all(ak_inf_state.local_fd, len_buf, 4, timeout_ms);
+    if (write_result != 0) {
+        res->success = false;
+        res->error_code = write_result;
+        if (write_result == AK_E_LLM_TIMEOUT) {
+            runtime_memcpy(res->error_message, "Write timeout sending length",
+                           sizeof("Write timeout sending length"));
+        } else if (write_result == AK_E_LLM_NOT_CONFIGURED) {
+            runtime_memcpy(res->error_message, "virtio-serial device not available",
+                           sizeof("virtio-serial device not available"));
+        } else {
+            runtime_memcpy(res->error_message, "Failed to send request length",
+                           sizeof("Failed to send request length"));
+        }
         return res;
     }
 
     /*
-     * Protocol implementation:
-     * 1. Write 4-byte length prefix (big-endian)
-     * 2. Write JSON request
-     * 3. Read 4-byte length prefix
-     * 4. Read JSON response
+     * Step 2: Send JSON request body
      */
+    write_result = virtio_write_all(ak_inf_state.local_fd,
+                                    buffer_ref(request_json, 0),
+                                    req_len, timeout_ms);
+    if (write_result != 0) {
+        res->success = false;
+        res->error_code = write_result;
+        if (write_result == AK_E_LLM_TIMEOUT) {
+            runtime_memcpy(res->error_message, "Write timeout sending request",
+                           sizeof("Write timeout sending request"));
+        } else {
+            runtime_memcpy(res->error_message, "Failed to send request body",
+                           sizeof("Failed to send request body"));
+        }
+        return res;
+    }
 
-    /* Prepare length-prefixed request (big-endian) */
-    u32 req_len = buffer_length(request_json);
-    (void)req_len;  /* TODO: use when virtio-serial is implemented */
+    /*
+     * Step 3: Read response length prefix (4 bytes, big-endian)
+     */
+    u8 resp_len_buf[4];
+    s64 read_result = virtio_read_all(ak_inf_state.local_fd, resp_len_buf, 4, timeout_ms);
+    if (read_result != 0) {
+        res->success = false;
+        res->error_code = read_result;
+        if (read_result == AK_E_LLM_TIMEOUT) {
+            runtime_memcpy(res->error_message, "Read timeout waiting for response",
+                           sizeof("Read timeout waiting for response"));
+        } else {
+            runtime_memcpy(res->error_message, "Failed to read response length",
+                           sizeof("Failed to read response length"));
+        }
+        return res;
+    }
 
-    /* TODO: Write len_buf + request_json to virtio fd, read response */
+    u32 resp_len = ((u32)resp_len_buf[0] << 24) |
+                   ((u32)resp_len_buf[1] << 16) |
+                   ((u32)resp_len_buf[2] << 8) |
+                   (u32)resp_len_buf[3];
 
-    /* Parse response */
-    res->success = false;
-    res->error_code = AK_E_LLM_CONNECTION_FAILED;
-    runtime_memcpy(res->error_message, "virtio-serial not implemented",
-                   sizeof("virtio-serial not implemented"));
+    /* Validate response length */
+    if (resp_len == 0) {
+        res->success = false;
+        res->error_code = AK_E_LLM_API_ERROR;
+        runtime_memcpy(res->error_message, "Empty response from inference server",
+                       sizeof("Empty response from inference server"));
+        return res;
+    }
+
+    if (resp_len > VIRTIO_MAX_RESPONSE_SIZE) {
+        res->success = false;
+        res->error_code = AK_E_LLM_API_ERROR;
+        runtime_memcpy(res->error_message, "Response too large",
+                       sizeof("Response too large"));
+        return res;
+    }
+
+    /*
+     * Step 4: Allocate buffer and read response body
+     */
+    buffer response_buf = allocate_buffer(ak_inf_state.h, resp_len);
+    if (response_buf == INVALID_ADDRESS) {
+        res->success = false;
+        res->error_code = AK_E_LLM_API_ERROR;
+        runtime_memcpy(res->error_message, "Failed to allocate response buffer",
+                       sizeof("Failed to allocate response buffer"));
+        return res;
+    }
+
+    /* Ensure buffer has space for response */
+    u8 *resp_data = buffer_ref(response_buf, 0);
+    read_result = virtio_read_all(ak_inf_state.local_fd, resp_data, resp_len, timeout_ms);
+    if (read_result != 0) {
+        deallocate_buffer(response_buf);
+        res->success = false;
+        res->error_code = read_result;
+        if (read_result == AK_E_LLM_TIMEOUT) {
+            runtime_memcpy(res->error_message, "Read timeout reading response body",
+                           sizeof("Read timeout reading response body"));
+        } else {
+            runtime_memcpy(res->error_message, "Failed to read response body",
+                           sizeof("Failed to read response body"));
+        }
+        return res;
+    }
+
+    /* Update buffer length to reflect received data */
+    buffer_produce(response_buf, resp_len);
+
+    /*
+     * Step 5: Parse JSON response
+     *
+     * Expected format from inference server:
+     * {
+     *   "content": "generated text...",
+     *   "usage": {
+     *     "prompt_tokens": 123,
+     *     "completion_tokens": 456
+     *   },
+     *   "finish_reason": "stop"
+     * }
+     *
+     * Or on error:
+     * {
+     *   "error": "error message"
+     * }
+     */
+    char error_msg[256];
+    s64 err_len = json_extract_string(response_buf, "error", error_msg, sizeof(error_msg));
+    if (err_len >= 0) {
+        /* Server returned an error */
+        res->success = false;
+        res->error_code = AK_E_LLM_API_ERROR;
+        u64 copy_len = MIN((u64)err_len, sizeof(res->error_message) - 1);
+        runtime_memcpy(res->error_message, error_msg, copy_len);
+        res->error_message[copy_len] = '\0';
+        deallocate_buffer(response_buf);
+        return res;
+    }
+
+    /* Extract content */
+    char content_buf[32768];
+    s64 content_len = json_extract_string(response_buf, "content", content_buf, sizeof(content_buf));
+    if (content_len >= 0) {
+        res->content = allocate_buffer(ak_inf_state.h, content_len + 1);
+        if (res->content != INVALID_ADDRESS) {
+            buffer_write(res->content, content_buf, content_len);
+            res->success = true;
+        } else {
+            res->success = false;
+            res->error_code = AK_E_LLM_API_ERROR;
+            runtime_memcpy(res->error_message, "Failed to allocate content buffer",
+                           sizeof("Failed to allocate content buffer"));
+            deallocate_buffer(response_buf);
+            return res;
+        }
+    } else {
+        /* No content field - return raw response */
+        res->content = response_buf;
+        response_buf = 0;  /* Transfer ownership */
+        res->success = true;
+    }
+
+    /* Extract usage statistics */
+    u64 prompt_tokens = 0, completion_tokens = 0;
+    json_extract_int(response_buf ? response_buf : res->content, "prompt_tokens", &prompt_tokens);
+    json_extract_int(response_buf ? response_buf : res->content, "completion_tokens", &completion_tokens);
+
+    res->usage.prompt_tokens = (u32)prompt_tokens;
+    res->usage.completion_tokens = (u32)completion_tokens;
+    res->usage.total_tokens = res->usage.prompt_tokens + res->usage.completion_tokens;
+
+    /* Extract finish reason */
+    char finish_reason[32];
+    if (json_extract_string(response_buf ? response_buf : res->content,
+                            "finish_reason", finish_reason, sizeof(finish_reason)) >= 0) {
+        if (ak_strcmp(finish_reason, "length") == 0)
+            res->finish_reason = AK_FINISH_LENGTH;
+        else if (ak_strcmp(finish_reason, "tool_calls") == 0)
+            res->finish_reason = AK_FINISH_TOOL_CALLS;
+        else
+            res->finish_reason = AK_FINISH_STOP;
+    } else {
+        res->finish_reason = AK_FINISH_STOP;
+    }
+
+    if (response_buf)
+        deallocate_buffer(response_buf);
 
     return res;
 }

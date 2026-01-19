@@ -17,6 +17,7 @@
 #include "ak_audit.h"
 #include "ak_secrets.h"
 #include "ak_compat.h"
+#include "ak_heap.h"
 
 /* ============================================================
  * INTERNAL HELPERS
@@ -429,21 +430,89 @@ s64 ak_host_heap_write(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     /* Initialize *result to NULL to ensure defined state on error paths */
     *result = NULL;
 
+    /* Null check for ctx->agent before dereferencing */
+    if (!ctx || !ctx->agent)
+        return AK_E_CAP_MISSING;
+
+    /* Parse pointer from args */
     u64 ptr_len;
     const char *ptr_str = parse_json_string(args, "ptr", &ptr_len);
-    (void)ptr_str;  /* TODO: use in actual implementation */
-    (void)ptr_len;
+    if (!ptr_str || ptr_len == 0)
+        return AK_E_SCHEMA_INVALID;
 
-    s64 cap_result = validate_host_cap(ctx, AK_CAP_HEAP, "*", "write");
+    /* Convert pointer string to null-terminated buffer for capability check */
+    char ptr_buf[64];
+    /* SECURITY: Return error instead of truncating to prevent security bypass */
+    if (ptr_len >= sizeof(ptr_buf))
+        return AK_E_SCHEMA_INVALID;
+    runtime_memcpy(ptr_buf, ptr_str, ptr_len);
+    ptr_buf[ptr_len] = 0;
+
+    /* Parse pointer string to u64 value */
+    u64 ptr = 0;
+    for (u64 i = 0; i < ptr_len; i++) {
+        if (ptr_str[i] >= '0' && ptr_str[i] <= '9') {
+            /* Check for overflow before multiplication */
+            if (ptr > (U64_MAX - (ptr_str[i] - '0')) / 10)
+                return AK_E_SCHEMA_INVALID;
+            ptr = ptr * 10 + (ptr_str[i] - '0');
+        } else {
+            /* Invalid character in pointer string */
+            return AK_E_SCHEMA_INVALID;
+        }
+    }
+
+    /* Validate capability for this specific heap pointer */
+    s64 cap_result = validate_host_cap(ctx, AK_CAP_HEAP, ptr_buf, "write");
     if (cap_result != 0)
         return cap_result;
 
-    /*
-     * Write to typed heap via ak_heap_write().
-     * Integration point with ak_heap.c for WASM tool access.
-     */
+    /* Parse patch from args (RFC 6902 JSON Patch) */
+    u64 patch_len;
+    const char *patch_str = parse_json_string(args, "patch", &patch_len);
+    if (!patch_str || patch_len == 0)
+        return AK_E_SCHEMA_INVALID;
 
-    *result = create_json_result(ctx->agent->heap, "version", "1", 1);
+    /* Parse expected version for CAS (Compare-And-Swap) */
+    s64 expected_version = parse_json_integer(args, "version");
+    if (expected_version < 0)
+        return AK_E_SCHEMA_INVALID;
+
+    /* Create patch buffer for ak_heap_write */
+    buffer patch = allocate_buffer(ctx->agent->heap, patch_len);
+    if (patch == INVALID_ADDRESS)
+        return AK_E_WASM_OOM;
+    buffer_write(patch, patch_str, patch_len);
+
+    /* Perform the heap write operation */
+    u64 new_version = 0;
+    s64 write_result = ak_heap_write(ptr, patch, (u64)expected_version, &new_version);
+
+    /* Clean up patch buffer */
+    deallocate_buffer(patch);
+
+    if (write_result != 0)
+        return write_result;
+
+    /* Build result JSON with new version */
+    char version_buf[32];
+    int version_len = 0;
+    if (new_version == 0) {
+        version_buf[version_len++] = '0';
+    } else {
+        char temp[32];
+        int temp_len = 0;
+        u64 v = new_version;
+        while (v > 0) {
+            temp[temp_len++] = '0' + (v % 10);
+            v /= 10;
+        }
+        for (int i = temp_len - 1; i >= 0; i--) {
+            version_buf[version_len++] = temp[i];
+        }
+    }
+
+    *result = create_json_result(ctx->agent->heap, "version", version_buf, version_len);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 

@@ -554,6 +554,50 @@ static int ak_format_hex16(char *buf, u16 val)
  * EFFECT REQUEST BUILDERS
  * ============================================================ */
 
+/*
+ * Extract numeric PID from agent context.
+ *
+ * The agent context stores the PID as a 16-byte token ID where the
+ * actual numeric PID is encoded in the first 8 bytes in little-endian
+ * format. This helper extracts and returns the numeric PID.
+ *
+ * Returns: Numeric PID, or 0 if ctx is NULL
+ */
+static pid_t ak_get_agent_pid(ak_agent_context_t *ctx)
+{
+    if (!ctx)
+        return 0;
+
+    /* Extract PID from pid array (little-endian, first 8 bytes) */
+    u64 pid = 0;
+    for (int i = 0; i < 8 && i < AK_TOKEN_ID_SIZE; i++) {
+        pid |= ((u64)ctx->pid[i]) << (i * 8);
+    }
+
+    /* Truncate to pid_t (s32) - safe for typical process IDs */
+    return (pid_t)pid;
+}
+
+/*
+ * Get thread ID from agent context.
+ *
+ * The agent context does not maintain a separate thread ID field.
+ * In Nanos, for the main thread, tid == pid. For multi-threaded
+ * processes, this would need to be extended to track per-thread IDs.
+ *
+ * Returns: Thread ID (currently returns PID as default for main thread),
+ *          or 0 if ctx is NULL
+ */
+static u64 ak_get_agent_tid(ak_agent_context_t *ctx)
+{
+    if (!ctx)
+        return 0;
+
+    /* For now, use PID as thread ID (main thread behavior).
+     * Future: Could extend ak_agent_context_t with tid field if needed. */
+    return (u64)ak_get_agent_pid(ctx);
+}
+
 /* Common initialization for effect requests */
 static void ak_effect_req_init(ak_effect_req_t *req, ak_ctx_t *ctx,
                                ak_effect_op_t op)
@@ -563,9 +607,8 @@ static void ak_effect_req_init(ak_effect_req_t *req, ak_ctx_t *ctx,
     req->trace_id = ak_trace_id_generate(ctx);
 
     if (ctx && ctx->agent) {
-        /* TODO: Get actual pid/tid from agent context */
-        req->pid = 1;
-        req->tid = 1;
+        req->pid = ak_get_agent_pid(ctx->agent);
+        req->tid = ak_get_agent_tid(ctx->agent);
     }
 }
 

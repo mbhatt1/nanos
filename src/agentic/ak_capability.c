@@ -521,10 +521,94 @@ void ak_revocation_revoke_run(u8 *run_id, const char *reason)
 
 void ak_revocation_load_from_log(void)
 {
-    /* Scan audit log for revocation entries and replay */
-    /* This is called on startup to restore revocation state */
-    /* TODO: Implement audit log replay for revocations */
-    /* ak_audit_replay_revocations(ak_revocation_add); */
+    /*
+     * Scan audit log for revocation entries and replay.
+     * This is called on startup to restore revocation state.
+     *
+     * RECOVERY CRITICAL: This function rebuilds the in-memory revocation map
+     * from the audit log after a restart. Without this, revoked capabilities
+     * would be incorrectly treated as valid after a crash/restart.
+     *
+     * Algorithm:
+     * 1. Query all entries with op code 0xFFFF (revocation op code)
+     * 2. For each entry, extract the tid from pid field
+     * 3. Add to revocation map (without re-logging to avoid duplicates)
+     */
+
+    if (!ak_cap_state.initialized) {
+        ak_error("ak_revocation_load_from_log: capability system not initialized");
+        return;
+    }
+
+    /* Query the audit log for all revocation entries */
+    u64 head_seq = ak_audit_head_seq();
+    if (head_seq == 0) {
+        /* Empty log - nothing to replay */
+        ak_debug("ak_revocation_load_from_log: empty audit log, no revocations to replay");
+        return;
+    }
+
+    /* Filter for revocation entries (op code 0xFFFF) */
+    ak_log_query_filter_t filter;
+    runtime_memset((u8 *)&filter, 0, sizeof(filter));
+    filter.op = 0xFFFF;  /* Revocation op code - see ak_audit_log_revocation() */
+
+    u64 count = 0;
+    ak_log_entry_t **entries = ak_audit_query(ak_cap_state.h, &filter, 1, head_seq, &count);
+
+    if (!entries || count == 0) {
+        ak_debug("ak_revocation_load_from_log: no revocation entries found in audit log");
+        return;
+    }
+
+    ak_debug("ak_revocation_load_from_log: replaying %llu revocation entries", count);
+
+    /* Replay each revocation entry */
+    u64 replayed = 0;
+    for (u64 i = 0; i < count; i++) {
+        ak_log_entry_t *entry = entries[i];
+        if (!entry) continue;
+
+        /*
+         * In ak_audit_log_revocation(), the tid is stored in the pid field.
+         * We need to rebuild the revocation entry without calling ak_revocation_add()
+         * which would re-log the revocation (causing duplicates).
+         */
+        u8 *tid = entry->pid;
+
+        /* Check if already in revocation map (idempotency) */
+        u64 key = 0;
+        runtime_memcpy(&key, tid, sizeof(key));
+
+        spin_lock(&ak_cap_state.lock);
+        boolean already_revoked = table_find(ak_cap_state.revocations, (void *)key) != NULL;
+
+        if (!already_revoked) {
+            /* Create new revocation entry */
+            ak_revocation_entry_t *rev_entry = allocate(ak_cap_state.h, sizeof(*rev_entry));
+            if (rev_entry && rev_entry != INVALID_ADDRESS) {
+                runtime_memcpy(rev_entry->tid, tid, AK_TOKEN_ID_SIZE);
+                rev_entry->revoked_ms = entry->ts_ms;
+                /* Note: We don't have the original reason string available from the log entry,
+                 * only its hash. Store a placeholder reason for recovery. */
+                rev_entry->reason = allocate_buffer(ak_cap_state.h, 32);
+                if (rev_entry->reason) {
+                    buffer_write_cstring(rev_entry->reason, "(recovered from log)");
+                }
+
+                table_set(ak_cap_state.revocations, (void *)key, rev_entry);
+                replayed++;
+            }
+        }
+        spin_unlock(&ak_cap_state.lock);
+    }
+
+    /* Free the query results array */
+    deallocate(ak_cap_state.h, entries, sizeof(ak_log_entry_t *) * count);
+
+    ak_debug("ak_revocation_load_from_log: replayed %llu revocations (%llu already present)",
+             replayed, count - replayed);
+    (void)replayed;  /* Suppress unused warning when ak_debug is a no-op */
 }
 
 /* ============================================================
