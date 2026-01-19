@@ -221,6 +221,27 @@ make PLATFORM=pc
 make -C test/unit && make -C test/unit test
 ```
 
+### Cross-Platform Support
+
+Authority Nanos supports building for multiple target architectures from any host platform:
+
+```bash
+# Build for different targets
+make PLATFORM=pc ARCH=x86_64           # Intel/AMD 64-bit
+make PLATFORM=virt ARCH=aarch64        # ARM 64-bit
+make PLATFORM=riscv-virt ARCH=riscv64  # RISC-V 64-bit
+```
+
+**See [Build Matrix](docs/building/build-matrix.md) for:**
+- Complete platform compatibility matrix
+- Toolchain setup instructions for each OS
+- Verification of correct architecture builds
+
+**See [Cross-Compilation Toolchains](docs/getting-started/toolchains.md) for:**
+- Installing cross-compilers on macOS and Linux
+- Building for non-native architectures
+- Troubleshooting cross-compilation issues
+
 ## Configuration
 
 Compile-time options in `src/agentic/ak_config.h`:
