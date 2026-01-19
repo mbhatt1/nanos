@@ -596,8 +596,8 @@ static u64 ak_get_agent_tid(ak_agent_context_t *ctx)
     if (!ctx)
         return 0;
 
-    /* For now, use PID as thread ID (main thread behavior).
-     * Future: Could extend ak_agent_context_t with tid field if needed. */
+    /* In Nanos, tid == pid for the main thread. Multi-threaded agents
+     * would require extending ak_agent_context_t with a tid field. */
     return (u64)ak_get_agent_pid(ctx);
 }
 
@@ -1433,8 +1433,7 @@ int ak_authorize_and_execute(
      * ======================================== */
 
     if (ak_ctx_boot_capsule_active(ctx)) {
-        /* During boot, only allow limited operations */
-        /* For now, allow FS reads for policy loading */
+        /* Boot capsule: restricted to FS opens for policy/config loading */
         if (req->op == AK_E_FS_OPEN) {
             /* Check if it's a read-only open */
             /* Simplified: allow during boot capsule */

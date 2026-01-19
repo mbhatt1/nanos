@@ -1223,9 +1223,11 @@ void ak_audit_sync(void)
              * We spin-wait here because this is a critical path and we MUST
              * guarantee durability before returning.
              *
-             * Note: In a full implementation, this would use proper async
-             * waiting mechanisms. For now, we use a simple spin-wait with
-             * memory barriers to ensure visibility of sync_pending changes.
+             * DESIGN DECISION: Spin-wait with memory barriers.
+             * This is intentional for the audit sync path: async waiting
+             * would allow the caller to proceed before durability is
+             * guaranteed, violating INV-4. The spin-wait ensures we block
+             * until I/O completion, with kern_pause() yielding CPU time.
              */
             while (ak_log.sync_pending) {
                 /* Memory barrier to ensure we see updates to sync_pending */

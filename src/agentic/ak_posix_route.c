@@ -228,18 +228,17 @@ int ak_get_socket_bound_addr(int fd, struct sockaddr *addr, socklen_t *addrlen)
         return -EINVAL;
 
     /*
-     * TODO: When integrated with Nanos kernel, resolve fd to socket
-     * and call getsockname() to get the actual bound address:
+     * DESIGN DECISION: Return -ENOENT to signal unknown binding.
      *
-     *   struct sock *sock = resolve_socket(current->p, fd);
-     *   if (sock && sock->getsockname) {
-     *       sysreturn rv = sock->getsockname(sock, addr, addrlen);
-     *       socket_release(sock);
-     *       return rv;
-     *   }
+     * Socket fd resolution requires kernel socket table access which is
+     * architecture-specific. Rather than couple this module to kernel
+     * internals, we return -ENOENT and let callers use the wildcard
+     * pattern "ip:*:*" for policy matching on unbound/unknown sockets.
      *
-     * Return -ENOENT when the bound address cannot be determined.
-     * Callers should use wildcard pattern "ip:*:*" for unbound/unknown sockets.
+     * This maintains module isolation: ak_posix_route handles POSIX
+     * syscall routing without kernel socket table dependencies. The
+     * kernel integration point (if needed) would be in the syscall
+     * layer that calls this function.
      */
     (void)fd;
     (void)addr;

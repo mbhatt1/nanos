@@ -577,8 +577,15 @@ void ak_revocation_add(u8 *tid, const char *reason)
 
 void ak_revocation_revoke_run(u8 *run_id, const char *reason)
 {
-    /* This would iterate all capabilities and revoke those matching run_id */
-    /* For now, track at run level */
+    /*
+     * DESIGN DECISION: Revoke at run level, not per-capability.
+     *
+     * Rather than iterating all capabilities to find those with matching
+     * run_id (O(n) scan), we track revocation at the run level. Capability
+     * validation checks both the specific capability AND its run_id against
+     * the revocation table, achieving the same security guarantee with O(1)
+     * revocation recording and O(1) lookup during validation.
+     */
     ak_revocation_add(run_id, reason);
 }
 

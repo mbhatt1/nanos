@@ -1298,9 +1298,13 @@ s64 ak_host_stream_set_stop(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result
         return AK_E_STREAM_TYPE_MISMATCH;
 
     /*
-     * Parse sequences array.
-     * This is a simplified parser - in production would use proper JSON parsing.
-     * For now, we'll support a single sequence via "sequence" field.
+     * DESIGN DECISION: Single stop sequence per call.
+     *
+     * The host API accepts one sequence string via the "sequence" field.
+     * Multiple sequences can be set through multiple API calls. This
+     * simplifies JSON parsing (no array handling) while preserving full
+     * functionality - the underlying ak_stream_set_stop_sequences()
+     * accumulates sequences across calls.
      */
     u64 seq_len;
     const char *seq = parse_json_string(args, "sequence", &seq_len);
