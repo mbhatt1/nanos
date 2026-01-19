@@ -50,6 +50,10 @@ static s64 validate_host_cap(
     );
 }
 
+/* Forward declarations for JSON parsing helpers */
+static const char *parse_json_string(buffer args, const char *key, u64 *len_out);
+static s64 parse_json_integer(buffer args, const char *key);
+
 /*
  * Parse JSON string argument.
  * Returns pointer into buffer (not copied).
