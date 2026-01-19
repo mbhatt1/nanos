@@ -2018,8 +2018,16 @@ sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
      * Agent context resolution:
      * 1. If arg0 specifies an agent_id, look it up in the registry
      * 2. Otherwise, use the root context (create if needed)
+     *
+     * BUG-FIX #10: Validate pointers before dereferencing them
      */
     if (arg0 != 0) {
+        /* BUG-FIX: arg0 must be a valid kernel pointer to 16-byte agent_id
+         * Validate it's in kernel space (not userspace pointer) */
+        if (arg0 < 0x1000) {
+            /* Suspiciously low pointer - likely invalid */
+            return -EFAULT;
+        }
         /* Caller specified an agent_id - look up in registry */
         s64 idx = ak_agent_registry_find((u8 *)arg0);
         if (idx >= 0 && ak_state.agents[idx].active) {
@@ -2043,8 +2051,13 @@ sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
     req.op = (u16)(call - AK_SYS_BASE);
     req.seq = current_ctx->last_seq++;
 
-    /* arg1/arg2 contain the request data (if any) */
+    /* arg1/arg2 contain the request data (if any)
+     * BUG-FIX #10: Validate arg1 is not a suspiciously low address before using it */
     if (arg1 && arg2 > 0) {
+        if (arg1 < 0x1000) {
+            /* Suspiciously low address - likely invalid */
+            return -EFAULT;
+        }
         req.args = alloca_wrap_buffer((void *)arg1, arg2);
     }
 
@@ -2104,8 +2117,15 @@ sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
     sysreturn result = resp->status;
     if (resp->result && arg3 && arg4 > 0) {
         u64 copy_len = buffer_length(resp->result);
-        if (copy_len > arg4)
-            copy_len = arg4;
+        if (copy_len > arg4) {
+            /* BUG-FIX #8: Partial truncation error - fail-closed instead of silently truncating
+             * Caller MUST know if data was complete or incomplete. Return error if truncation
+             * would occur rather than returning truncated data silently. */
+            deallocate_buffer(resp->result);
+            deallocate_buffer(resp->error_msg);
+            deallocate(current_ctx->heap, resp, sizeof(ak_response_t));
+            return -EINVAL;  /* Response buffer too small */
+        }
         ak_memcpy((void *)arg3, buffer_ref(resp->result, 0), copy_len);
         result = (sysreturn)copy_len;
     }

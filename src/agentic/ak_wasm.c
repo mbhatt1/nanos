@@ -87,9 +87,14 @@ void ak_wasm_init(heap h)
     ak_host_fn_register("secret_get", ak_host_secret_get, AK_CAP_SECRETS, false);
     ak_host_fn_register("llm_complete", ak_host_llm_complete, AK_CAP_INFERENCE, true);
 
-    ak_host_fn_register("log", ak_host_log, AK_CAP_NONE, false);
-    ak_host_fn_register("time_now", ak_host_time_now, AK_CAP_NONE, false);
-    ak_host_fn_register("random", ak_host_random, AK_CAP_NONE, false);
+    /* BUG-FIX #9: Utility functions must still be explicitly granted, not blanket-available
+     * Even "safe" functions like logging can be used for covert channels or timing attacks.
+     * Require explicit tool capability for all functions, even AK_CAP_NONE ones.
+     * This prevents sandbox escape via utility function imports.
+     */
+    ak_host_fn_register("log", ak_host_log, AK_CAP_TOOL, false);  /* Require tool capability */
+    ak_host_fn_register("time_now", ak_host_time_now, AK_CAP_TOOL, false);
+    ak_host_fn_register("random", ak_host_random, AK_CAP_TOOL, false);
 
     ak_wasm_state.initialized = true;
 }
