@@ -688,13 +688,22 @@ s64 ak_host_random(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
      * Return random bytes.
      * No capability required.
      *
-     * Would use virtio-rng or kernel entropy.
+     * Uses the kernel's ChaCha20-based CSPRNG seeded from hardware entropy
+     * (rdrand/rdseed or virtio-rng).
      */
 
+    u8 random_bytes[16];
     u8 random_hex[32];
+
+    /* Generate 16 cryptographically secure random bytes using ChaCha20-based PRNG */
+    u64 r0 = random_u64();
+    u64 r1 = random_u64();
+    runtime_memcpy(random_bytes, &r0, 8);
+    runtime_memcpy(random_bytes + 8, &r1, 8);
+
+    /* Convert to hex string */
     for (int i = 0; i < 16; i++) {
-        /* Placeholder - would use real RNG */
-        u8 b = (i * 17 + 3) & 0xff;
+        u8 b = random_bytes[i];
         random_hex[i * 2] = "0123456789abcdef"[b >> 4];
         random_hex[i * 2 + 1] = "0123456789abcdef"[b & 0xf];
     }

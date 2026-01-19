@@ -86,6 +86,38 @@ typedef struct ak_stream_budget {
 #define AK_STREAM_DEFAULT_IDLE_TIMEOUT_MS   (60000)               /* 1 minute */
 
 /* ============================================================
+ * FORWARD DECLARATIONS FOR CALLBACK TYPES
+ * ============================================================
+ */
+
+/* Forward declarations needed for callback type definitions */
+struct ak_stream_session;
+struct ak_stream_chunk;
+
+/* Callback invoked for each chunk sent */
+typedef void (*ak_stream_on_chunk_t)(
+    struct ak_stream_session *session,
+    struct ak_stream_chunk *chunk,
+    void *ctx
+);
+
+/* Callback invoked when stream closes */
+typedef void (*ak_stream_on_close_t)(
+    struct ak_stream_session *session,
+    ak_stream_state_t reason,
+    void *ctx
+);
+
+/* Callback for token streaming (LLM) */
+typedef void (*ak_stream_on_token_t)(
+    struct ak_stream_session *session,
+    const char *token,
+    u32 token_len,
+    boolean is_final,
+    void *ctx
+);
+
+/* ============================================================
  * STREAMING SESSION STRUCTURE
  * ============================================================
  */
@@ -168,6 +200,14 @@ typedef struct ak_stream_session {
     /* Memory management */
     heap session_heap;
 
+    /* Callback storage */
+    ak_stream_on_chunk_t on_chunk_callback;
+    void *on_chunk_ctx;
+    ak_stream_on_close_t on_close_callback;
+    void *on_close_ctx;
+    ak_stream_on_token_t on_token_callback;
+    void *on_token_ctx;
+
     /* Linked list for session tracking */
     struct ak_stream_session *next;
     struct ak_stream_session *prev;
@@ -204,34 +244,6 @@ typedef struct ak_stream_chunk {
     u64 sequence;               /* Chunk sequence number */
     u64 timestamp_ns;
 } ak_stream_chunk_t;
-
-/* ============================================================
- * STREAM CALLBACK TYPES
- * ============================================================
- */
-
-/* Callback invoked for each chunk sent */
-typedef void (*ak_stream_on_chunk_t)(
-    ak_stream_session_t *session,
-    ak_stream_chunk_t *chunk,
-    void *ctx
-);
-
-/* Callback invoked when stream closes */
-typedef void (*ak_stream_on_close_t)(
-    ak_stream_session_t *session,
-    ak_stream_state_t reason,
-    void *ctx
-);
-
-/* Callback for token streaming (LLM) */
-typedef void (*ak_stream_on_token_t)(
-    ak_stream_session_t *session,
-    const char *token,
-    u32 token_len,
-    boolean is_final,
-    void *ctx
-);
 
 /* ============================================================
  * SESSION STATISTICS

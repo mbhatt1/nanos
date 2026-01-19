@@ -192,33 +192,15 @@ void ak_agentic_budget_init_custom(
 }
 
 /*
- * Get agentic budget from context.
+ * Get budget tracker from context.
  * Returns the budget tracker or NULL if not available.
  */
-static ak_agentic_budget_t *get_agentic_budget(ak_ctx_t *ctx)
+static ak_budget_tracker_t *get_agentic_budget(ak_ctx_t *ctx)
 {
     if (!ctx || !ctx->agent)
         return NULL;
 
-    /*
-     * The agentic budget could be stored in agent->budget or as
-     * a separate structure. For this implementation, we'll use
-     * the agent's budget tracker and convert to agentic budget.
-     *
-     * In production, the agentic budget might be a field in the
-     * agent context or stored separately.
-     */
-    if (!ctx->agent->budget)
-        return NULL;
-
-    /*
-     * For P0, we access the budget tracker's limits/used arrays.
-     * The agentic budget types map to resource types:
-     *   - tool_calls -> AK_RESOURCE_TOOL_CALLS
-     *   - tokens -> AK_RESOURCE_LLM_TOKENS_OUT
-     *   - wasm_calls -> (no direct mapping, use TOOL_CALLS)
-     */
-    return NULL;  /* Placeholder - budget integration TBD */
+    return ctx->agent->budget;
 }
 
 boolean ak_budget_check_tool(ak_ctx_t *ctx)

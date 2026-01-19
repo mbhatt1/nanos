@@ -441,6 +441,11 @@ s64 ak_stream_close(ak_stream_session_t *session)
     stream_state.stats.total_tokens_received += session->tokens_received;
     stream_state.stats.total_chunks_sent += session->chunks_sent;
 
+    /* Invoke close callback if registered */
+    if (session->on_close_callback) {
+        session->on_close_callback(session, AK_STREAM_STATE_CLOSED, session->on_close_ctx);
+    }
+
     return 0;
 }
 
@@ -476,6 +481,11 @@ s64 ak_stream_abort(
         stream_state.stats.sessions_closed_timeout++;
     } else {
         stream_state.stats.sessions_closed_error++;
+    }
+
+    /* Invoke close callback if registered */
+    if (session->on_close_callback) {
+        session->on_close_callback(session, AK_STREAM_STATE_ERROR, session->on_close_ctx);
     }
 
     return 0;
@@ -558,6 +568,17 @@ s64 ak_stream_send_chunk(
     session->chunks_sent++;
     session->last_chunk_ns = get_time_ns();
     update_rate_counters(session, len, 0);
+
+    /* Invoke chunk callback if registered */
+    if (session->on_chunk_callback) {
+        ak_stream_chunk_t chunk;
+        runtime_memset((u8 *)&chunk, 0, sizeof(chunk));
+        chunk.type = AK_CHUNK_DATA;
+        chunk.data_len = len;
+        chunk.sequence = session->chunks_sent;
+        chunk.timestamp_ns = session->last_chunk_ns;
+        session->on_chunk_callback(session, &chunk, session->on_chunk_ctx);
+    }
 
     /* Return bytes sent */
     return (s64)len;
@@ -695,6 +716,10 @@ s64 ak_stream_send_token(
 
     /* Check for stop sequences */
     if (check_stop_sequences(session, token, token_len)) {
+        /* Invoke token callback with is_final=true before closing */
+        if (session->on_token_callback) {
+            session->on_token_callback(session, token, token_len, true, session->on_token_ctx);
+        }
         /* Stop sequence triggered - close stream */
         ak_stream_close(session);
         return 1;  /* Indicate stop triggered */
@@ -715,6 +740,11 @@ s64 ak_stream_send_token(
         session->bytes_sent += token_len;
         session->last_chunk_ns = get_time_ns();
         update_rate_counters(session, token_len, 1);
+
+        /* Invoke token callback if registered */
+        if (session->on_token_callback) {
+            session->on_token_callback(session, token, token_len, false, session->on_token_ctx);
+        }
     }
 
     return 0;
@@ -1085,18 +1115,16 @@ u32 ak_stream_list_active(
  * CALLBACK REGISTRATION
  * ============================================================ */
 
-/* Note: Callback functionality would require additional fields in session
- * structure and proper closure handling. For now, these are stubs. */
-
 void ak_stream_on_chunk(
     ak_stream_session_t *session,
     ak_stream_on_chunk_t callback,
     void *ctx)
 {
-    /* Stub - would store callback in session */
-    (void)session;
-    (void)callback;
-    (void)ctx;
+    if (!session)
+        return;
+
+    session->on_chunk_callback = callback;
+    session->on_chunk_ctx = ctx;
 }
 
 void ak_stream_on_close(
@@ -1104,10 +1132,11 @@ void ak_stream_on_close(
     ak_stream_on_close_t callback,
     void *ctx)
 {
-    /* Stub - would store callback in session */
-    (void)session;
-    (void)callback;
-    (void)ctx;
+    if (!session)
+        return;
+
+    session->on_close_callback = callback;
+    session->on_close_ctx = ctx;
 }
 
 void ak_stream_on_token(
@@ -1115,10 +1144,11 @@ void ak_stream_on_token(
     ak_stream_on_token_t callback,
     void *ctx)
 {
-    /* Stub - would store callback in session */
-    (void)session;
-    (void)callback;
-    (void)ctx;
+    if (!session)
+        return;
+
+    session->on_token_callback = callback;
+    session->on_token_ctx = ctx;
 }
 
 /* ============================================================
