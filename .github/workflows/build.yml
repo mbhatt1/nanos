@@ -45,16 +45,18 @@ jobs:
           brew tap nanovms/homebrew-qemu
           brew install nanovms/homebrew-qemu/qemu
 
-      - name: Build kernel (x86_64)
+      - name: Build kernel and libak (x86_64)
         run: |
           make clean
-          make -j$(sysctl -n hw.ncpu) PLATFORM=pc
+          make -j$(sysctl -n hw.ncpu) PLATFORM=pc all-binaries
           ls -lh output/platform/pc/bin/kernel.img
+          ls -lh output/platform/pc/lib/libak.dylib
 
       - name: Create distribution
         run: |
           mkdir -p dist/authority-nanos-macos-x86_64
           cp output/platform/pc/bin/kernel.img dist/authority-nanos-macos-x86_64/
+          cp output/platform/pc/lib/libak.dylib dist/authority-nanos-macos-x86_64/
           cp README.md dist/authority-nanos-macos-x86_64/
           cp LICENSE dist/authority-nanos-macos-x86_64/
           cp -r docs dist/authority-nanos-macos-x86_64/docs-html || true
@@ -102,16 +104,18 @@ jobs:
           brew tap nanovms/homebrew-qemu
           brew install nanovms/homebrew-qemu/qemu
 
-      - name: Build kernel (ARM64)
+      - name: Build kernel and libak (ARM64)
         run: |
           make clean
-          make -j$(sysctl -n hw.ncpu) PLATFORM=virt
+          make -j$(sysctl -n hw.ncpu) PLATFORM=virt all-binaries
           ls -lh output/platform/virt/bin/kernel.img
+          ls -lh output/platform/virt/lib/libak.dylib
 
       - name: Create distribution
         run: |
           mkdir -p dist/authority-nanos-macos-arm64
           cp output/platform/virt/bin/kernel.img dist/authority-nanos-macos-arm64/
+          cp output/platform/virt/lib/libak.dylib dist/authority-nanos-macos-arm64/
           cp README.md dist/authority-nanos-macos-arm64/
           cp LICENSE dist/authority-nanos-macos-arm64/
           cp -r docs dist/authority-nanos-macos-arm64/docs-html || true
@@ -163,16 +167,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nasm build-essential qemu-system-x86 wget
 
-      - name: Build kernel (x86_64)
+      - name: Build kernel and libak (x86_64)
         run: |
           make clean
-          make -j$(nproc) PLATFORM=pc
+          make -j$(nproc) PLATFORM=pc all-binaries
           ls -lh output/platform/pc/bin/kernel.img
+          ls -lh output/platform/pc/lib/libak.so
 
       - name: Create distribution
         run: |
           mkdir -p dist/authority-nanos-linux-x86_64
           cp output/platform/pc/bin/kernel.img dist/authority-nanos-linux-x86_64/
+          cp output/platform/pc/lib/libak.so dist/authority-nanos-linux-x86_64/
           cp README.md dist/authority-nanos-linux-x86_64/
           cp LICENSE dist/authority-nanos-linux-x86_64/
           cp -r docs dist/authority-nanos-linux-x86_64/docs-html || true
@@ -251,16 +257,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nasm build-essential gcc-aarch64-linux-gnu qemu-system-arm wget
 
-      - name: Build kernel (ARM64)
+      - name: Build kernel and libak (ARM64)
         run: |
           make clean
-          make -j$(nproc) PLATFORM=virt
+          make -j$(nproc) PLATFORM=virt all-binaries
           ls -lh output/platform/virt/bin/kernel.img
+          ls -lh output/platform/virt/lib/libak.so
 
       - name: Create distribution
         run: |
           mkdir -p dist/authority-nanos-linux-arm64
           cp output/platform/virt/bin/kernel.img dist/authority-nanos-linux-arm64/
+          cp output/platform/virt/lib/libak.so dist/authority-nanos-linux-arm64/
           cp README.md dist/authority-nanos-linux-arm64/
           cp LICENSE dist/authority-nanos-linux-arm64/
           cp -r docs dist/authority-nanos-linux-arm64/docs-html || true
@@ -331,11 +339,322 @@ jobs:
           retention-days: 30
 
   # ============================================================================
+  # Build Python Wheels for PyPI (macOS x86_64)
+  # ============================================================================
+  build-wheel-macos-x86:
+    name: 🐍 Build Wheel macOS x86_64
+    needs: [build-macos-x86]
+    runs-on: macos-13
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: authority-nanos-macos-x86_64
+          path: kernel-artifacts
+
+      - name: Extract kernel
+        run: |
+          cd kernel-artifacts
+          tar -xzf authority-nanos-macos-x86_64.tar.gz
+          find authority-nanos-macos-x86_64 -type f
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip build wheel
+
+      - name: Copy binaries to Python package
+        run: |
+          mkdir -p sdk/python/authority_nanos/_binaries/macos_x86_64
+
+          # Copy kernel.img
+          cp kernel-artifacts/authority-nanos-macos-x86_64/authority-nanos-macos-x86_64/kernel.img \
+             sdk/python/authority_nanos/_binaries/macos_x86_64/kernel.img
+
+          # Copy libak.dylib
+          cp kernel-artifacts/authority-nanos-macos-x86_64/authority-nanos-macos-x86_64/libak.dylib \
+             sdk/python/authority_nanos/_binaries/macos_x86_64/libak.dylib
+
+          ls -lah sdk/python/authority_nanos/_binaries/macos_x86_64/
+
+      - name: Build wheel
+        run: |
+          cd sdk/python
+          python -m build --wheel
+          ls -lah dist/
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-x86
+          path: sdk/python/dist/*.whl
+          retention-days: 30
+
+  # ============================================================================
+  # Build Python Wheels for PyPI (macOS ARM64)
+  # ============================================================================
+  build-wheel-macos-arm64:
+    name: 🐍 Build Wheel macOS ARM64
+    needs: [build-macos-arm64]
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: authority-nanos-macos-arm64
+          path: kernel-artifacts
+
+      - name: Extract kernel
+        run: |
+          cd kernel-artifacts
+          tar -xzf authority-nanos-macos-arm64.tar.gz
+          find authority-nanos-macos-arm64 -type f
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip build wheel
+
+      - name: Copy binaries to Python package
+        run: |
+          mkdir -p sdk/python/authority_nanos/_binaries/macos_arm64
+
+          # Copy kernel.img
+          cp kernel-artifacts/authority-nanos-macos-arm64/authority-nanos-macos-arm64/kernel.img \
+             sdk/python/authority_nanos/_binaries/macos_arm64/kernel.img
+
+          # Copy libak.dylib
+          cp kernel-artifacts/authority-nanos-macos-arm64/authority-nanos-macos-arm64/libak.dylib \
+             sdk/python/authority_nanos/_binaries/macos_arm64/libak.dylib
+
+          ls -lah sdk/python/authority_nanos/_binaries/macos_arm64/
+
+      - name: Build wheel
+        run: |
+          cd sdk/python
+          python -m build --wheel
+          ls -lah dist/
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-arm64
+          path: sdk/python/dist/*.whl
+          retention-days: 30
+
+  # ============================================================================
+  # Build Python Wheels for PyPI (Linux x86_64)
+  # ============================================================================
+  build-wheel-linux-x86:
+    name: 🐍 Build Wheel Linux x86_64
+    needs: [build-linux-x86]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: authority-nanos-linux-x86_64
+          path: kernel-artifacts
+
+      - name: Extract kernel
+        run: |
+          cd kernel-artifacts
+          tar -xzf authority-nanos-linux-x86_64.tar.gz
+          find authority-nanos-linux-x86_64 -type f
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip build wheel
+
+      - name: Copy binaries to Python package
+        run: |
+          mkdir -p sdk/python/authority_nanos/_binaries/linux_x86_64
+
+          # Copy kernel.img
+          cp kernel-artifacts/authority-nanos-linux-x86_64/authority-nanos-linux-x86_64/kernel.img \
+             sdk/python/authority_nanos/_binaries/linux_x86_64/kernel.img
+
+          # Copy libak.so
+          cp kernel-artifacts/authority-nanos-linux-x86_64/authority-nanos-linux-x86_64/libak.so \
+             sdk/python/authority_nanos/_binaries/linux_x86_64/libak.so
+
+          ls -lah sdk/python/authority_nanos/_binaries/linux_x86_64/
+
+      - name: Build wheel
+        run: |
+          cd sdk/python
+          python -m build --wheel
+          ls -lah dist/
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-x86
+          path: sdk/python/dist/*.whl
+          retention-days: 30
+
+  # ============================================================================
+  # Build Python Wheels for PyPI (Linux ARM64)
+  # ============================================================================
+  build-wheel-linux-arm64:
+    name: 🐍 Build Wheel Linux ARM64
+    needs: [build-linux-arm64]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: authority-nanos-linux-arm64
+          path: kernel-artifacts
+
+      - name: Extract kernel
+        run: |
+          cd kernel-artifacts
+          tar -xzf authority-nanos-linux-arm64.tar.gz
+          find authority-nanos-linux-arm64 -type f
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip build wheel
+
+      - name: Copy binaries to Python package
+        run: |
+          mkdir -p sdk/python/authority_nanos/_binaries/linux_arm64
+
+          # Copy kernel.img
+          cp kernel-artifacts/authority-nanos-linux-arm64/authority-nanos-linux-arm64/kernel.img \
+             sdk/python/authority_nanos/_binaries/linux_arm64/kernel.img
+
+          # Copy libak.so
+          cp kernel-artifacts/authority-nanos-linux-arm64/authority-nanos-linux-arm64/libak.so \
+             sdk/python/authority_nanos/_binaries/linux_arm64/libak.so
+
+          ls -lah sdk/python/authority_nanos/_binaries/linux_arm64/
+
+      - name: Build wheel
+        run: |
+          cd sdk/python
+          python -m build --wheel
+          ls -lah dist/
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-arm64
+          path: sdk/python/dist/*.whl
+          retention-days: 30
+
+  # ============================================================================
+  # Publish Python Wheels to PyPI
+  # ============================================================================
+  publish-wheels-pypi:
+    name: 📦 Publish Wheels to PyPI
+    needs: [build-wheel-macos-x86, build-wheel-macos-arm64, build-wheel-linux-x86, build-wheel-linux-arm64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install publishing tools
+        run: |
+          python -m pip install --upgrade pip twine build
+
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: wheels
+
+      - name: Display wheel structure
+        run: |
+          find wheels -type f -name "*.whl"
+          echo "---"
+          find wheels -type f -name "*.whl" -exec ls -lh {} \;
+
+      - name: Collect wheels into single directory
+        run: |
+          mkdir -p dist
+          find wheels -type f -name "*.whl" -exec cp {} dist/ \;
+          ls -lah dist/
+
+      - name: Verify wheels
+        run: |
+          python -m twine check dist/*.whl
+          echo "All wheels are valid!"
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${{ github.ref }}
+          VERSION=${TAG#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Publish to PyPI (production)
+        run: |
+          python -m twine upload dist/*.whl \
+            --non-interactive \
+            --skip-existing
+        env:
+          TWINE_REPOSITORY: pypi
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+  # ============================================================================
   # Create Release
   # ============================================================================
   create-release:
     name: 📦 Create Release
-    needs: [build-macos-x86, build-macos-arm64, build-linux-x86, build-linux-arm64, build-windows]
+    needs: [build-macos-x86, build-macos-arm64, build-linux-x86, build-linux-arm64, build-windows, publish-wheels-pypi]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

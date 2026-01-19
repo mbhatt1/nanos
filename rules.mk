@@ -280,6 +280,15 @@ $(OBJDIR)/bin/%: %.go
 	$(call cmd,vendor)
 
 ##############################################################################
+# Python support
+
+PYTHON_INTERP?=	python3
+PYTHON_LIBS?=	$(OUTDIR)/python/lib
+
+msg_python_app=	PYTHON	$@
+cmd_python_app=	$(PYTHON_INTERP) -m compileall -b $< && $(MKDIR) $(dir $@) && $(MV) $(<D)/__pycache__/*.pyc $@
+
+##############################################################################
 # other rules
 
 .PHONY: all

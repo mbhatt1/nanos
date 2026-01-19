@@ -1,0 +1,73 @@
+# Manifest file for Authority Nanos Python SDK
+# This file specifies which files to include in source and binary distributions
+
+# Include Python package files
+recursive-include authority_nanos *.py
+
+# Include kernel and library binaries from unified _binaries directory
+recursive-include authority_nanos/_binaries *.img
+recursive-include authority_nanos/_binaries *.so
+recursive-include authority_nanos/_binaries *.dylib
+
+# Include binary files from legacy _libak directory (for backward compatibility)
+recursive-include authority_nanos/_libak *.so
+recursive-include authority_nanos/_libak *.dylib
+recursive-include authority_nanos/_libak *.pyd
+
+# Include binary files from legacy _kernel directory (for backward compatibility)
+recursive-include authority_nanos/_kernel *.img
+recursive-include authority_nanos/_kernel *.so
+recursive-include authority_nanos/_kernel *.dylib
+
+# Include documentation and license files
+include README.md
+include LICENSE
+
+# Include markdown documentation files within the package
+recursive-include authority_nanos *.md
+
+# Exclude Python cache files
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude .DS_Store
+
+# Exclude version control files
+global-exclude .git
+global-exclude .gitignore
+global-exclude .gitattributes
+
+# Exclude development and testing files
+prune .github
+prune .gitlab
+prune .venv
+prune venv
+prune env
+prune tests
+prune docs
+
+# Exclude build artifacts
+prune build
+prune dist
+prune *.egg-info
+prune htmlcov
+prune .coverage
+prune .tox
+prune .mypy_cache
+prune .ruff_cache
+prune .pytest_cache
+
+# Exclude IDE and editor files
+global-exclude .vscode
+global-exclude .idea
+global-exclude *.swp
+global-exclude *.swo
+global-exclude *~
+global-exclude .editorconfig
+global-exclude .env
+global-exclude .env.local
+
+# Include configuration files relevant to distribution
+include pyproject.toml
+include setup.py

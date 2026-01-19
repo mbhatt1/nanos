@@ -2,13 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# This Makefile builds the Authority Kernel module for Nanos.
-# It should be included from the main Nanos kernel.mk.
+# This Makefile builds:
+# 1. The Authority Kernel module for Nanos (included in kernel.elf)
+# 2. libak - Shared library for Python SDK and C applications
+
+include ../../vars.mk
+
+# ============================================================================
+# PART 1: Kernel Module Object Files (for inclusion in kernel.elf)
+# ============================================================================
 
 # Module name
 AK_MODULE := agentic
 
-# Source files
+# Kernel source files (compiled into kernel.elf)
 AK_SRCS := \
 	ak_agentic.c \
 	ak_capability.c \
@@ -83,18 +90,84 @@ else
 AK_CFLAGS += -O2 -DNDEBUG
 endif
 
-# Build rules
-.PHONY: all clean
+# ============================================================================
+# PART 2: libak Shared Library
+# ============================================================================
 
-all: $(AK_OBJS)
+# libak sources
+LIBAK_SRCS = libak.c
 
+# Convert to object files
+LIBAK_OBJS = $(LIBAK_SRCS:.c=.libak.o)
+
+# Output directory
+LIBAK_LIBDIR = $(PLATFORMOBJDIR)/lib
+
+# Library filename based on platform
+ifeq ($(UNAME_s),Darwin)
+LIBAK_LIB = $(LIBAK_LIBDIR)/libak.dylib
+LIBAK_LDFLAGS = -dynamiclib
+else
+LIBAK_LIB = $(LIBAK_LIBDIR)/libak.so
+LIBAK_LDFLAGS = -shared -fPIC
+endif
+
+# Compiler flags for libak (different from kernel module)
+LIBAK_CFLAGS = \
+	-fPIC \
+	-O2 \
+	-Wall \
+	-Wextra \
+	-fstack-protector-strong \
+	-fno-strict-aliasing \
+	-I. \
+	-I$(SRCDIR) \
+	-I$(PLATFORMDIR) \
+	-DCONFIG_AK_ENABLED \
+	-DCONFIG_SYSCALL_AGENTIC=1
+
+# ============================================================================
+# Build Rules
+# ============================================================================
+
+.PHONY: all clean distclean libak
+
+all: $(AK_OBJS) libak
+
+libak: $(LIBAK_LIB)
+
+# Kernel module object files
 %.o: %.c $(AK_HDRS)
 	$(CC) $(CFLAGS) $(AK_CFLAGS) -c $< -o $@
 
+# Create lib directory
+$(LIBAK_LIBDIR):
+	@mkdir -p $@
+
+# Compile libak object files with different naming
+%.libak.o: %.c
+	@echo "  CC    $< (shared library)"
+	$(Q)$(CROSS_COMPILE)gcc $(LIBAK_CFLAGS) -c $< -o $@
+
+# Link shared library
+$(LIBAK_LIB): $(LIBAK_LIBDIR) $(LIBAK_OBJS)
+	@echo "  LD    $@"
+	$(Q)$(CROSS_COMPILE)gcc $(LIBAK_LDFLAGS) $(LIBAK_OBJS) -o $@
+ifeq ($(UNAME_s),Darwin)
+	@echo "  CODESIGN  $@"
+	$(Q)codesign -s - $@ 2>/dev/null || true
+endif
+	@echo "  Built: $@"
+
 clean:
 	rm -f $(AK_OBJS)
+	rm -f $(LIBAK_OBJS)
+	rm -f $(LIBAK_LIB)
 
-# Dependencies
+distclean: clean
+	@rmdir $(LIBAK_LIBDIR) 2>/dev/null || true
+
+# Dependencies for kernel module
 ak_agentic.o: ak_agentic.c ak_agentic.h ak_types.h ak_effects.h ak_wasm.h ak_inference.h ak_policy_v2.h ak_compat.h
 ak_capability.o: ak_capability.c ak_capability.h ak_types.h
 ak_audit.o: ak_audit.c ak_audit.h ak_types.h

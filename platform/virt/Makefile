@@ -2,6 +2,8 @@ include ../../vars.mk
 
 ACPICA_DIR=	$(VENDORDIR)/acpica
 LWIPDIR=	$(VENDORDIR)/lwip
+CPYTHON_DIR=	$(VENDORDIR)/cpython
+PYTHON_LIBS=	$(OUTDIR)/python/lib
 PROGRAMS=	kernel.elf
 
 # XXX temp
@@ -277,7 +279,15 @@ endif
 
 all: $(KERNEL) kernel.dis
 
+.PHONY: boot python-libs
+
 boot: $(UEFI_LOADER)
+
+python-libs:
+	@$(MKDIR) $(PYTHON_LIBS)
+ifneq ($(CPYTHON_DIR),)
+	$(Q) if [ -d $(CPYTHON_DIR) ]; then $(MAKE) -C $(CPYTHON_DIR) install INSTALL_DIR=$(PYTHON_LIBS); fi
+endif
 
 kernel: $(KERNEL)
 

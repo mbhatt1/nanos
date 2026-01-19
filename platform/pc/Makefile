@@ -3,6 +3,8 @@ include ../../vars.mk
 SUBDIR=		boot
 ACPICA_DIR=	$(VENDORDIR)/acpica
 LWIPDIR=	$(VENDORDIR)/lwip
+CPYTHON_DIR=	$(VENDORDIR)/cpython
+PYTHON_LIBS=	$(OUTDIR)/python/lib
 PROGRAMS=	kernel.elf
 
 SRCS-kernel.elf= \
@@ -237,8 +239,16 @@ endif
 
 all: kernel.dis boot
 
+.PHONY: boot python-libs
+
 boot:
 	$(Q) $(MAKE) -C boot
+
+python-libs:
+	@$(MKDIR) $(PYTHON_LIBS)
+ifneq ($(CPYTHON_DIR),)
+	$(Q) if [ -d $(CPYTHON_DIR) ]; then $(MAKE) -C $(CPYTHON_DIR) install INSTALL_DIR=$(PYTHON_LIBS); fi
+endif
 
 kernel: $(KERNEL)
 

@@ -8,6 +8,25 @@ Authority is a unikernel that enforces four security invariants for AI agents ex
 
 Built on [Nanos](https://github.com/nanovms/nanos).
 
+## Elevator Pitch
+
+**Authority is the operating system for autonomous agents.** It gives enterprises provable control over AI agents through mandatory cryptographic capabilities, tamper-evident audit logs, and hard resource budgets—not permissions that can be escalated, not logs that can be deleted, and not budgets that can be exceeded. Run Python agents with the same confidence as humans: every action verified, every operation logged, every resource bounded.
+
+## What Makes Authority Unique
+
+Authority stands apart from other security approaches:
+
+| Aspect | Authority | Traditional Sandboxes | API Gating |
+|--------|-----------|----------------------|-----------|
+| **Control Model** | Mandatory capability tokens (unforgeable HMAC) | File permissions (forgeable) | Runtime checks (bypassed via prompt injection) |
+| **Audit Trail** | Cryptographic hash chain (tamper-evident) | Log files (can be deleted) | API logs (outside agent process) |
+| **Resource Budgets** | Kernel-enforced hard limits | Soft resource limits | No enforcement |
+| **Model Agility** | Works with any LLM | Requires model changes | Model-specific workarounds |
+| **Deployment** | Unikernel = minimal attack surface | Full OS = massive TCB | Network proxy = latency & blind spots |
+| **Assurance Level** | Mathematical invariants | Operating system policy | Application logic |
+
+**The key difference:** Authority makes security **invariants** (mathematical guarantees), not just policies (operational rules). Capabilities can't be forged because they're HMAC-signed. Audit logs can't be tampered with because they're hash-chained. Budgets can't be exceeded because the kernel enforces them. These are properties of the system, not configurations you hope work correctly.
+
 ## Security Invariants
 
 | Invariant | Statement |
@@ -23,7 +42,7 @@ These are not guidelines. They are mathematical properties the kernel enforces.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Agent Process                          │
+│              Agent Process (Python, Node.js, etc)           │
 ├─────────────────────────────────────────────────────────────┤
 │                    Authority Kernel                         │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
@@ -38,6 +57,76 @@ These are not guidelines. They are mathematical properties the kernel enforces.
 │                      Nanos Kernel                           │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## Python Agent Support
+
+Authority Nanos provides **comprehensive Python support** for building secure AI agents. Write production-grade agents in Python that execute within the Authority Kernel's security boundary.
+
+### Run Your First Python Agent in 5 Minutes
+
+1. **Install the SDK:**
+   ```bash
+   pip install authority-nanos
+   ```
+
+2. **Create your agent** (`agent.py`):
+   ```python
+   from authority_nanos import AuthorityKernel
+   import json
+
+   def main():
+       with AuthorityKernel() as ak:
+           # Allocate a counter object
+           handle = ak.alloc("counter", b'{"value": 0}')
+
+           # Read it back
+           data = ak.read(handle)
+           counter = json.loads(data.decode('utf-8'))
+           print(f"Counter: {counter['value']}")
+
+   if __name__ == "__main__":
+       main()
+   ```
+
+3. **Create a policy** (`policy.json`):
+   ```json
+   {
+     "version": "1.0",
+     "budgets": {
+       "tokens": 10000,
+       "tool_calls": 10,
+       "wall_time_ms": 60000
+     }
+   }
+   ```
+
+4. **Build and run:**
+   ```bash
+   make build
+   make run
+   ```
+
+### Python Features
+
+- **Typed Heap Management** - Type-safe object storage with versioning
+- **LLM Integration** - Native support for Claude, GPT-4, and other models
+- **Policy-Controlled I/O** - File and network access governed by policy
+- **Tool Execution** - Call WASM-sandboxed functions safely
+- **Audit Logging** - Complete auditability of all operations
+- **Budget Control** - Token, wall-time, and operation budgets
+
+### Example Projects
+
+- **[anthropic-simple](examples/python/anthropic-simple/)** - Simple Claude integration
+- **[langchain-rag](examples/python/langchain-rag/)** - LangChain with RAG
+- **[openai-function-calling](examples/python/openai-function-calling/)** - Function calling
+
+### Documentation
+
+- **[Python Quickstart Guide](docs/guide/python-quickstart.md)** - Step-by-step setup and first agent
+- **[Python SDK Reference](docs/guide/python-sdk.md)** - Complete API documentation
+- **[Python Examples](docs/guide/python-examples.md)** - All example projects explained
+- **[Python Policies](docs/policy/index.md#python-examples)** - Policy templates and patterns
 
 ## Syscall Interface
 
