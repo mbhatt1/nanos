@@ -235,7 +235,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm build-essential golang aarch64-linux-gnu qemu-system-arm wget
+          sudo apt-get install -y nasm build-essential golang gcc-aarch64-linux-gnu qemu-system-arm wget
 
       - name: Build kernel (ARM64)
         run: |
