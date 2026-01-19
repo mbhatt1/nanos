@@ -164,7 +164,9 @@ void sha256_final(sha256_ctx *ctx, u8 hash[])
 
 void sha256(buffer dest, buffer source)
 {
-    assert(buffer_extend(dest, 32));
+    if (!buffer_extend(dest, 32)) {
+        halt("sha256: failed to extend buffer for 32-byte hash output\n");
+    }
     sha256_ctx c;
     sha256_init(&c);
     sha256_update (&c, buffer_ref(source, 0), buffer_length(source));
