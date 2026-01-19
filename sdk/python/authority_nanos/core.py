@@ -618,7 +618,10 @@ class AuthorityKernel:
             raise InvalidArgumentError(-7, "initial_value must be bytes")
 
         if len(initial_value) > 1024:
-            raise BufferOverflowError(-9, "initial_value exceeds 1024 bytes")
+            raise BufferOverflowError(
+                -9,
+                f"initial_value exceeds maximum size of 1024 bytes (got {len(initial_value)} bytes)"
+            )
 
         req = EffectRequest()
         req.op = Syscall.ALLOC
