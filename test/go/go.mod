@@ -1,6 +1,6 @@
 module github.com/nanovms/nanos/test/go
 
-go 1.22
+go 1.18
 
 require github.com/nanovms/ops v0.0.0-20251025012253-27e89baa017a
 

@@ -27,10 +27,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.18'
+
       - name: Cache dependencies
         uses: actions/cache@v3
         with:
-          path: ~/.cache/apt
+          path: |
+            ~/.cache/apt
+            ~/go/pkg/mod
           key: ${{ runner.os }}-test-${{ hashFiles('**/Makefile') }}
           restore-keys: |
             ${{ runner.os }}-test-
@@ -38,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential gcc libc6-dev
+          sudo apt-get install -y build-essential gcc libc6-dev nasm
 
       - name: Build unit tests
         run: |
@@ -71,10 +78,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.18'
+
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm build-essential qemu-system-x86 golang wget
+          sudo apt-get install -y nasm build-essential qemu-system-x86 wget
 
       - name: Build kernel
         run: |
@@ -157,6 +169,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.18'
 
       - name: Install clang-format
         run: |
