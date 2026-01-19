@@ -418,7 +418,7 @@ s64 ak_local_inference_init(ak_llm_local_config_t *config)
  *   - EPIPE: Broken pipe
  *   - Device not configured
  */
-static inline boolean is_transient_error(s64 error_code)
+static inline boolean __attribute__((unused)) is_transient_error(s64 error_code)
 {
     return error_code == AK_E_LLM_TIMEOUT ||
            error_code == -EAGAIN ||
@@ -431,7 +431,7 @@ static inline boolean is_transient_error(s64 error_code)
  * Implements exponential backoff with jitter to avoid thundering herd.
  * Delay = base_ms * 2^attempt + random(0, base_ms/2)
  */
-static void virtio_backoff_delay(u32 attempt, u32 base_ms)
+static void __attribute__((unused)) virtio_backoff_delay(u32 attempt, u32 base_ms)
 {
     u32 delay_ms = base_ms * (1 << attempt);
     if (delay_ms > 5000)

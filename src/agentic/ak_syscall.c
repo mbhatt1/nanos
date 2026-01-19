@@ -1141,7 +1141,7 @@ ak_response_t *ak_handle_batch(ak_agent_context_t *ctx, ak_request_t *req)
         }
 
         /* Execute operation based on type */
-        if (runtime_strcmp(op_type, "alloc") == 0) {
+        if (ak_strcmp(op_type, "alloc") == 0) {
             u64 type_hash = ak_json_extract_u64(elem, "type");
             /* Use the element as the value (contains "value" field) */
             u64 ptr = ak_heap_txn_alloc(txn, type_hash, elem, ctx->run_id, req->taint);
@@ -1151,7 +1151,7 @@ ak_response_t *ak_handle_batch(ak_agent_context_t *ctx, ak_request_t *req)
             }
             results_ptr[op_count] = ptr;
 
-        } else if (runtime_strcmp(op_type, "write") == 0) {
+        } else if (ak_strcmp(op_type, "write") == 0) {
             u64 ptr = ak_json_extract_u64(elem, "ptr");
             u64 version = ak_json_extract_u64(elem, "version");
             s64 err = ak_heap_txn_write(txn, ptr, elem, version);
@@ -1161,7 +1161,7 @@ ak_response_t *ak_handle_batch(ak_agent_context_t *ctx, ak_request_t *req)
             }
             results_ptr[op_count] = ptr;
 
-        } else if (runtime_strcmp(op_type, "delete") == 0) {
+        } else if (ak_strcmp(op_type, "delete") == 0) {
             u64 ptr = ak_json_extract_u64(elem, "ptr");
             u64 version = ak_json_extract_u64(elem, "version");
             s64 err = ak_heap_txn_delete(txn, ptr, version);

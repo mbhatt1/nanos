@@ -19,14 +19,6 @@
 #include "ak_compat.h"
 #include "ak_heap.h"
 
-/* VFS includes for real filesystem I/O */
-#ifdef KERNEL
-#include <fs.h>
-
-/* External declaration for getting root filesystem */
-extern filesystem get_root_fs(void);
-#endif
-
 /* ============================================================
  * INTERNAL HELPERS
  * ============================================================ */
@@ -526,15 +518,18 @@ s64 ak_host_fs_write(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 /*
  * ak_host_fs_stat - Get file metadata from WASM sandbox
  *
- * IMPLEMENTED using Nanos VFS (when KERNEL defined)
+ * STUB IMPLEMENTATION - Returns placeholder data
  *
- * This function IS fully implemented because fsfile_open() and fsfile_get_length()
- * are synchronous operations that don't require async I/O completion.
+ * WHY STUB: File stat operations require VFS integration which is asynchronous
+ * in Nanos. The WASM execution model is synchronous, so async VFS operations
+ * would require cooperative yield points.
+ *
+ * ALTERNATIVES:
+ *   1. VIRTIO-SERIAL PROXY: Send stat request to host-side daemon
+ *   2. PRE-LOADED METADATA: Orchestrator provides file list at tool startup
  *
  * Args: {"path": "/path/to/file"}
- * Returns: {"size": 12345, "exists": true} on success
- *          {"exists": false} if file not found
- *          {"error": "..."} on error
+ * Returns: {"size": 0, "exists": true} (stub response)
  */
 s64 ak_host_fs_stat(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
@@ -557,69 +552,13 @@ s64 ak_host_fs_stat(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-#ifdef KERNEL
-    /*
-     * Open the file to get metadata.
-     *
-     * fsfile_open() is synchronous and safe to call from WASM context.
-     * We open, read metadata, then immediately release the handle.
-     */
-    sstring path_ss = isstring(path_buf, path_len);
-    fsfile f = fsfile_open(path_ss);
-    if (!f) {
-        /* File not found - return exists: false */
-        buffer res = allocate_buffer(ctx->agent->heap, 32);
-        if (res == INVALID_ADDRESS)
-            return AK_E_WASM_OOM;
-        buffer_write(res, "{\"exists\": false}", 17);
-        *result = res;
-        return 0;
-    }
-
-    /* Get file size - synchronous operation */
-    u64 file_size = fsfile_get_length(f);
-
-    /* Release file handle */
-    fsfile_release(f);
-
-    /* Build result JSON with file metadata */
-    buffer res = allocate_buffer(ctx->agent->heap, 128);
-    if (res == INVALID_ADDRESS)
+    /* STUB: Returns placeholder metadata - see documentation for alternatives */
+    buffer res = allocate_buffer(ctx->agent->heap, 64);
+    if (!res || res == INVALID_ADDRESS)
         return AK_E_WASM_OOM;
-
-    buffer_write(res, "{\"size\": ", 9);
-
-    /* Write file size as number */
-    char num_buf[32];
-    int num_len = 0;
-    u64 v = file_size;
-    if (v == 0) {
-        num_buf[num_len++] = '0';
-    } else {
-        char temp[32];
-        int temp_len = 0;
-        while (v > 0) {
-            temp[temp_len++] = '0' + (v % 10);
-            v /= 10;
-        }
-        for (int i = temp_len - 1; i >= 0; i--) {
-            num_buf[num_len++] = temp[i];
-        }
-    }
-    buffer_write(res, num_buf, num_len);
-    buffer_write(res, ", \"exists\": true}", 17);
-
+    buffer_write(res, "{\"size\": 0, \"exists\": true}", 27);
     *result = res;
     return 0;
-
-#else
-    /*
-     * Non-kernel build: VFS not available.
-     * Return stub response for testing.
-     */
-    *result = create_json_result(ctx->agent->heap, "size", "0", 1);
-    return (*result) ? 0 : AK_E_WASM_OOM;
-#endif
 }
 
 /*
@@ -992,8 +931,8 @@ static s64 parse_json_integer(buffer args, const char *key)
         if (val[i] >= '0' && val[i] <= '9') {
             s64 digit = val[i] - '0';
             /* Check for overflow before multiplication */
-            if (result > (INT64_MAX - digit) / 10) {
-                return INT64_MAX;  /* Saturate on overflow */
+            if (result > (S64_MAX - digit) / 10) {
+                return S64_MAX;  /* Saturate on overflow */
             }
             result = result * 10 + digit;
         } else {

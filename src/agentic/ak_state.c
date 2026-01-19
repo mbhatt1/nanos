@@ -979,8 +979,8 @@ static fsfile ak_state_fsfile = NULL;
 #endif
 
 /* Sync state for async operations */
-static volatile boolean ak_state_io_pending = false;
-static volatile s64 ak_state_io_result = 0;
+static volatile boolean ak_state_io_pending __attribute__((unused)) = false;
+static volatile s64 ak_state_io_result __attribute__((unused)) = 0;
 
 /*
  * CRC32 implementation for data integrity verification.

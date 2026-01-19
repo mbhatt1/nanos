@@ -253,6 +253,18 @@ static inline void *allocate_zero(heap h, bytes len)
 #define ENOSYS      38
 #endif
 
+#ifndef ESRCH
+#define ESRCH       3
+#endif
+
+#ifndef EINTR
+#define EINTR       4
+#endif
+
+#ifndef EAGAIN
+#define EAGAIN      11
+#endif
+
 #ifndef EBUSY
 #define EBUSY       16
 #endif
