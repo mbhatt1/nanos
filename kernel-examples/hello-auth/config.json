@@ -1,7 +1,8 @@
 {
-  "Args": ["main.py"],
+  "Args": ["-u", "main.py"],
   "ManifestPassthrough": {
     "expected_exit_code": ["0"],
-    "debug_exit": "t"
+    "debug_exit": "t",
+    "trace": "t"
   }
 }

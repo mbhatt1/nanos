@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -11,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 )
 
 // Config represents the nanofile configuration
@@ -70,15 +70,30 @@ func runApp(args []string) {
 		verbose    bool
 	)
 
-	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	fs.StringVar(&configFile, "c", "config.json", "Configuration file")
-	fs.IntVar(&memory, "m", 512, "Memory in MB")
-	fs.BoolVar(&verbose, "v", false, "Verbose output")
-	fs.BoolVar(&verbose, "verbose", false, "Verbose output")
+	// Parse command line arguments manually to handle flags after positional args
+	var remaining []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "-v", "-verbose":
+			verbose = true
+		case "-c":
+			if i+1 < len(args) {
+				configFile = args[i+1]
+				i++
+			}
+		case "-m":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil {
+					memory = n
+					i++
+				}
+			}
+		default:
+			remaining = append(remaining, arg)
+		}
+	}
 
-	fs.Parse(args)
-
-	remaining := fs.Args()
 	if len(remaining) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: No app specified\n")
 		printUsage()
@@ -182,17 +197,31 @@ func mkImageOnly(args []string) {
 		verbose    bool
 	)
 
-	fs := flag.NewFlagSet("mkimage", flag.ExitOnError)
-	fs.StringVar(&configFile, "c", "config.json", "Configuration file")
-	fs.BoolVar(&verbose, "v", false, "Verbose output")
-	fs.BoolVar(&verbose, "verbose", false, "Verbose output")
+	// Parse command line arguments manually to handle flags after positional args
+	// Go's flag package doesn't handle this well by default
+	var remaining []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "-v", "-verbose":
+			verbose = true
+		case "-c":
+			if i+1 < len(args) {
+				configFile = args[i+1]
+				i++
+			}
+		default:
+			remaining = append(remaining, arg)
+		}
+	}
 
-	fs.Parse(args)
-
-	remaining := fs.Args()
 	if len(remaining) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: minops mkimage <app.py> <output.img> [-c config.json] [-v]\n")
 		os.Exit(1)
+	}
+
+	if verbose {
+		fmt.Printf("🔧 Verbose mode enabled\n")
 	}
 
 	appFile = remaining[0]
@@ -310,6 +339,23 @@ func findMkfs() string {
 	return ""
 }
 
+func findBootloader() string {
+	// Try standard locations
+	candidates := []string{
+		"output/platform/pc/boot/boot.img",
+		"../output/platform/pc/boot/boot.img",
+		"../../output/platform/pc/boot/boot.img",
+	}
+
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	return ""
+}
+
 func createImage(imagePath, appPath string, kernelPath string, config *Config, verbose bool) error {
 	// Build manifest in Nanos tuple format with proper spacing
 	var manifest bytes.Buffer
@@ -375,9 +421,6 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 
 	if verbose {
 		fmt.Printf("   Manifest:\n%s\n", manifest.String())
-	} else {
-		// Always print manifest for debugging
-		fmt.Printf("   Manifest (debug): %s\n", manifest.String())
 	}
 
 	// Find mkfs tool
@@ -390,9 +433,27 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		fmt.Printf("   Using mkfs: %s\n", mkfsPath)
 	}
 
+	// Find bootloader
+	bootloaderPath := findBootloader()
+	if bootloaderPath == "" {
+		// For now, continue without bootloader - output may still work
+		if verbose {
+			fmt.Printf("   ⚠️  Bootloader not found (output may not display)\n")
+		}
+	} else {
+		if verbose {
+			fmt.Printf("   Using bootloader: %s\n", bootloaderPath)
+		}
+	}
+
 	// Run mkfs with manifest from stdin
-	// Use -k flag to embed kernel image
-	mkfsArgs := []string{"-k", kernelPath, imagePath}
+	// Use -b flag for bootloader (if found) and -k flag for kernel image
+	mkfsArgs := []string{"-k", kernelPath}
+	if bootloaderPath != "" {
+		mkfsArgs = append([]string{"-b", bootloaderPath}, mkfsArgs...)
+	}
+	mkfsArgs = append(mkfsArgs, imagePath)
+
 	cmd := exec.Command(mkfsPath, mkfsArgs...)
 	cmd.Stdin = &manifest
 
