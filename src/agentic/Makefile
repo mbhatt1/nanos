@@ -132,9 +132,15 @@ LIBAK_CFLAGS = \
 
 .PHONY: all clean distclean libak
 
+# Build libak only if source file exists
+ifeq ($(wildcard libak.c),libak.c)
 all: $(AK_OBJS) libak
-
 libak: $(LIBAK_LIB)
+else
+all: $(AK_OBJS)
+libak:
+	@echo "Warning: libak.c not found, skipping libak shared library build"
+endif
 
 # Kernel module object files
 %.o: %.c $(AK_HDRS)
