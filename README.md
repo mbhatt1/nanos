@@ -66,6 +66,8 @@ See `sdk/python/` for the complete SDK.
 
 ## Syscall Interface
 
+The kernel implements 14 syscalls (1024-1037) for agent communication:
+
 | Number | Name | Description |
 |--------|------|-------------|
 | 1024 | `AK_SYS_READ` | Read object from typed heap |
@@ -142,62 +144,6 @@ typedef struct ak_audit_entry {
 
 The hash chain is append-only and tamper-evident.
 
-## Building
-
-### Prerequisites
-
-**macOS:**
-```bash
-brew install nasm go wget qemu
-brew tap nanovms/homebrew-qemu
-brew install nanovms/homebrew-qemu/qemu
-```
-
-**Linux (Ubuntu/Debian):**
-```bash
-sudo apt-get install nasm build-essential qemu-system-x86-64 wget golang-go
-```
-
-### Build
-
-```bash
-# Build kernel and libak
-make PLATFORM=pc
-
-# For ARM64
-make PLATFORM=virt ARCH=aarch64
-
-# For RISC-V
-make PLATFORM=riscv-virt ARCH=riscv64
-```
-
-### Tests
-
-```bash
-make -C test/unit test
-```
-
-## Configuration
-
-Runtime policy format (`policy.json`):
-
-```json
-{
-  "version": "1.0",
-  "fs": {
-    "read": ["/app/**"],
-    "write": ["/tmp/**"]
-  },
-  "budgets": {
-    "tokens": 100000,
-    "tool_calls": 50,
-    "wall_time_ms": 300000
-  }
-}
-```
-
-Compile-time options in `src/agentic/ak_config.h`.
-
 ## Components
 
 | Component | Files | Description |
@@ -210,24 +156,6 @@ Compile-time options in `src/agentic/ak_config.h`.
 | WASM Sandbox | `ak_wasm.h/c`, `ak_wasm_host.c` | Tool execution with capability gating |
 | Syscall Dispatch | `ak_syscall.h/c` | 10-stage validation pipeline |
 | IPC Transport | `ak_ipc.h/c` | Framed protocol, replay protection |
-
-## Testing
-
-```bash
-# Unit tests (510+ tests)
-make -C test/unit test
-
-# Authority Kernel tests
-./output/test/unit/bin/ak_capability_test
-./output/test/unit/bin/ak_audit_test
-./output/test/unit/bin/ak_syscall_test
-./output/test/unit/bin/ak_wasm_test
-```
-
-## Platforms
-
-- x86_64: KVM (Linux), HVF (macOS), QEMU
-- ARM64: Raspberry Pi 4, AWS Graviton, Azure Ampere
 
 ## Project Structure
 
@@ -250,29 +178,6 @@ test/
   └── integration/      # Integration tests
 ```
 
-## Syscalls
-
-The kernel implements 14 syscalls (1024-1037) for agent communication:
-
-- **Heap**: `READ`, `ALLOC`, `WRITE`, `DELETE`, `QUERY`, `BATCH`, `COMMIT`
-- **Execution**: `CALL` (tool execution), `SPAWN` (child agents)
-- **Messaging**: `SEND`, `RECV`, `RESPOND`
-- **Control**: `ASSERT`, `INFERENCE`
-
-See `src/agentic/libak.h` for the full C API.
-
-## Documentation
-
-- `docs/` - VitePress documentation site
-- `docs/design/` - Architecture and design documents
-- `docs/security/` - Security invariants and threat model
-- `docs/testing/` - Testing guide (unit, integration, fuzzing)
-
 ## License
 
 Apache-2.0
-
-## References
-
-- [Nanos Unikernel](https://github.com/nanovms/nanos)
-- [Python SDK](sdk/python/)
