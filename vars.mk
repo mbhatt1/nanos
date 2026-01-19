@@ -40,29 +40,30 @@ ifeq ($(PLATFORM),riscv-virt)
 ARCH?=		riscv64
 endif
 ifneq ($(ARCH),$(HOST_ARCH))
-  ifeq ($(ARCH),riscv64)
-    CROSS_COMPILE?= riscv64-linux-gnu-
-  else ifeq ($(ARCH),aarch64)
-    CROSS_COMPILE?= aarch64-linux-gnu-
-  else ifeq ($(ARCH),x86_64)
-    CROSS_COMPILE?= x86_64-linux-gnu-
+  ifeq ($(UNAME_s),Darwin)
+    # macOS cross-compilation (uses ELF toolchains)
+    ifeq ($(ARCH),riscv64)
+      CROSS_COMPILE= riscv64-unknown-elf-
+    else ifeq ($(ARCH),aarch64)
+      CROSS_COMPILE= aarch64-elf-
+    else ifeq ($(ARCH),x86_64)
+      CROSS_COMPILE= x86_64-elf-
+    else
+      CROSS_COMPILE= $(ARCH)-elf-
+    endif
   else
-    CROSS_COMPILE?= $(ARCH)-linux-gnu-
+    # Linux cross-compilation (uses GNU toolchains)
+    ifeq ($(ARCH),riscv64)
+      CROSS_COMPILE?= riscv64-linux-gnu-
+    else ifeq ($(ARCH),aarch64)
+      CROSS_COMPILE?= aarch64-linux-gnu-
+    else ifeq ($(ARCH),x86_64)
+      CROSS_COMPILE?= x86_64-linux-gnu-
+    else
+      CROSS_COMPILE?= $(ARCH)-linux-gnu-
+    endif
   endif
 endif
-endif
-
-# macOS cross-compilation (uses ELF toolchains)
-ifeq ($(UNAME_s),Darwin)
-  ifeq ($(ARCH),riscv64)
-    CROSS_COMPILE= riscv64-unknown-elf-
-  else ifeq ($(ARCH),aarch64)
-    CROSS_COMPILE= aarch64-elf-
-  else ifeq ($(ARCH),x86_64)
-    CROSS_COMPILE= x86_64-elf-
-  else
-    CROSS_COMPILE= $(ARCH)-elf-
-  endif
 endif 
 
 PLATFORMDIR=	$(ROOTDIR)/platform/$(PLATFORM)
