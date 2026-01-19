@@ -1,626 +1,200 @@
-# Authority, a fork of Nanos
+# Authority
 
-<img width="352" height="410" alt="image" src="https://github.com/user-attachments/assets/dc49825c-6696-49da-8f78-a9acedeccb0e" />
+A security kernel for autonomous agents.
 
-**The AI-First Unikernel for Autonomous Agents**
+## Overview
 
-Authority Nanos is a security-hardened unikernel designed specifically for running AI agents in production. Built on the proven Nanos kernel architecture, Authority Nanos adds the **Authority Kernel** — a capability-based security layer purpose-built for autonomous agentic systems.
+Authority is a unikernel that enforces four security invariants for AI agents executing in production environments. It provides cryptographic capability tokens, hash-chained audit logs, and admission-controlled resource budgets.
 
-Unlike traditional operating systems designed for human users, Authority Nanos is optimized for AI agents with:
-- 🔐 **Capability-based security** - Fine-grained access control for every agent action
-- 📝 **Tamper-evident audit logs** - Hash-chained cryptographic logging of all operations
-- 🤖 **Native LLM integration** - Local models via virtio-serial and external APIs
-- 🚀 **Cross-platform** - x86_64 and ARM64 support for cloud and edge deployment
-- ⚡ **Minimal attack surface** - Single-process unikernel with no SSH, no users, no unnecessary syscalls
-- 🔄 **Ephemeral by design** - Stateless VMs with external state synchronization
+Built on [Nanos](https://github.com/nanovms/nanos).
 
-Read more about the [Authority Kernel](src/agentic/README.md) and [Security Invariants](../SECURITY_INVARIANTS.md).
+## Security Invariants
 
----
+| Invariant | Statement |
+|-----------|-----------|
+| **INV-1** | All external I/O occurs through kernel-mediated syscalls |
+| **INV-2** | Every effectful syscall requires a valid, non-revoked capability |
+| **INV-3** | Resource consumption never exceeds declared budgets |
+| **INV-4** | Every state transition appends a hash-chained audit entry |
 
-## Table of Contents
+These are not guidelines. They are mathematical properties the kernel enforces.
 
-1. [Why Authority Nanos?](#why-authority-nanos)
-2. [Getting Started](#getting-started)
-3. [Agentic Runtime Features](#agentic-runtime-features)
-4. [Building From Source](#building-from-source)
-5. [Configuration](#configuration)
-6. [Documentation](#documentation)
-7. [Support](#support)
-
----
-
-## Why Authority Nanos?
-
-### The Computer Use Problem
-
-**Computer use agents** are fundamentally different from chatbots:
-- They execute code that modifies production systems
-- They interact with databases, APIs, and infrastructure
-- They make decisions with real-world consequences
-- They run autonomously without human oversight
-
-Traditional security models (containers, VMs, serverless) were designed for human operators with judgment. When AI agents control these systems, you need:
-
-### The Authority Nanos Solution
-
-**Zero-Trust Architecture**
-- Every operation requires a valid, non-revoked capability token
-- No implicit permissions, no ambient authority
-- Fail-closed by default — unknown operations are denied
-
-**Complete Auditability**
-- Every state change is logged with cryptographic hash chaining
-- Replay bundles for compliance and debugging
-- Tamper-evident logs prevent undetected modifications
-
-**Resource Control**
-- Budget enforcement for tokens, API calls, file I/O, and network usage
-- Prevents runaway costs and resource exhaustion
-- Admission control before operations execute
-
-**AI-Native Syscalls**
-- [`ak_sys_inference`](src/agentic/ak_inference.h) - LLM completions with capability gating
-- [`ak_sys_call`](src/agentic/ak_syscall.h) - Tool execution in WASM sandbox
-- [`ak_sys_write`](src/agentic/ak_heap.h) - Versioned heap with CAS semantics
-- [`ak_sys_batch`](src/agentic/ak_syscall.h) - Atomic multi-operation transactions
-
-### Computer Use Systems Need Authority Nanos
-
-✅ **Code Deployment Agents** - Deploy to production with cryptographic audit trail
-✅ **Infrastructure Automation** - Provision resources with capability-gated access
-✅ **Database Query Agents** - Execute SQL with row-level capability controls
-✅ **DevOps Assistants** - kubectl, terraform, ansible with provable authorization
-✅ **Security Analysts** - Investigate incidents with tamper-proof audit logs
-✅ **Regulated Industries** - Healthcare, finance, defense with compliance guarantees
-
-**Without Authority Nanos**: Hope the agent behaves, check logs later, incident response when things break.
-**With Authority Nanos**: Cryptographic proof of authorization, real-time policy enforcement, immutable audit trail.
-
----
-
-## Getting Started
-
-### Quick Start with Authority CLI
-
-The fastest way to run applications on Authority Nanos is using the `authority` CLI:
-
-```bash
-# Install Authority Nanos
-curl https://authority.dev/get.sh -sSfL | sh
-```
-
-### Running Your First Agent
-
-Create a simple agent configuration:
-
-```yaml
-# agent.yaml
-version: "1.0"
-
-llm:
-  mode: hybrid  # Use both local and external models
-  local:
-    device_path: /dev/vport0p1
-    default_model: llama3.1:70b
-  api:
-    provider: anthropic
-    model: claude-3-5-sonnet-20241022
-
-budgets:
-  tokens: 100000
-  calls: 50
-  inference_ms: 300000
-  file_bytes: 104857600
-
-tools:
-  allow:
-    - file_read
-    - http_get
-    - web_search
-  deny:
-    - shell_exec
-```
-
-Deploy your agent:
-
-```bash
-authority run -c agent.yaml agent-binary
-```
-
-For local model support, start an inference server on the host:
-
-```bash
-# Host machine
-ollama serve
-```
-
-![Demo](doc/demo.gif)
-
----
-
-## Agentic Runtime Features
-
-### 1. LLM Gateway
-
-Authority Nanos provides unified inference capabilities:
-
-**Local Models** (via virtio-serial)
-- Ollama, vLLM, llama.cpp support
-- Zero API costs for inference
-- Data never leaves your infrastructure
-- Full offline operation
-
-**External APIs**
-- OpenAI, Anthropic, custom endpoints
-- Automatic routing based on model name
-- Secrets managed via secure host interface
-
-**Hybrid Mode**
-- Route by model: `llama3:70b` → local, `gpt-4` → OpenAI
-- Fallback strategies for availability
-- Cost optimization through intelligent routing
-
-Example inference call:
-
-```c
-ak_inference_request_t req = {
-    .type = AK_INFERENCE_CHAT,
-    .model = "claude-3-5-sonnet-20241022",
-    .messages = messages,
-    .message_count = 3,
-    .max_tokens = 1000,
-    .temperature = 0.7
-};
-
-ak_inference_response_t *res = ak_inference_complete(agent_ctx, &req, capability);
-```
-
-### 2. Capability System
-
-Fine-grained, cryptographically enforced permissions:
-
-```c
-// Capabilities are HMAC-SHA256 signed tokens
-typedef struct ak_capability {
-    ak_cap_type_t type;         // Net, FS, Tool, Secrets, Inference
-    buffer resource;             // Domain pattern, path, tool name
-    buffer methods[8];           // Allowed operations
-    timestamp issued_ms;
-    u32 ttl_ms;                  // Time-to-live
-    u32 rate_limit;              // Requests per window
-    buffer run_id;               // Bound to specific run
-    u8 mac[32];                  // HMAC prevents forgery
-} ak_capability_t;
-```
-
-**Benefits:**
-- **Unforgeable** - HMAC signatures prevent tampering
-- **Revocable** - Immediate revocation without restarts
-- **Scoped** - Resource patterns like `https://*.github.com/*`
-- **Time-limited** - Automatic expiration
-- **Rate-limited** - Prevent abuse
-
-### 3. Typed Heap with Versioning
-
-Every agent gets a versioned object store:
-
-```c
-// Allocate object
-ak_sys_alloc(type, initial_value_json) → ptr, version
-
-// Read (always succeeds)
-ak_sys_read(ptr) → {value, version}
-
-// Update with optimistic concurrency
-ak_sys_write(ptr, json_patch, expected_version)
-  → {new_version} or E_CONFLICT
-
-// Atomic batch
-ak_sys_batch([
-    {op: "write", ptr: obj1, patch: {...}, version: 5},
-    {op: "write", ptr: obj2, patch: {...}, version: 3}
-]) → all succeed or all fail
-```
-
-**Features:**
-- Compare-and-swap (CAS) semantics prevent lost updates
-- JSON Patch (RFC 6902) for incremental modifications
-- Schema validation on every write
-- Immutable version history
-- Taint tracking for information flow
-
-### 4. Audit Log
-
-Cryptographic audit trail of all operations:
+## Architecture
 
 ```
-Entry[N] = {
-    seq: N,
-    pid: "agent-7a3f",
-    run_id: "2024-01-15T10:30:00Z",
-    op: "WRITE",
-    req_hash: SHA256(request),
-    res_hash: SHA256(response),
-    prev_hash: Entry[N-1].this_hash,
-    this_hash: SHA256(prev_hash || canonical(Entry[N]))
-}
+┌─────────────────────────────────────────────────────────────┐
+│                      Agent Process                          │
+├─────────────────────────────────────────────────────────────┤
+│                    Authority Kernel                         │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │Capability│ │  Audit   │ │  Policy  │ │  Budget  │       │
+│  │  System  │ │   Log    │ │  Engine  │ │  Control │       │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │  Typed   │ │   LLM    │ │   WASM   │ │  Syscall │       │
+│  │   Heap   │ │ Gateway  │ │ Sandbox  │ │ Dispatch │       │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
+├─────────────────────────────────────────────────────────────┤
+│                      Nanos Kernel                           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Properties:**
-- **Tamper-evident** - Broken hash chain detected immediately
-- **Append-only** - No modifications or deletions
-- **Durable** - fsync() before response
-- **Queryable** - Search by run_id, time range, operation
-- **Replayable** - Reconstruct agent state from genesis
+## Syscall Interface
 
-### 5. Policy Engine
+| Number | Name | Description |
+|--------|------|-------------|
+| 1024 | `AK_SYS_READ` | Read object from typed heap |
+| 1025 | `AK_SYS_ALLOC` | Allocate heap object |
+| 1026 | `AK_SYS_WRITE` | Update object (CAS semantics) |
+| 1027 | `AK_SYS_DELETE` | Delete object |
+| 1028 | `AK_SYS_QUERY` | Query objects |
+| 1029 | `AK_SYS_BATCH` | Atomic batch operations |
+| 1030 | `AK_SYS_COMMIT` | Checkpoint audit log |
+| 1031 | `AK_SYS_CALL` | Execute tool in WASM sandbox |
+| 1032 | `AK_SYS_SPAWN` | Create child agent |
+| 1033 | `AK_SYS_SEND` | Send message |
+| 1034 | `AK_SYS_RECV` | Receive messages |
+| 1035 | `AK_SYS_RESPOND` | Return response |
+| 1036 | `AK_SYS_ASSERT` | Record assertion |
+| 1037 | `AK_SYS_INFERENCE` | Invoke LLM |
 
-Declarative security policies in YAML:
-
-```yaml
-version: "1.0"
-
-budgets:
-  tokens: 100000          # Total LLM tokens
-  calls: 50               # Tool/API calls
-  inference_ms: 300000    # 5 minutes of inference time
-  file_bytes: 104857600   # 100 MB file I/O
-  network_bytes: 104857600
-
-tools:
-  allow: [file_read, http_get, web_search]
-  deny: [shell_exec, file_write]
-
-domains:
-  allow: ["*.github.com", "*.wikipedia.org"]
-  deny: ["*.internal", "localhost"]
-
-taint:
-  sources: [user_input, external_api]
-  sinks: [shell_exec, file_write]
-  sanitizers: [html_escape, json_encode]
-```
-
-### 6. WASM Sandbox for Tools
-
-Execute untrusted tool code safely:
-
-```c
-// Tools run in WASM sandbox with limited capabilities
-ak_sys_call(
-    tool_name: "web_search",
-    args: {query: "latest AI papers"},
-    capability: search_cap
-) → {results: [...], usage: {...}}
-```
-
-**Isolation:**
-- WASM sandbox with no system access
-- Explicit capability passing only
-- Memory limits enforced
-- Deterministic execution for replay
-
----
-
-## Building From Source
-
-### Prerequisites
-
-Authority Nanos requires the same toolchain as standard Nanos, with the agentic components built in.
-
-#### macOS (Intel)
-
-```bash
-brew update && brew install nasm go wget ent
-brew tap nanovms/homebrew-toolchains
-brew install x86_64-elf-binutils
-brew tap nanovms/homebrew-qemu
-brew install nanovms/homebrew-qemu/qemu
-```
-
-#### macOS (Apple Silicon)
-
-```bash
-brew update && brew install go wget ent qemu aarch64-elf-binutils
-```
-
-#### Linux
-
-```bash
-sudo apt-get install qemu-system-x86 nasm golang-go ent ruby
-curl https://authority.dev/get.sh -sSfL | sh
-```
-
-### Build the Kernel
-
-```bash
-# Build kernel with Authority Kernel enabled
-make kernel
-
-# Or build everything (kernel + klibs)
-make
-```
-
-The Authority Kernel is enabled by default via [`CONFIG_AK_ENABLED=1`](src/agentic/ak_config.h) in the build configuration.
-
-### Running Examples
-
-```bash
-# Run example agent (with hardware acceleration)
-make run
-
-# Run specific example
-make TARGET=<example> run
-
-# Run without acceleration (VM in VM)
-make run-noaccel
-```
-
-### Testing
-
-```bash
-# Run all tests
-make test
-
-# Run Authority Kernel tests specifically
-cd src/agentic && make test
-```
-
-Authority Kernel tests include:
-- Capability verification and forgery attempts
-- CAS semantics and concurrent updates
-- Audit log integrity and tamper detection
-- Policy evaluation and budget enforcement
-- Replay protection and sequence validation
-
----
-
-## Configuration
-
-### Kernel Configuration
-
-Authority Kernel features can be configured via [`src/agentic/ak_config.h`](src/agentic/ak_config.h):
-
-```c
-/* Feature Toggles */
-#define CONFIG_AK_ENABLED       1       /* Master switch */
-#define AK_ENABLE_WASM          1       /* WASM sandboxing */
-#define AK_ENABLE_TAINT         1       /* Information flow tracking */
-#define AK_ENABLE_STATE_SYNC    1       /* Ephemeral VM state sync */
-
-/* Security Parameters */
-#define AK_KEY_ROTATION_INTERVAL_MS     (24 * 60 * 60 * 1000)  /* 24 hours */
-#define AK_MAX_CAP_TTL_MS               (7 * 24 * 60 * 60 * 1000)  /* 7 days */
-#define AK_ANCHOR_INTERVAL              1000  /* Audit anchor frequency */
-
-/* Resource Limits */
-#define AK_MAX_HEAP_OBJECTS             100000
-#define AK_MAX_HEAP_BYTES               (1024 * 1024 * 1024)  /* 1 GB */
-#define AK_MAX_IPC_MESSAGE              (1024 * 1024)  /* 1 MB */
-#define AK_MAX_AGENTS                   64
-
-/* LLM Gateway */
-#define AK_LLM_MODE_LOCAL               1       /* Local models */
-#define AK_LLM_MODE_EXTERNAL            1       /* External APIs */
-```
-
-### Runtime Configuration
-
-Agent policies are loaded at runtime via manifest:
+## Policy Format
 
 ```json
 {
-  "authority": {
-    "policy_path": "/policy.yaml",
-    "audit_log_path": "/var/log/authority/audit.log",
-    "llm": {
-      "mode": "hybrid",
-      "local": {
-        "device": "/dev/vport0p1",
-        "timeout_ms": 30000
-      },
-      "api": {
-        "provider": "anthropic",
-        "endpoint": "https://api.anthropic.com/v1",
-        "secret_name": "ANTHROPIC_API_KEY"
-      }
-    }
+  "version": "1.0",
+  "fs": {
+    "read": ["/app/**", "/lib/**"],
+    "write": ["/tmp/**"]
+  },
+  "net": {
+    "dns": ["api.example.com"],
+    "connect": ["dns:api.example.com:443"]
+  },
+  "tools": {
+    "allow": ["http_get", "file_read"],
+    "deny": ["shell_exec"]
+  },
+  "budgets": {
+    "tokens": 100000,
+    "tool_calls": 50,
+    "wall_time_ms": 300000
   }
 }
 ```
 
----
+## Capability Token
 
-## Architecture
+```c
+typedef struct ak_capability {
+    ak_cap_type_t type;       // NET, FS, TOOL, SECRETS, INFERENCE
+    char resource[256];       // Pattern: "https://*.github.com/*"
+    char methods[8][32];      // Allowed operations
+    u64 issued_ms;
+    u32 ttl_ms;
+    u32 rate_limit;
+    u8 run_id[16];            // Bound to specific execution
+    u8 mac[32];               // HMAC-SHA256 signature
+} ak_capability_t;
+```
 
-### Cross-Platform Support
+Capabilities are unforgeable (HMAC), revocable, time-limited, and rate-limited.
 
-**x86_64 (Intel/AMD)**
-- Full hardware support in [`src/x86_64/`](src/x86_64/)
-- KVM acceleration on Linux, HVF on macOS
-- Deployed on AWS (c5/c6), GCE (n2/c2), Azure (Dv3/Ev3)
+## Audit Log Entry
 
-**ARM64 (aarch64)**
-- Complete implementation in [`src/aarch64/`](src/aarch64/)
-- Runs on Raspberry Pi 4, AWS Graviton, Azure Ampere
-- See [ARM Tutorial](https://nanovms.com/dev/tutorials/nanos-on-64-bit-arm)
+```c
+typedef struct ak_audit_entry {
+    u64 seq;                  // Monotonic sequence number
+    u8 pid[16];               // Agent ID
+    u8 run_id[16];            // Execution ID
+    u16 op;                   // Operation code
+    u8 req_hash[32];          // SHA-256 of request
+    u8 res_hash[32];          // SHA-256 of response
+    u8 prev_hash[32];         // Previous entry hash
+    u8 this_hash[32];         // SHA-256(prev_hash || entry)
+} ak_audit_entry_t;
+```
 
-### Single-Process Model
+The hash chain is append-only and tamper-evident.
 
-Authority Nanos is a **single-process unikernel**:
-- ❌ No multiple processes (no fork, exec)
-- ✅ Multi-threaded within single address space
-- ❌ No users, groups, or permissions model
-- ✅ Capability-based security instead
-- ❌ No SSH or remote admin
-- ✅ Management via virtio-serial and policy updates
+## Build
 
-This design:
-- Eliminates whole classes of vulnerabilities (privilege escalation, user impersonation)
-- Simplifies security model (capabilities instead of ACLs)
-- Reduces attack surface (no unnecessary syscalls)
-- Enables fast startup and low memory overhead
+```bash
+# Prerequisites (macOS)
+brew install nasm go wget qemu
+brew tap nanovms/homebrew-qemu
+brew install nanovms/homebrew-qemu/qemu
 
-See [Nanos Charter](CHARTER.md) for the philosophical foundation.
+# Build kernel
+make PLATFORM=pc
 
----
+# Run tests
+make -C test/unit && make -C test/unit test
+```
 
-## Documentation
+## Configuration
 
-### Authority Kernel Documentation
+Compile-time options in `src/agentic/ak_config.h`:
 
-- [Authority Kernel README](src/agentic/README.md) - Component overview
-- [Implementation Spec](../IMPLEMENTATION_SPEC.md) - Detailed technical specification
-- [Security Invariants](../SECURITY_INVARIANTS.md) - The four foundational guarantees
-- [Capability System](src/agentic/ak_capability.h) - Token format and verification
-- [LLM Gateway](src/agentic/ak_inference.h) - Inference API and routing
-- [Audit Log](src/agentic/ak_audit.h) - Hash chain and replay
+```c
+#define AK_ENABLE_WASM              1       // WASM sandbox
+#define AK_ENABLE_TAINT             1       // Information flow tracking
+#define AK_ENABLE_STATE_SYNC        1       // Ephemeral VM state sync
+#define AK_KEY_ROTATION_MS          86400000  // 24 hours
+#define AK_MAX_HEAP_OBJECTS         100000
+#define AK_MAX_AGENTS               64
+```
 
-### General Nanos Documentation
+Runtime policy loaded from `/ak/policy.json` in the image.
 
-- [Operations Guide](https://docs.authority.dev/) - Using authority CLI to deploy
-- [Architecture](https://github.com/mbhatt1/nanos/wiki/Architecture) - Kernel internals
-- [Debugging Guide](https://github.com/mbhatt1/nanos/wiki/debugging) - Troubleshooting
-- [Networking Setup](https://github.com/mbhatt1/nanos/wiki/networking-setup) - Manual network config
-- [FAQ](FAQ.md) - Frequently asked questions
-- [Examples](https://github.com/nanovms/ops-examples) - Sample applications
+## Components
 
----
+| Component | Files | Description |
+|-----------|-------|-------------|
+| Capability System | `ak_capability.h/c` | HMAC-SHA256 tokens, revocation, rate limiting |
+| Audit Log | `ak_audit.h/c` | Hash-chained entries, crash recovery, anchoring |
+| Typed Heap | `ak_heap.h/c` | Versioned objects, CAS semantics, taint tracking |
+| Policy Engine | `ak_policy.h/c`, `ak_policy_v2.h/c` | JSON/TOML parsing, pattern matching |
+| LLM Gateway | `ak_inference.h/c` | Local (virtio-serial) and external API routing |
+| WASM Sandbox | `ak_wasm.h/c`, `ak_wasm_host.c` | Tool execution with capability gating |
+| Syscall Dispatch | `ak_syscall.h/c` | 10-stage validation pipeline |
+| IPC Transport | `ak_ipc.h/c` | Framed protocol, replay protection |
 
-## Benchmarks
+## Testing
 
-Authority Nanos maintains the performance characteristics of standard Nanos:
+```bash
+# Unit tests (510+ tests)
+make -C test/unit test
 
-- **Go on GCloud**: 18k req/sec ([details](https://github.com/mbhatt1/nanos/wiki/go_gcloud))
-- **Rust on GCloud**: 22k req/sec ([details](https://github.com/mbhatt1/nanos/wiki/rust_gcloud))
-- **Node.js on AWS**: 2k req/sec ([details](https://github.com/mbhatt1/nanos/wiki/nodejs_aws))
-- **Node.js on GCloud**: 4k req/sec ([details](https://github.com/mbhatt1/nanos/wiki/nodejs_gcloud))
+# Authority Kernel tests
+./output/test/unit/bin/ak_capability_test
+./output/test/unit/bin/ak_audit_test
+./output/test/unit/bin/ak_syscall_test
+./output/test/unit/bin/ak_wasm_test
+```
 
-The Authority Kernel adds minimal overhead:
-- Capability verification: ~5μs (constant-time HMAC)
-- Audit log append: ~100μs (includes fsync)
-- Heap CAS operation: ~1μs (lock, check, update)
-- Policy evaluation: ~2μs (cached policy)
+## Platforms
 
----
-
-## Contributing
-
-### Pull Requests
-
-We welcome contributions that align with Authority Nanos's mission: **security-first AI agent runtime**.
-
-**Before submitting:**
-- Ensure changes maintain or improve security guarantees
-- Add tests for new functionality
-- Update documentation as needed
-- Follow the existing code style
-
-For significant changes, please open an issue first to discuss your approach.
-
-### Reporting Bugs
-
-**Security Issues**: Email security@nanovms.com — do not open public issues
-
-**General Bugs**:
-1. Search existing issues first
-2. Use latest/nightly build to verify
-3. Provide minimal reproducible example
-4. Attach debug output (`authority run --trace`)
-5. Include config.json and policy.yaml
-
-### Areas for Contribution
-
-Priority areas where we welcome contributions:
-
-🔐 **Security**
-- Additional taint flow sanitizers
-- Policy language enhancements
-- Formal verification of critical paths
-
-🤖 **AI Integration**
-- New LLM provider adapters
-- Streaming inference improvements
-- Embedding and vector search
-
-🔧 **Tools & Ecosystem**
-- WASM tool runtime optimizations
-- Policy validation and testing tools
-- Audit log analysis utilities
-
-📊 **Monitoring**
-- Metrics and observability
-- Policy violation alerting
-- Budget tracking dashboards
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
----
-
-## Who is Using Authority Nanos?
-
-Authority Nanos is designed for organizations deploying AI agents in production:
-
-- 🤖 **Autonomous agent platforms** needing strong isolation
-- 🏢 **Enterprise IT** running computer-use agents
-- 🔬 **AI research labs** requiring reproducible experiments
-- 🏥 **Regulated industries** needing audit trails
-- ☁️ **Cloud providers** offering agent-as-a-service
-
-If you're using Authority Nanos, please open a PR to add your use case!
-
----
-
-## Support
-
-### Community Support
-
-- [Discussion Forum](https://forums.nanovms.com/) - General questions and community help
-- [GitHub Issues](https://github.com/mbhatt1/nanos/issues) - Bug reports and feature requests
-- [Docs Site](https://nanovms.gitbook.io/ops/) - Comprehensive documentation
-
-### Commercial Support
-
-Authority Nanos is **open source (Apache-2.0)**, but NanoVMs provides commercial support:
-
-- **Security Incident Response** - 24/7 support for security issues
-- **Custom Policy Development** - Help designing security policies
-- **Integration Assistance** - Integrate with your AI platform
-- **Priority Bug Fixes** - Expedited fixes for production issues
-- **Training & Onboarding** - Team training on Authority Kernel
-
-[Contact NanoVMs](https://nanovms.com/services/subscription) for enterprise support plans.
-
-**Note**: Organizations with >50 employees using pre-built binaries require a commercial subscription. Alternatively, you may build from source freely under Apache-2.0.
-
----
+- x86_64: KVM (Linux), HVF (macOS), QEMU
+- ARM64: Raspberry Pi 4, AWS Graviton, Azure Ampere
 
 ## License
 
-Authority Nanos is licensed under **Apache License 2.0**.
+Apache-2.0
 
-The Authority Kernel components ([`src/agentic/`](src/agentic/)) are also Apache-2.0 and can be integrated into other unikernel or OS projects.
+## Documentation
 
-See [LICENSE](LICENSE) for full details.
+All documentation has been consolidated into the VitePress site:
 
----
+- **[Complete Documentation](https://authority-nanos.dev)** - Full documentation site
+- **[Getting Started](https://authority-nanos.dev/getting-started/)** - Installation and first steps
+- **[Security Invariants](https://authority-nanos.dev/design/invariants.md)** - The four mathematical guarantees
+- **[Design Documents](https://authority-nanos.dev/design/)** - Architecture and specifications
+- **[Testing Guide](https://authority-nanos.dev/testing/)** - Unit tests, integration tests, and fuzzing
+- **[Contributing Guide](https://authority-nanos.dev/guide/contributing.md)** - How to contribute
 
-## Citation
+## References
 
-If you use Authority Nanos in research or publication, please cite:
-
-```bibtex
-@software{authority_nanos,
-  title = {Authority Nanos: AI-First Unikernel for Autonomous Agents},
-  author = {NanoVMs, Inc.},
-  year = {2024},
-  url = {https://github.com/mbhatt1/nanos}
-}
-```
-
----
-
-**Built with ❤️ by [NanoVMs](https://nanovms.com) for the age of AI agents**
-
-For more information: [nanos.org](https://nanos.org) | [Authority Kernel Spec](../IMPLEMENTATION_SPEC.md)
+- [Authority Kernel Source](src/agentic/)
+- [Nanos Documentation](https://nanovms.gitbook.io/ops/)
+- [GitHub Repository](https://github.com/nanovms/authority-nanos)

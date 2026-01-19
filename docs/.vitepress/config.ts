@@ -29,11 +29,20 @@ export default withMermaid(
       nav: [
         { text: 'Home', link: '/' },
         {
-          text: 'Guide',
+          text: 'Getting Started',
           items: [
-            { text: 'Getting Started', link: '/getting-started/' },
+            { text: 'Overview', link: '/getting-started/' },
             { text: 'Installation', link: '/getting-started/installation' },
             { text: 'First Agent', link: '/getting-started/first-agent' }
+          ]
+        },
+        {
+          text: 'Project',
+          items: [
+            { text: 'Charter', link: '/guide/charter' },
+            { text: 'Roadmap', link: '/guide/roadmap' },
+            { text: 'Contributing', link: '/guide/contributing' },
+            { text: 'Release Notes', link: '/guide/release-notes' }
           ]
         },
         {
@@ -43,6 +52,24 @@ export default withMermaid(
             { text: 'Security', link: '/security/' },
             { text: 'Policy', link: '/policy/' },
             { text: 'API', link: '/api/' }
+          ]
+        },
+        {
+          text: 'Design',
+          items: [
+            { text: 'Overview', link: '/design/' },
+            { text: 'Kernel Design', link: '/design/ak-design' },
+            { text: 'Base Contract', link: '/design/ak-base-contract' },
+            { text: 'Invariants', link: '/design/invariants' },
+            { text: 'Threat Model', link: '/design/ak-threat-model' }
+          ]
+        },
+        {
+          text: 'Development',
+          items: [
+            { text: 'Testing', link: '/testing/' },
+            { text: 'Tools', link: '/tools/' },
+            { text: 'Bugs & Issues', link: '/design/bug-checklist' }
           ]
         },
         { text: 'FAQ', link: '/faq' }
@@ -59,6 +86,18 @@ export default withMermaid(
             ]
           }
         ],
+        '/guide/': [
+          {
+            text: 'Project Guide',
+            items: [
+              { text: 'Overview', link: '/guide/' },
+              { text: 'Charter', link: '/guide/charter' },
+              { text: 'Roadmap', link: '/guide/roadmap' },
+              { text: 'Contributing', link: '/guide/contributing' },
+              { text: 'Release Notes', link: '/guide/release-notes' }
+            ]
+          }
+        ],
         '/architecture/': [
           {
             text: 'Architecture',
@@ -66,6 +105,21 @@ export default withMermaid(
               { text: 'Overview', link: '/architecture/' },
               { text: 'Fork Relationship', link: '/architecture/nanos-fork' },
               { text: 'Authority Kernel', link: '/architecture/authority-kernel' }
+            ]
+          }
+        ],
+        '/design/': [
+          {
+            text: 'Design & Specifications',
+            items: [
+              { text: 'Overview', link: '/design/' },
+              { text: 'Kernel Design', link: '/design/ak-design' },
+              { text: 'Base Contract', link: '/design/ak-base-contract' },
+              { text: 'Roadmap', link: '/design/ak-roadmap' },
+              { text: 'Security Invariants', link: '/design/invariants' },
+              { text: 'Threat Model', link: '/design/ak-threat-model' },
+              { text: 'Agentic Kernel', link: '/design/agentic-kernel' },
+              { text: 'Bug Checklist', link: '/design/bug-checklist' }
             ]
           }
         ],
@@ -96,6 +150,26 @@ export default withMermaid(
               { text: 'Overview', link: '/api/' },
               { text: 'Syscalls', link: '/api/syscalls' },
               { text: 'Effects', link: '/api/effects' }
+            ]
+          }
+        ],
+        '/testing/': [
+          {
+            text: 'Testing',
+            items: [
+              { text: 'Overview', link: '/testing/' },
+              { text: 'Fuzz Testing', link: '/testing/fuzz-testing' },
+              { text: 'Runtime Testing', link: '/testing/runtime-testing' }
+            ]
+          }
+        ],
+        '/tools/': [
+          {
+            text: 'Tools & Utilities',
+            items: [
+              { text: 'Overview', link: '/tools/' },
+              { text: 'Trace Utilities', link: '/tools/trace-utilities' },
+              { text: 'Build Scripts', link: '/tools/scripts' }
             ]
           }
         ]
