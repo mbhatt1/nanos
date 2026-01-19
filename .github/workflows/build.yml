@@ -1,130 +1,322 @@
-name: Build and Release
+name: Build Artifacts
 
 on:
   push:
     branches:
       - master
-      - 'release/**'
+      - release/**
     tags:
       - 'v*'
   pull_request:
     branches:
       - master
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  # ============================================================================
+  # macOS x86_64 (Intel)
+  # ============================================================================
   build-macos-x86:
-    name: Build macOS x86_64
+    name: 🍎 macOS x86_64
     runs-on: macos-13
+    timeout-minutes: 45
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo
+            /Library/Caches/Homebrew
+          key: ${{ runner.os }}-build-${{ hashFiles('**/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-build-
 
       - name: Install dependencies
         run: |
-          brew install nasm x86_64-elf-binutils
+          brew install nasm go wget qemu
+          brew tap nanovms/homebrew-qemu
+          brew install nanovms/homebrew-qemu/qemu
 
-      - name: Build kernel
+      - name: Build kernel (x86_64)
         run: |
-          make -j$(sysctl -n hw.ncpu) kernel PLATFORM=pc
+          make clean
+          make -j$(sysctl -n hw.ncpu) PLATFORM=pc
+          ls -lh output/platform/pc/bin/kernel.img
 
-      - name: Create DMG
+      - name: Create distribution
         run: |
-          mkdir -p dmg-contents
-          cp output/platform/pc/bin/kernel.img dmg-contents/
-          cp README.md dmg-contents/
-          cp LICENSE dmg-contents/
-          hdiutil create -volname "Authority-Nanos-x86_64" \
-            -srcfolder dmg-contents \
-            -ov -format UDZO \
-            authority-nanos-x86_64.dmg
+          mkdir -p dist/authority-nanos-macos-x86_64
+          cp output/platform/pc/bin/kernel.img dist/authority-nanos-macos-x86_64/
+          cp README.md dist/authority-nanos-macos-x86_64/
+          cp LICENSE dist/authority-nanos-macos-x86_64/
+          cp -r docs dist/authority-nanos-macos-x86_64/docs-html || true
+
+      - name: Create archive
+        run: |
+          cd dist
+          tar -czf authority-nanos-macos-x86_64.tar.gz authority-nanos-macos-x86_64/
+          shasum -a 256 authority-nanos-macos-x86_64.tar.gz > authority-nanos-macos-x86_64.tar.gz.sha256
+          ls -lh authority-nanos-macos-x86_64*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: authority-nanos-macos-x86_64
-          path: authority-nanos-x86_64.dmg
+          path: dist/authority-nanos-macos-x86_64.tar.gz*
+          retention-days: 30
 
+  # ============================================================================
+  # macOS ARM64 (Apple Silicon)
+  # ============================================================================
   build-macos-arm64:
-    name: Build macOS ARM64
+    name: 🍎 macOS ARM64
     runs-on: macos-14
+    timeout-minutes: 45
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo
+            /Library/Caches/Homebrew
+          key: ${{ runner.os }}-arm64-build-${{ hashFiles('**/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-arm64-build-
 
       - name: Install dependencies
         run: |
-          brew install aarch64-elf-binutils
+          brew install nasm go wget qemu aarch64-elf-binutils
+          brew tap nanovms/homebrew-qemu
+          brew install nanovms/homebrew-qemu/qemu
 
-      - name: Build kernel
+      - name: Build kernel (ARM64)
         run: |
-          make -j$(sysctl -n hw.ncpu) kernel PLATFORM=virt
+          make clean
+          make -j$(sysctl -n hw.ncpu) PLATFORM=virt
+          ls -lh output/platform/virt/bin/kernel.img
 
-      - name: Create DMG
+      - name: Create distribution
         run: |
-          mkdir -p dmg-contents
-          cp output/platform/virt/bin/kernel.img dmg-contents/
-          cp README.md dmg-contents/
-          cp LICENSE dmg-contents/
-          hdiutil create -volname "Authority-Nanos-ARM64" \
-            -srcfolder dmg-contents \
-            -ov -format UDZO \
-            authority-nanos-arm64.dmg
+          mkdir -p dist/authority-nanos-macos-arm64
+          cp output/platform/virt/bin/kernel.img dist/authority-nanos-macos-arm64/
+          cp README.md dist/authority-nanos-macos-arm64/
+          cp LICENSE dist/authority-nanos-macos-arm64/
+          cp -r docs dist/authority-nanos-macos-arm64/docs-html || true
+
+      - name: Create archive
+        run: |
+          cd dist
+          tar -czf authority-nanos-macos-arm64.tar.gz authority-nanos-macos-arm64/
+          shasum -a 256 authority-nanos-macos-arm64.tar.gz > authority-nanos-macos-arm64.tar.gz.sha256
+          ls -lh authority-nanos-macos-arm64*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: authority-nanos-macos-arm64
-          path: authority-nanos-arm64.dmg
+          path: dist/authority-nanos-macos-arm64.tar.gz*
+          retention-days: 30
 
-  build-linux:
-    name: Build Linux amd64
+  # ============================================================================
+  # Linux x86_64
+  # ============================================================================
+  build-linux-x86:
+    name: 🐧 Linux x86_64
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/apt
+          key: ${{ runner.os }}-build-${{ hashFiles('**/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-build-
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm build-essential
+          sudo apt-get install -y nasm build-essential golang qemu-system-x86 wget
 
-      - name: Build kernel
+      - name: Build kernel (x86_64)
         run: |
-          make -j$(nproc) kernel PLATFORM=pc
+          make clean
+          make -j$(nproc) PLATFORM=pc
+          ls -lh output/platform/pc/bin/kernel.img
+
+      - name: Create distribution
+        run: |
+          mkdir -p dist/authority-nanos-linux-x86_64
+          cp output/platform/pc/bin/kernel.img dist/authority-nanos-linux-x86_64/
+          cp README.md dist/authority-nanos-linux-x86_64/
+          cp LICENSE dist/authority-nanos-linux-x86_64/
+          cp -r docs dist/authority-nanos-linux-x86_64/docs-html || true
+
+      - name: Create archive
+        run: |
+          cd dist
+          tar -czf authority-nanos-linux-x86_64.tar.gz authority-nanos-linux-x86_64/
+          sha256sum authority-nanos-linux-x86_64.tar.gz > authority-nanos-linux-x86_64.tar.gz.sha256
+          ls -lh authority-nanos-linux-x86_64*
 
       - name: Create .deb package
         run: |
-          mkdir -p deb-package/DEBIAN
-          mkdir -p deb-package/usr/share/authority-nanos
-          mkdir -p deb-package/usr/share/doc/authority-nanos
+          mkdir -p deb/DEBIAN deb/usr/share/authority-nanos deb/usr/share/doc/authority-nanos
+          cp output/platform/pc/bin/kernel.img deb/usr/share/authority-nanos/
+          cp README.md deb/usr/share/doc/authority-nanos/
+          cp LICENSE deb/usr/share/doc/authority-nanos/copyright
 
-          cp output/platform/pc/bin/kernel.img deb-package/usr/share/authority-nanos/
-          cp README.md deb-package/usr/share/doc/authority-nanos/
-          cp LICENSE deb-package/usr/share/doc/authority-nanos/
-
-          cat > deb-package/DEBIAN/control << 'EOF'
+          cat > deb/DEBIAN/control << 'EOF'
           Package: authority-nanos
           Version: 1.0.0
-          Section: devel
-          Priority: optional
           Architecture: amd64
           Maintainer: NanoVMs <support@nanovms.com>
-          Description: Authority Nanos - AI-First Unikernel
+          Description: Authority Nanos - Security Kernel for AI Agents
            Authority Nanos is a fork of Nanos with the Authority Kernel
            for running AI agents with deny-by-default security.
           EOF
 
-          dpkg-deb --build deb-package authority-nanos-amd64.deb
+          dpkg-deb --build deb dist/authority-nanos-amd64.deb
+          ls -lh dist/authority-nanos-amd64.deb
+
+      - name: Upload tar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: authority-nanos-linux-x86_64
+          path: dist/authority-nanos-linux-x86_64.tar.gz*
+          retention-days: 30
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: authority-nanos-linux-deb
+          path: dist/authority-nanos-amd64.deb
+          retention-days: 30
+
+  # ============================================================================
+  # Linux ARM64
+  # ============================================================================
+  build-linux-arm64:
+    name: 🐧 Linux ARM64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/apt
+          key: ${{ runner.os }}-arm64-build-${{ hashFiles('**/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-arm64-build-
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm build-essential golang aarch64-linux-gnu qemu-system-arm wget
+
+      - name: Build kernel (ARM64)
+        run: |
+          make clean
+          make -j$(nproc) PLATFORM=virt
+          ls -lh output/platform/virt/bin/kernel.img
+
+      - name: Create distribution
+        run: |
+          mkdir -p dist/authority-nanos-linux-arm64
+          cp output/platform/virt/bin/kernel.img dist/authority-nanos-linux-arm64/
+          cp README.md dist/authority-nanos-linux-arm64/
+          cp LICENSE dist/authority-nanos-linux-arm64/
+          cp -r docs dist/authority-nanos-linux-arm64/docs-html || true
+
+      - name: Create archive
+        run: |
+          cd dist
+          tar -czf authority-nanos-linux-arm64.tar.gz authority-nanos-linux-arm64/
+          sha256sum authority-nanos-linux-arm64.tar.gz > authority-nanos-linux-arm64.tar.gz.sha256
+          ls -lh authority-nanos-linux-arm64*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: authority-nanos-linux-amd64
-          path: authority-nanos-amd64.deb
+          name: authority-nanos-linux-arm64
+          path: dist/authority-nanos-linux-arm64.tar.gz*
+          retention-days: 30
 
-  release:
-    name: Create Release
-    needs: [build-macos-x86, build-macos-arm64, build-linux]
+  # ============================================================================
+  # Windows x86_64 (cross-compile from Linux)
+  # ============================================================================
+  build-windows:
+    name: 🪟 Windows x86_64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm build-essential mingw-w64 golang wget
+
+      - name: Build kernel (Windows x86_64)
+        run: |
+          make clean
+          make -j$(nproc) PLATFORM=pc CC=x86_64-w64-mingw32-gcc
+          ls -lh output/platform/pc/bin/kernel.img
+
+      - name: Create distribution
+        run: |
+          mkdir -p dist/authority-nanos-windows-x86_64
+          cp output/platform/pc/bin/kernel.img dist/authority-nanos-windows-x86_64/kernel.exe
+          cp README.md dist/authority-nanos-windows-x86_64/
+          cp LICENSE dist/authority-nanos-windows-x86_64/
+
+      - name: Create archive (ZIP)
+        run: |
+          cd dist
+          apt-get install -y zip
+          zip -r authority-nanos-windows-x86_64.zip authority-nanos-windows-x86_64/
+          sha256sum authority-nanos-windows-x86_64.zip > authority-nanos-windows-x86_64.zip.sha256
+          ls -lh authority-nanos-windows-x86_64*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: authority-nanos-windows-x86_64
+          path: dist/authority-nanos-windows-x86_64.zip*
+          retention-days: 30
+
+  # ============================================================================
+  # Create Release
+  # ============================================================================
+  create-release:
+    name: 📦 Create Release
+    needs: [build-macos-x86, build-macos-arm64, build-linux-x86, build-linux-arm64, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -135,13 +327,36 @@ jobs:
         with:
           path: artifacts
 
+      - name: Display artifact structure
+        run: |
+          find artifacts -type f
+          echo "---"
+          find artifacts -type f -exec ls -lh {} \;
+
+      - name: Create checksums
+        run: |
+          mkdir -p checksums
+          find artifacts -name "*.sha256" -o -name "*.sha256sum" | while read f; do cp "$f" checksums/; done
+          cd checksums && cat *.sha256 *.sha256sum > SHA256SUMS 2>/dev/null || true
+          cd ..
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/authority-nanos-macos-x86_64/authority-nanos-x86_64.dmg
-            artifacts/authority-nanos-macos-arm64/authority-nanos-arm64.dmg
-            artifacts/authority-nanos-linux-amd64/authority-nanos-amd64.deb
+            artifacts/authority-nanos-macos-x86_64/authority-nanos-macos-x86_64.tar.gz
+            artifacts/authority-nanos-macos-x86_64/authority-nanos-macos-x86_64.tar.gz.sha256
+            artifacts/authority-nanos-macos-arm64/authority-nanos-macos-arm64.tar.gz
+            artifacts/authority-nanos-macos-arm64/authority-nanos-macos-arm64.tar.gz.sha256
+            artifacts/authority-nanos-linux-x86_64/authority-nanos-linux-x86_64.tar.gz
+            artifacts/authority-nanos-linux-x86_64/authority-nanos-linux-x86_64.tar.gz.sha256
+            artifacts/authority-nanos-linux-deb/authority-nanos-amd64.deb
+            artifacts/authority-nanos-linux-arm64/authority-nanos-linux-arm64.tar.gz
+            artifacts/authority-nanos-linux-arm64/authority-nanos-linux-arm64.tar.gz.sha256
+            artifacts/authority-nanos-windows-x86_64/authority-nanos-windows-x86_64.zip
+            artifacts/authority-nanos-windows-x86_64/authority-nanos-windows-x86_64.zip.sha256
           generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, 'rc') || contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

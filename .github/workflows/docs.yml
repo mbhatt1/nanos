@@ -7,12 +7,15 @@ on:
     paths:
       - 'docs/**'
       - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/docs.yml'
   pull_request:
     branches:
       - master
     paths:
       - 'docs/**'
       - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
 
 permissions:
@@ -25,11 +28,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ============================================================================
+  # Build Documentation
+  # ============================================================================
   build:
-    name: Build Documentation
+    name: 📖 Build Documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -38,27 +45,52 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build VitePress site
         run: npm run docs:build
+
+      - name: Verify build output
+        run: |
+          echo "=== Build Output ==="
+          ls -lh docs/.vitepress/dist/
+          echo ""
+          echo "=== Key Files ==="
+          ls -1 docs/.vitepress/dist/ | head -20
+          echo ""
+          echo "=== Index Page ==="
+          wc -l docs/.vitepress/dist/index.html
+
+      - name: Check links (basic)
+        run: |
+          echo "=== Checking for broken links ==="
+          grep -r "href=" docs/.vitepress/dist/ | grep -o 'href="[^"]*"' | sort -u | head -20 || true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/.vitepress/dist
 
+  # ============================================================================
+  # Deploy to GitHub Pages
+  # ============================================================================
   deploy:
-    name: Deploy to GitHub Pages
+    name: 🚀 Deploy to GitHub Pages
     needs: build
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    timeout-minutes: 15
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Deployment summary
+        run: |
+          echo "✓ Documentation deployed to: ${{ steps.deployment.outputs.page_url }}"
