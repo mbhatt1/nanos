@@ -132,8 +132,9 @@ cleanup:
 /* Random bytes from Nanos random subsystem */
 static void ak_random_bytes(u8 *buf, u32 len)
 {
-    /* Use Nanos random if available, otherwise zero (not secure but compiles) */
-    ak_memzero(buf, len);
+    /* Use Nanos cryptographically secure random via random_buffer() */
+    buffer b = alloca_wrap_buffer(buf, len);
+    random_buffer(b);
 }
 
 /* ============================================================
@@ -206,7 +207,9 @@ void ak_key_rotate(void)
 
     /* Retire oldest key if we have max keys */
     for (int i = 0; i < AK_MAX_KEYS; i++) {
-        if (now_ms > ak_cap_state.keys[i].expires_ms) {
+        if (now_ms > ak_cap_state.keys[i].expires_ms && !ak_cap_state.keys[i].retired) {
+            /* Zeroize secret key material before marking as retired */
+            ak_memzero(ak_cap_state.keys[i].secret, AK_KEY_SIZE);
             ak_cap_state.keys[i].retired = true;
         }
     }
@@ -229,6 +232,8 @@ void ak_key_rotate(void)
                 slot = i;
             }
         }
+        /* Zeroize secret key material before force retiring */
+        ak_memzero(ak_cap_state.keys[slot].secret, AK_KEY_SIZE);
         ak_cap_state.keys[slot].retired = true;
     }
 
@@ -288,23 +293,29 @@ ak_capability_t *ak_capability_create(
 
     cap->type = type;
 
-    /* Copy resource (safely) with bounds check */
+    /* Copy resource (safely) with bounds check and NUL termination */
     u32 rlen = runtime_strlen(resource);
     AK_CHECK_INDEX(rlen, sizeof(cap->resource), NULL);
-    if (rlen >= sizeof(cap->resource)) {
+    if (rlen >= sizeof(cap->resource) - 1) {  /* Leave room for NUL */
         deallocate(h, cap, sizeof(ak_capability_t));
         return NULL;
     }
     runtime_memcpy(cap->resource, resource, rlen);
+    cap->resource[rlen] = '\0';  /* NUL-terminate */
     cap->resource_len = rlen;
 
-    /* Copy methods */
+    /* Copy methods with strict bounds checking */
     cap->method_count = 0;
     if (methods) {
         for (int i = 0; methods[i] && i < 8; i++) {
             u32 mlen = runtime_strlen(methods[i]);
-            if (mlen >= 32) continue;  /* Skip oversized methods */
+            if (mlen >= 32) {
+                /* Method name too long - fail-closed */
+                deallocate(h, cap, sizeof(ak_capability_t));
+                return NULL;
+            }
             runtime_memcpy(cap->methods[i], methods[i], mlen);
+            cap->methods[i][mlen] = '\0';  /* NUL-terminate method name */
             cap->method_count++;
         }
     }

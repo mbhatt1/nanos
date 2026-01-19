@@ -20,6 +20,13 @@
 #include "ak_heap.h"
 
 /* ============================================================
+ * LIMITS AND CONSTANTS
+ * ============================================================ */
+
+/* Maximum JSON string value size (64 KB) to prevent unbounded parsing */
+#define AK_JSON_MAX_VALUE_SIZE  (64 * 1024)
+
+/* ============================================================
  * INTERNAL HELPERS
  * ============================================================ */
 
@@ -113,8 +120,14 @@ static const char *parse_json_string(buffer args, const char *key, u64 *len_out)
                     }
                 }
 
+                u64 val_len = val_end - val_start;
+
+                /* BUG-FIX: Enforce maximum JSON value size */
+                if (val_len > AK_JSON_MAX_VALUE_SIZE)
+                    return 0;  /* Reject oversized values */
+
                 if (len_out)
-                    *len_out = val_end - val_start;
+                    *len_out = val_len;
                 return (const char *)&data[val_start];
             }
         }

@@ -49,6 +49,9 @@ static struct {
     ak_dispatch_stats_t stats;
     ak_policy_t *default_policy;
 
+    /* Lock protecting concurrent access to agent registry */
+    struct spinlock agent_lock;
+
     /* Agent registry for supervisor pattern */
     ak_agent_entry_t agents[AK_MAX_AGENTS];
     u64 agent_count;
@@ -158,6 +161,9 @@ void ak_init(heap h)
 
     ak_state.h = h;
     runtime_memset((u8 *)&ak_state.stats, 0, sizeof(ak_dispatch_stats_t));
+
+    /* Initialize lock for agent registry synchronization */
+    spin_lock_init(&ak_state.agent_lock);
 
     /* Initialize subsystems */
     ak_keys_init(h);
