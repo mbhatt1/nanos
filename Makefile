@@ -39,7 +39,7 @@ BOOTIMG=	$(PLATFORMOBJDIR)/boot/boot.img
 UEFI_LOADER=$(PLATFORMOBJDIR)/boot/$(UEFI_FILE)
 KERNEL=		$(PLATFORMOBJDIR)/bin/kernel.img
 
-all: image
+all: all-binaries
 
 .PHONY: distclean image release target tools python python-clean kernel libak all-binaries
 
