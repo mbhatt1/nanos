@@ -323,11 +323,14 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 	manifest.WriteString("(children:(main.py:(contents:(host:" + absAppPath + "))) ")
 
 	// Program to run (Python interpreter)
-	manifest.WriteString("program:/usr/bin/python3")
+	manifest.WriteString("program:/usr/bin/python3 ")
+
+	// Enable serial console output
+	manifest.WriteString("console:t ")
 
 	// Add command-line arguments
 	if len(config.Args) > 0 {
-		manifest.WriteString(" arguments:[")
+		manifest.WriteString("arguments:[")
 		for i, arg := range config.Args {
 			if i > 0 {
 				manifest.WriteString(" ")
