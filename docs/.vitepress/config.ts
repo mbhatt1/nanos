@@ -4,27 +4,45 @@ import { withMermaid } from 'vitepress-plugin-mermaid'
 export default withMermaid(
   defineConfig({
     title: 'Authority Nanos',
-    description: 'The only real way to run computer use agents - capability-based security for AI agents in production',
+    titleTemplate: ':title | Authority Nanos',
+    description: 'Security kernel for autonomous agents - capability-based access control, audit logging, and resource budgets',
+    lang: 'en-US',
 
     head: [
       ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
-      ['meta', { name: 'theme-color', content: '#e74c3c' }],
+      ['meta', { charset: 'utf-8' }],
+      ['meta', { name: 'viewport', content: 'width=device-width, initial-scale=1.0' }],
+      ['meta', { name: 'theme-color', content: '#dc2626' }],
+      ['meta', { name: 'apple-mobile-web-app-capable', content: 'yes' }],
+      ['meta', { name: 'apple-mobile-web-app-status-bar-style', content: 'black' }],
+
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:title', content: 'Authority Nanos' }],
-      ['meta', { property: 'og:description', content: 'The only real way to run computer use agents - capability-based security for AI agents in production' }],
+      ['meta', { property: 'og:description', content: 'Security kernel for autonomous agents' }],
       ['meta', { property: 'og:image', content: '/og-image.svg' }],
+      ['meta', { property: 'og:url', content: 'https://authority-nanos.dev' }],
+
       ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
       ['meta', { name: 'twitter:title', content: 'Authority Nanos' }],
-      ['meta', { name: 'twitter:description', content: 'Capability-based security for AI agents' }],
+      ['meta', { name: 'twitter:description', content: 'Security kernel for autonomous agents' }],
       ['meta', { name: 'twitter:image', content: '/og-image.svg' }],
     ],
+
+    markdown: {
+      theme: {
+        light: 'github-light',
+        dark: 'github-dark',
+      },
+      lineNumbers: true,
+    },
 
     cleanUrls: true,
     lastUpdated: true,
 
     themeConfig: {
       logo: '/logo.svg',
-      siteTitle: 'Authority Nanos',
+      logoLink: '/',
+      siteTitle: false,
 
       nav: [
         { text: 'Home', link: '/' },
@@ -180,26 +198,48 @@ export default withMermaid(
       ],
 
       footer: {
-        message: 'Released under the Apache 2.0 License.',
+        message: 'Apache 2.0 License',
         copyright: 'Copyright © 2024-present NanoVMs, Inc.'
       },
 
       search: {
-        provider: 'local'
+        provider: 'local',
+        options: {
+          detailedView: true,
+          miniSearch: {
+            options: {
+              tokenize: (str) => str.split(/[\s\-.]+/),
+            }
+          }
+        }
       },
 
       editLink: {
-        pattern: 'https://github.com/nanovms/authority-nanos/edit/main/docs/:path',
-        text: 'Edit this page on GitHub'
-      }
+        pattern: 'https://github.com/nanovms/authority-nanos/edit/master/docs/:path',
+        text: 'Edit on GitHub'
+      },
+
+      returnToTopLabel: 'Return to top',
+      sidebarMenuLabel: 'Menu',
+      darkModeSwitchLabel: 'Dark mode',
+      lightModeSwitchTitle: 'Switch to light theme',
+      darkModeSwitchTitle: 'Switch to dark theme',
     },
 
     mermaid: {
-      theme: 'default'
+      theme: 'default',
+      securityLevel: 'loose'
     },
 
     mermaidPlugin: {
       class: 'mermaid'
+    },
+
+    vite: {
+      build: {
+        minify: 'terser',
+        chunkSizeWarningLimit: 1000
+      }
     }
   })
 )
