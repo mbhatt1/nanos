@@ -358,28 +358,34 @@ func findBootloader() string {
 	return ""
 }
 
-// bundleTree recursively bundles a directory tree into a manifest
+// bundleTree recursively bundles a directory tree, skipping problematic entries
 func bundleTree(rootPath, dir, indent string, manifest *bytes.Buffer) error {
 	entries, err := ioutil.ReadDir(filepath.Join(rootPath, dir))
 	if err != nil {
-		return err
+		return nil // Skip unreadable directories
 	}
 
 	for _, entry := range entries {
-		fullPath := filepath.Join(rootPath, dir, entry.Name())
-		relPath := filepath.Join(dir, entry.Name())
+		name := entry.Name()
+		fullPath := filepath.Join(rootPath, dir, name)
+		relPath := filepath.Join(dir, name)
+
+		// Skip hidden files and pycache
+		if strings.HasPrefix(name, ".") || name == "__pycache__" {
+			continue
+		}
 
 		if entry.IsDir() {
-			manifest.WriteString(indent + entry.Name() + ":(children:(\n")
+			// Skip dangerous or unnecessary directories
+			if name == "tests" || name == "test" || name == "__phello__" {
+				continue
+			}
+			manifest.WriteString(indent + name + ":(children:(\n")
 			bundleTree(rootPath, relPath, indent+"  ", manifest)
 			manifest.WriteString(indent + "))\n")
 		} else {
-			// Only bundle files under certain directories to keep size reasonable
-			if dir == "" || dir == "bin" || dir == "usr" || dir == "usr/bin" || dir == "lib" ||
-			   dir == "etc" || dir == "usr/lib" || dir == "usr/lib/python3.11" ||
-			   strings.Contains(dir, "python3.11") {
-				manifest.WriteString(indent + entry.Name() + ":(contents:(host:" + fullPath + "))\n")
-			}
+			// Include all files in Python stdlib
+			manifest.WriteString(indent + name + ":(contents:(host:" + fullPath + "))\n")
 		}
 	}
 
@@ -396,21 +402,52 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		return fmt.Errorf("cannot get absolute path: %v", err)
 	}
 
-	// Program to run - execute Python directly (Alpine path)
-	program := "/usr/bin/python3"
+	// Program to run - execute Python directly (/bin/python3 now available)
+	program := "/bin/python3"
 	if config.Program != "" {
 		program = config.Program
 	}
 
-	// Build children section with app file only
-	// Alpine rootfs fully merged via mkfs -r /tmp/nanos-root
+	// Build children section with explicit Alpine bundles
 	manifest.WriteString("(\n    children:(\n")
 
-	// App file only - everything else comes from Alpine via -r flag
+	// App file
 	manifest.WriteString("        main.py:(contents:(host:" + absAppPath + "))\n")
 
+	// Bundle /bin directory (Python, shell, etc.)
+	pythonRoot := "/tmp/nanos-root"
+	manifest.WriteString("        bin:(children:(\n")
+	if _, err := os.Stat(pythonRoot + "/bin/python3.11"); err == nil {
+		manifest.WriteString("            python3.11:(contents:(host:" + pythonRoot + "/bin/python3.11))\n")
+	}
+	if _, err := os.Stat(pythonRoot + "/bin/python3"); err == nil {
+		manifest.WriteString("            python3:(contents:(host:" + pythonRoot + "/bin/python3))\n")
+	}
+	if _, err := os.Stat(pythonRoot + "/bin/sh"); err == nil {
+		manifest.WriteString("            sh:(contents:(host:" + pythonRoot + "/bin/sh))\n")
+	}
+	if _, err := os.Stat(pythonRoot + "/bin/busybox"); err == nil {
+		manifest.WriteString("            busybox:(contents:(host:" + pythonRoot + "/bin/busybox))\n")
+	}
+	manifest.WriteString("        ))\n")
+
+	// Bundle /lib directory (runtime libraries)
+	manifest.WriteString("        lib:(children:(\n")
+	if _, err := os.Stat(pythonRoot + "/lib/libc.musl-x86_64.so.1"); err == nil {
+		manifest.WriteString("            libc.musl-x86_64.so.1:(contents:(host:" + pythonRoot + "/lib/libc.musl-x86_64.so.1))\n")
+	}
+	if _, err := os.Stat(pythonRoot + "/lib/ld-musl-x86_64.so.1"); err == nil {
+		manifest.WriteString("            ld-musl-x86_64.so.1:(contents:(host:" + pythonRoot + "/lib/ld-musl-x86_64.so.1))\n")
+	}
+	manifest.WriteString("        ))\n")
+
+	// Bundle Python stdlib via /usr/lib directory
+	manifest.WriteString("        usr:(children:(lib:(children:(\n")
+	// Use bundleTree to recursively include Python stdlib, filtering for safe characters
+	bundleTree(pythonRoot, "usr/lib", "", &manifest)
+	manifest.WriteString("        ))))\n")
+
 	manifest.WriteString("    )\n")
-	// Note: Complete Alpine filesystem (52M) merged via mkfs -r /tmp/nanos-root
 
 	manifest.WriteString("program:" + program + " ")
 

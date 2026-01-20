@@ -42,17 +42,20 @@ FROM --platform=linux/amd64 alpine:3.19 AS alpine-rootfs
 RUN apk add --no-cache python3 && \
     echo "✅ Alpine Linux with Python 3.11 ready"
 
-# Copy Alpine filesystem (skip virtual filesystems)
+# Copy Alpine filesystem and restructure for Nanos
 RUN mkdir -p /rootfs && \
     for dir in bin sbin lib lib64 usr etc home opt root srv var boot media mnt tmp; do \
       if [ -d /$dir ]; then \
-        echo "Copying /$dir..."; \
         cp -r /$dir /rootfs/; \
       fi; \
     done && \
     mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev && \
     echo "✅ Rootfs prepared" && \
-    ls -lah /rootfs/usr/bin/python* 2>/dev/null || ls -lah /rootfs/bin/python* 2>/dev/null || echo "Python location unknown"
+    ls -lah /rootfs/usr/bin/python* && \
+    # Copy Python to both /bin and /usr/bin for compatibility
+    cp /rootfs/usr/bin/python3.11 /rootfs/bin/python3.11 && \
+    ln -sf python3.11 /rootfs/bin/python3 && \
+    echo "✅ Python symlinked to /bin/python3"
 
 # ============================================================================
 # Final stage: bundle everything
