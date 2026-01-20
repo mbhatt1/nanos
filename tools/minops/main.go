@@ -402,26 +402,15 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		program = config.Program
 	}
 
-	// Build children section with app and Alpine rootfs
+	// Build children section with app file only
+	// Alpine rootfs fully merged via mkfs -r /tmp/nanos-root
 	manifest.WriteString("(\n    children:(\n")
 
-	// App file
+	// App file only - everything else comes from Alpine via -r flag
 	manifest.WriteString("        main.py:(contents:(host:" + absAppPath + "))\n")
 
-	// Bundle Alpine rootfs from /tmp/nanos-root
-	pythonRoot := "/tmp/nanos-root"
-	if _, err := os.Stat(pythonRoot); err == nil {
-		// Bundle critical directories from Alpine
-		for _, dir := range []string{"bin", "lib", "usr", "etc"} {
-			if _, err := os.Stat(filepath.Join(pythonRoot, dir)); err == nil {
-				manifest.WriteString("        " + dir + ":(children:(\n")
-				bundleTree(pythonRoot, dir, "          ", &manifest)
-				manifest.WriteString("        ))\n")
-			}
-		}
-	}
-
 	manifest.WriteString("    )\n")
+	// Note: Complete Alpine filesystem (52M) merged via mkfs -r /tmp/nanos-root
 
 	manifest.WriteString("program:" + program + " ")
 
