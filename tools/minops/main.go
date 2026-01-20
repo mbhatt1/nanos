@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 // Config represents the nanofile configuration
@@ -357,6 +358,34 @@ func findBootloader() string {
 	return ""
 }
 
+// bundleTree recursively bundles a directory tree into a manifest
+func bundleTree(rootPath, dir, indent string, manifest *bytes.Buffer) error {
+	entries, err := ioutil.ReadDir(filepath.Join(rootPath, dir))
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		fullPath := filepath.Join(rootPath, dir, entry.Name())
+		relPath := filepath.Join(dir, entry.Name())
+
+		if entry.IsDir() {
+			manifest.WriteString(indent + entry.Name() + ":(children:(\n")
+			bundleTree(rootPath, relPath, indent+"  ", manifest)
+			manifest.WriteString(indent + "))\n")
+		} else {
+			// Only bundle files under certain directories to keep size reasonable
+			if dir == "" || dir == "bin" || dir == "usr" || dir == "usr/bin" || dir == "lib" ||
+			   dir == "etc" || dir == "usr/lib" || dir == "usr/lib/python3.11" ||
+			   strings.Contains(dir, "python3.11") {
+				manifest.WriteString(indent + entry.Name() + ":(contents:(host:" + fullPath + "))\n")
+			}
+		}
+	}
+
+	return nil
+}
+
 func createImage(imagePath, appPath string, kernelPath string, config *Config, verbose bool) error {
 	// Build manifest in Nanos tuple format with proper spacing
 	var manifest bytes.Buffer
@@ -367,45 +396,32 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		return fmt.Errorf("cannot get absolute path: %v", err)
 	}
 
-	// Program to run - execute Python directly
-	program := "/bin/python3"
+	// Program to run - execute Python directly (Alpine path)
+	program := "/usr/bin/python3"
 	if config.Program != "" {
 		program = config.Program
 	}
 
-	// Build children section with app and rootfs directory structure
+	// Build children section with app and Alpine rootfs
 	manifest.WriteString("(\n    children:(\n")
 
 	// App file
 	manifest.WriteString("        main.py:(contents:(host:" + absAppPath + "))\n")
 
-	// Bundle bin directory with Python
+	// Bundle Alpine rootfs from /tmp/nanos-root
 	pythonRoot := "/tmp/nanos-root"
-	if _, err := os.Stat(pythonRoot + "/bin"); err == nil {
-		manifest.WriteString("        bin:(children:(\n")
-		binEntries, _ := ioutil.ReadDir(pythonRoot + "/bin")
-		for _, entry := range binEntries {
-			if !entry.IsDir() {
-				manifest.WriteString("            " + entry.Name() + ":(contents:(host:" + pythonRoot + "/bin/" + entry.Name() + "))\n")
+	if _, err := os.Stat(pythonRoot); err == nil {
+		// Bundle critical directories from Alpine
+		for _, dir := range []string{"bin", "lib", "usr", "etc"} {
+			if _, err := os.Stat(filepath.Join(pythonRoot, dir)); err == nil {
+				manifest.WriteString("        " + dir + ":(children:(\n")
+				bundleTree(pythonRoot, dir, "          ", &manifest)
+				manifest.WriteString("        ))\n")
 			}
 		}
-		manifest.WriteString("        ))\n")
-	}
-
-	// Bundle lib directory for libraries
-	if _, err := os.Stat(pythonRoot + "/lib"); err == nil {
-		manifest.WriteString("        lib:(children:(\n")
-		libEntries, _ := ioutil.ReadDir(pythonRoot + "/lib")
-		for _, entry := range libEntries {
-			if !entry.IsDir() {
-				manifest.WriteString("            " + entry.Name() + ":(contents:(host:" + pythonRoot + "/lib/" + entry.Name() + "))\n")
-			}
-		}
-		manifest.WriteString("        ))\n")
 	}
 
 	manifest.WriteString("    )\n")
-	// Note: /usr and other directories from rootfs are merged via mkfs -r flag
 
 	manifest.WriteString("program:" + program + " ")
 

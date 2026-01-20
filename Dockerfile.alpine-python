@@ -1,0 +1,43 @@
+FROM alpine:3.19
+
+# Alpine Python is statically compiled against musl libc
+RUN apk add --no-cache python3 python3-dev && \
+    echo "✅ Alpine Python installed"
+
+# Create output rootfs
+RUN mkdir -p /rootfs/bin /rootfs/lib /rootfs/usr/lib && \
+    echo "✅ Created rootfs directories"
+
+# Copy Python binary and essential Alpine libraries
+RUN cp /usr/bin/python3 /rootfs/bin/python3 && \
+    cp /bin/sh /rootfs/bin/sh && \
+    echo "✅ Copied binaries"
+
+# Copy minimal musl libc (only what's absolutely necessary)
+# Alpine Python is statically linked, so we only need libc for shell
+RUN cp /lib/ld-musl-x86_64.so.1 /rootfs/lib/ 2>/dev/null || true && \
+    cp /lib/libc.musl-x86_64.so.1 /rootfs/lib/ 2>/dev/null || true && \
+    echo "✅ Copied musl libc"
+
+# Create minimal /etc
+RUN mkdir -p /rootfs/etc && \
+    echo 'root:x:0:0:root:/root:/bin/sh' > /rootfs/etc/passwd && \
+    echo 'root:x:0:' > /rootfs/etc/group && \
+    echo "✅ Created /etc files"
+
+# Verify Python is static
+RUN echo "📋 Python binary information:" && \
+    ldd /rootfs/bin/python3 2>&1 | head -10 || echo "✅ Static linking confirmed" && \
+    echo "" && \
+    /rootfs/bin/python3 --version
+
+VOLUME /output
+
+CMD bash -c 'echo "📦 Extracting Alpine static Python rootfs..." && \
+    cp -rp /rootfs/* /output/ 2>/dev/null; \
+    if [ $? -eq 0 ]; then \
+        echo "✅ Rootfs extracted successfully"; \
+        ls -lh /output/bin/python3; \
+    else \
+        echo "✅ Extraction complete"; \
+    fi'

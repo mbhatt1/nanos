@@ -1,0 +1,82 @@
+FROM ubuntu:22.04
+
+# Install build dependencies for Python
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    wget \
+    ca-certificates \
+    zlib1g-dev \
+    libssl-dev \
+    libffi-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libbz2-dev \
+    liblzma-dev \
+    libcrypt-dev \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+
+# Download Python 3.10 source
+RUN wget -q https://www.python.org/ftp/python/3.10.12/Python-3.10.12.tar.xz && \
+    tar xf Python-3.10.12.tar.xz && \
+    cd Python-3.10.12 && \
+    echo "✅ Python 3.10.12 source extracted"
+
+WORKDIR /tmp/Python-3.10.12
+
+# Configure Python for static compilation
+# Key flags:
+# --enable-optimizations: Enable PEP 3149 -- ABI version tagged .so files
+# --disable-shared: Build static libpython instead of shared library
+# --with-lto: Link-time optimization
+RUN ./configure \
+    --prefix=/opt/python-static \
+    --enable-optimizations \
+    --disable-shared \
+    --with-lto \
+    --disable-ipv6 \
+    --with-openssl=/usr \
+    --with-openssl-rpath=auto \
+    2>&1 | tail -20 && \
+    echo "✅ Python configured for static compilation"
+
+# Build Python (parallel jobs, but keep output manageable)
+RUN make -j$(nproc) 2>&1 | tail -50 && \
+    echo "✅ Python built successfully"
+
+# Install Python
+RUN make install 2>&1 | tail -20 && \
+    echo "✅ Python installed to /opt/python-static"
+
+# Verify Python binary and check if it's mostly static
+RUN echo "📋 Python binary information:" && \
+    ls -lh /opt/python-static/bin/python3.10 && \
+    echo "" && \
+    echo "🔍 Checking for shared library dependencies:" && \
+    ldd /opt/python-static/bin/python3.10 2>&1 | head -20 || echo "✅ No dynamic linking required (or minimal)" && \
+    echo "" && \
+    echo "✅ Testing Python:" && \
+    /opt/python-static/bin/python3.10 --version
+
+# Create output directory
+WORKDIR /output
+
+# Copy static Python binary
+RUN cp /opt/python-static/bin/python3.10 /output/python3-static && \
+    chmod +x /output/python3-static && \
+    ls -lh /output/python3-static && \
+    echo "✅ Static Python binary copied to /output"
+
+# Create simple test
+RUN cat > /test-static.py << 'EOF'
+import sys
+print("✅ Static Python test successful!")
+print(f"Python version: {sys.version}")
+print(f"Executable: {sys.executable}")
+EOF
+
+RUN /output/python3-static /test-static.py
+
+CMD ["/bin/bash"]

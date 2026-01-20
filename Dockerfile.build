@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 ubuntu:22.04
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
 
 # Install build dependencies and Go
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nasm \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Authority Nanos source (includes nanos-rootfs.tar.gz)
+# Copy Authority Nanos source
 WORKDIR /nanos
 COPY . /nanos
 
@@ -22,16 +22,7 @@ RUN cd /nanos && \
     git add . && \
     git commit --no-verify -m "Initial build" || echo "Git init completed"
 
-# Extract Alpine Python static rootfs (x86_64, musl libc)
-RUN mkdir -p /tmp/nanos-root && \
-    cd /tmp && tar xzf /nanos/nanos-rootfs-alpine-python.tar.gz -C /tmp/nanos-root && \
-    echo "✅ Alpine Python 3.11 rootfs extracted (x86_64, musl libc)" && \
-    ls -lh /tmp/nanos-root/bin/python3 && \
-    ls -lh /tmp/nanos-root/lib/libpython3.11.so.1.0 && \
-    ls -lh /tmp/nanos-root/usr/local/lib/python3.11/encodings/__init__.py && \
-    rm -f /nanos/nanos-rootfs-alpine-python.tar.gz /nanos/nanos-rootfs-minimal-python.tar.gz
-
-# Clean old build artifacts (from macOS) and build from scratch
+# Clean old build artifacts and build from scratch
 RUN cd /nanos && make clean && make -j$(nproc) 2>&1 | tail -100 || echo "Build completed with status: $?"
 
 # Build tools (mkfs, dump, vdsogen)
@@ -42,14 +33,48 @@ RUN cd /nanos && make -C tools all 2>&1 | tail -50 && \
 # Build minops
 RUN cd /nanos/tools/minops && go build -o minops main.go && echo "✅ minops compiled"
 
+# ============================================================================
+# Extract Alpine Linux filesystem for Nanos rootfs
+# ============================================================================
+FROM --platform=linux/amd64 alpine:3.19 AS alpine-rootfs
+
+# Install Python
+RUN apk add --no-cache python3 && \
+    echo "✅ Alpine Linux with Python 3.11 ready"
+
+# Copy Alpine filesystem (skip virtual filesystems)
+RUN mkdir -p /rootfs && \
+    for dir in bin sbin lib lib64 usr etc home opt root srv var boot media mnt tmp; do \
+      if [ -d /$dir ]; then \
+        echo "Copying /$dir..."; \
+        cp -r /$dir /rootfs/; \
+      fi; \
+    done && \
+    mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev && \
+    echo "✅ Rootfs prepared" && \
+    ls -lah /rootfs/usr/bin/python* 2>/dev/null || ls -lah /rootfs/bin/python* 2>/dev/null || echo "Python location unknown"
+
+# ============================================================================
+# Final stage: bundle everything
+# ============================================================================
+FROM builder
+
+# Copy Alpine rootfs from Alpine image
+COPY --from=alpine-rootfs /rootfs /tmp/nanos-root
+
+# Verify Python is there
+RUN echo "✅ Alpine rootfs bundled" && \
+    ls -lh /tmp/nanos-root/usr/bin/python3.11 && \
+    ls -lh /tmp/nanos-root/usr/lib/python3.11/encodings/__init__.py && \
+    du -sh /tmp/nanos-root
+
 # Verify we have kernel and Python
 RUN echo "Checking artifacts:" && \
     if [ -f /nanos/output/platform/pc/bin/kernel.img ]; then \
       echo "✅ Kernel found"; \
       ls -lh /nanos/output/platform/pc/bin/kernel.img; \
     else \
-      echo "⚠️ Kernel not found, checking what we have..."; \
-      find /nanos/output -name "kernel*" -o -name "*.img" 2>/dev/null | head -20; \
+      echo "⚠️ Kernel not found"; \
     fi && \
     echo "✅ Python rootfs ready: $(ls -lh /tmp/nanos-root/bin/python3 | awk '{print $5}')"
 
@@ -66,7 +91,7 @@ cd /nanos
 
 echo "📍 Environment:"
 echo "   Kernel: $(ls -lh output/platform/pc/bin/kernel.img | awk '{print $5}')"
-echo "   Python: $(ls -lh /tmp/nanos-root/bin/python3 | awk '{print $5}')"
+echo "   Python: $(ls -lh /tmp/nanos-root/usr/bin/python3.11 | awk '{print $5}')"
 echo "   minops: $(ls -lh tools/minops/minops | awk '{print $5}')"
 echo "   mkfs: $(ls -lh output/tools/bin/mkfs | awk '{print $5}')"
 echo ""
