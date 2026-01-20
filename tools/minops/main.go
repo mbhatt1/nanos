@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 )
 
 // Config represents the nanofile configuration
@@ -368,35 +367,55 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		return fmt.Errorf("cannot get absolute path: %v", err)
 	}
 
-	// Program to run - use shell script wrapper instead of direct Python execution
-	// This allows us to set up environment variables for dynamic linking
-	program := "/bin/sh"
+	// Program to run - execute Python directly
+	program := "/bin/python3"
 	if config.Program != "" {
 		program = config.Program
 	}
 
-	// Build children section with main.py and the program binary
-	manifest.WriteString("(children:(")
-	manifest.WriteString("main.py:(contents:(host:" + absAppPath + "))")
+	// Build children section with app and rootfs directory structure
+	manifest.WriteString("(\n    children:(\n")
 
-	// Include shell binary for script execution
-	shHostPath := "/tmp/nanos-root/bin/sh"
-	if _, err := os.Stat(shHostPath); err == nil {
-		manifest.WriteString(" sh:(contents:(host:" + shHostPath + "))")
+	// App file
+	manifest.WriteString("        main.py:(contents:(host:" + absAppPath + "))\n")
+
+	// Bundle bin directory with Python
+	pythonRoot := "/tmp/nanos-root"
+	if _, err := os.Stat(pythonRoot + "/bin"); err == nil {
+		manifest.WriteString("        bin:(children:(\n")
+		binEntries, _ := ioutil.ReadDir(pythonRoot + "/bin")
+		for _, entry := range binEntries {
+			if !entry.IsDir() {
+				manifest.WriteString("            " + entry.Name() + ":(contents:(host:" + pythonRoot + "/bin/" + entry.Name() + "))\n")
+			}
+		}
+		manifest.WriteString("        ))\n")
 	}
 
-	// For now, skip Python direct inclusion since library linking is complex
-	// Shell will be used to execute Python scripts
+	// Bundle lib directory for libraries
+	if _, err := os.Stat(pythonRoot + "/lib"); err == nil {
+		manifest.WriteString("        lib:(children:(\n")
+		libEntries, _ := ioutil.ReadDir(pythonRoot + "/lib")
+		for _, entry := range libEntries {
+			if !entry.IsDir() {
+				manifest.WriteString("            " + entry.Name() + ":(contents:(host:" + pythonRoot + "/lib/" + entry.Name() + "))\n")
+			}
+		}
+		manifest.WriteString("        ))\n")
+	}
 
-	manifest.WriteString(") ")
+	manifest.WriteString("    )\n")
+	// Note: /usr and other directories from rootfs are merged via mkfs -r flag
 
 	manifest.WriteString("program:" + program + " ")
 
 	// Enable serial console output
 	manifest.WriteString("console:t ")
 
-	// Add command-line arguments
-	if len(config.Args) > 0 {
+	// Add command-line arguments (default to just main.py if not specified)
+	if len(config.Args) == 0 {
+		manifest.WriteString("arguments:[main.py]")
+	} else if len(config.Args) > 0 {
 		manifest.WriteString("arguments:[")
 		for i, arg := range config.Args {
 			if i > 0 {
