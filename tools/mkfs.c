@@ -298,9 +298,14 @@ static buffer get_file_contents(heap h, const char *target_root, value v)
         // seems like it wouldn't be to hard to arrange
         // for this to avoid the staging copy
         buffer dest = allocate_buffer(h, 1024);
+        buffer tmpbuf = little_stack_buffer(PATH_MAX);
+        fprintf(stderr, "[DEBUG] Reading file: %s (target_root: %s)\n",
+                cstring(path, tmpbuf), target_root ? target_root : "(none)");
         read_file(h, target_root, dest, path);
+        fprintf(stderr, "[DEBUG] File read, size: %llu bytes\n", (unsigned long long)buffer_length(dest));
         return dest;
     }
+    fprintf(stderr, "[DEBUG] No 'host' key in contents tuple\n");
     return 0;
 }
 
@@ -373,16 +378,21 @@ closure_function(4, 2, void, fsc,
     filesystem_write_tuple(tfs, md);
     vector i;
     buffer off = 0;
+    int worklist_count = 0;
     vector_foreach(worklist, i) {
         tuple f = vector_get(i, 0);
         buffer contents = get_file_contents(h, bound(target_root), vector_get(i, 1));
+        fprintf(stderr, "[DEBUG] Worklist item %d: contents=%p, length=%llu\n",
+                worklist_count++, contents, contents ? (unsigned long long)buffer_length(contents) : 0);
         if (contents) {
             if (buffer_length(contents) > 0) {
+                fprintf(stderr, "[DEBUG] Writing file with %llu bytes\n", (unsigned long long)buffer_length(contents));
                 fsfile fsf = (fsfile)allocate_fsfile(tfs, f);
                 filesystem_write_linear(fsf, buffer_ref(contents, 0), irangel(0, buffer_length(contents)),
                                         ignore_io_status);
                 deallocate_buffer(contents);
             } else {
+                fprintf(stderr, "[DEBUG] Empty file, creating placeholder\n");
                 if (!off)
                     off = value_from_u64(0);
                 /* make an empty file */
@@ -391,6 +401,7 @@ closure_function(4, 2, void, fsc,
             }
         }
     }
+    fprintf(stderr, "[DEBUG] Worklist processing complete, %d items processed\n", worklist_count);
     filesystem_flush(fs, ignore_status);
     closure_finish();
 }

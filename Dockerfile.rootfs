@@ -28,7 +28,10 @@ RUN cp -r /usr/lib/python3* /rootfs/usr/lib/
 
 # Copy all required system libraries - comprehensive
 RUN cp -r /lib/x86_64-linux-gnu/* /rootfs/lib/ 2>/dev/null || true && \
-    cp -r /lib64/* /rootfs/lib64/ 2>/dev/null || true
+    cp -r /lib64/* /rootfs/lib64/ 2>/dev/null || true && \
+    # Fix broken symlink in lib64
+    (rm /rootfs/lib64/ld-linux-x86-64.so.2 2>/dev/null || true) && \
+    (ln -s ../lib/ld-linux-x86-64.so.2 /rootfs/lib64/ld-linux-x86-64.so.2 || true)
 
 # Copy ALL Python runtime libraries
 RUN find /usr/lib/x86_64-linux-gnu -name "libpython*.so*" -exec cp -t /rootfs/usr/lib {} + 2>/dev/null || true

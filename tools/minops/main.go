@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 // Config represents the nanofile configuration
@@ -367,13 +368,28 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		return fmt.Errorf("cannot get absolute path: %v", err)
 	}
 
-	manifest.WriteString("(children:(main.py:(contents:(host:" + absAppPath + "))) ")
-
-	// Program to run (default to Python interpreter, but allow config override)
-	program := "/usr/bin/python3"
+	// Program to run - use shell script wrapper instead of direct Python execution
+	// This allows us to set up environment variables for dynamic linking
+	program := "/bin/sh"
 	if config.Program != "" {
 		program = config.Program
 	}
+
+	// Build children section with main.py and the program binary
+	manifest.WriteString("(children:(")
+	manifest.WriteString("main.py:(contents:(host:" + absAppPath + "))")
+
+	// Include shell binary for script execution
+	shHostPath := "/tmp/nanos-root/bin/sh"
+	if _, err := os.Stat(shHostPath); err == nil {
+		manifest.WriteString(" sh:(contents:(host:" + shHostPath + "))")
+	}
+
+	// For now, skip Python direct inclusion since library linking is complex
+	// Shell will be used to execute Python scripts
+
+	manifest.WriteString(") ")
+
 	manifest.WriteString("program:" + program + " ")
 
 	// Enable serial console output
