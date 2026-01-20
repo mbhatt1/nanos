@@ -145,6 +145,7 @@ boolean traverse_ptes(u64 vaddr, u64 length, entry_handler ph)
     return result;
 }
 
+#ifndef BOOT
 closure_func_basic(entry_handler, boolean, dump_entry,
                    int level, u64 vaddr, pteptr entry)
 {
@@ -172,6 +173,7 @@ void dump_page_tables(u64 addr, u64 length)
     traverse_ptes(addr, length, stack_closure_func(entry_handler, dump_entry));
     early_debug("\n");
 }
+#endif
 
 /* called with lock held */
 closure_func_basic(entry_handler, boolean, validate_entry,
@@ -635,6 +637,7 @@ void page_free_phys(u64 phys)
 }
 #endif
 
+#ifndef BOOT
 static boolean init_page_map(range phys, range *curr_virt, id_heap virt_heap, pageflags flags)
 {
     if (phys.end > range_span(*curr_virt)) {
@@ -646,7 +649,6 @@ static boolean init_page_map(range phys, range *curr_virt, id_heap virt_heap, pa
     map(curr_virt->start + phys.start, phys.start, range_span(phys), flags);
     return true;
 }
-
 closure_function(6, 1, boolean, init_page_map_all_rh,
                  range *, curr_virt, id_heap, virt_heap, u64, margin, pageflags, flags, u64, last_end, range *, init_pages,
                  range r)
@@ -697,6 +699,7 @@ range init_page_map_all(heap phys, id_heap virt_heap)
     pagemem.physbase = 0;
     return pagevirt;
 }
+#endif
 
 /* pageheap must be a physical memory heap. */
 void init_page_tables(heap pageheap, range pagevirt)

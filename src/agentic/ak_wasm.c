@@ -150,8 +150,11 @@ static boolean validate_wasm_header(buffer bytecode)
 static void ak_sha256(const u8 *data, u32 len, u8 *output)
 {
     buffer src = alloca_wrap_buffer((void *)data, len);
-    buffer dst = alloca_wrap_buffer(output, 32);
+    /* Use a little_stack_buffer which can be extended, unlike wrapped buffers */
+    buffer dst = little_stack_buffer(64);
     sha256(dst, src);
+    /* Copy result to output */
+    runtime_memcpy(output, buffer_ref(dst, 0), 32);
 }
 
 static void compute_module_hash(buffer bytecode, u8 *hash_out)

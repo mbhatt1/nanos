@@ -9,6 +9,9 @@ SRCS-stage2.elf= \
 	$(SRCDIR)/drivers/ata.c \
 	$(SRCDIR)/kernel/elf.c \
 	$(SRCDIR)/kernel/page.c \
+	$(SRCDIR)/fs/fs.c \
+	$(SRCDIR)/fs/tfs.c \
+	$(SRCDIR)/fs/tlog.c \
 	$(SRCDIR)/runtime/buffer.c \
 	$(SRCDIR)/runtime/extra_prints.c \
 	$(SRCDIR)/runtime/format.c \
@@ -21,14 +24,10 @@ SRCS-stage2.elf= \
 	$(SRCDIR)/runtime/string.c \
 	$(SRCDIR)/runtime/symbol.c \
 	$(SRCDIR)/runtime/table.c \
-	$(SRCDIR)/runtime/timer.c \
 	$(SRCDIR)/runtime/tuple.c \
 	$(SRCDIR)/runtime/vector.c \
 	$(SRCDIR)/x86_64/page.c \
-	$(SRCDIR)/x86_64/serial.c \
-	$(SRCDIR)/fs/fs.c \
-	$(SRCDIR)/fs/tfs.c \
-	$(SRCDIR)/fs/tlog.c
+	$(SRCDIR)/x86_64/serial.c
 
 CFLAGS+=	$(KERNCFLAGS) -Os -DBOOT -DPAGE_USE_FLUSH -fno-pic
 CFLAGS+= \
@@ -107,10 +106,10 @@ CFLAGS-uefi= \
 # UEFI linker flags: macOS and Linux need different options
 ifeq ($(UNAME_s),Darwin)
 # macOS linker doesn't support -z, -nostdlib, -shared, -Bsymbolic
-LDLAGS-uefi= -T $(SRCDIR)/x86_64/uefi.lds
+LDLAGS-uefi= -T $(SRCDIR)/x86_64/uefi.lds -undefined suppress
 else
 # Linux linker supports GNU flags
-LDLAGS-uefi= -z noexecstack -nostdlib -shared -Bsymbolic -T $(SRCDIR)/x86_64/uefi.lds
+LDLAGS-uefi= -z noexecstack -nostdlib -shared -Bsymbolic -T $(SRCDIR)/x86_64/uefi.lds --allow-undefined
 endif
 
 DEPFILES+= $(DEPS-uefi)

@@ -16,6 +16,7 @@ import (
 // Config represents the nanofile configuration
 type Config struct {
 	Args                   []string               `json:"Args"`
+	Program                string                 `json:"Program"`
 	ManifestPassthrough    map[string]interface{} `json:"ManifestPassthrough"`
 	Env                    map[string]string      `json:"Env"`
 	Files                  map[string]string      `json:"Files"`
@@ -368,8 +369,12 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 
 	manifest.WriteString("(children:(main.py:(contents:(host:" + absAppPath + "))) ")
 
-	// Program to run (Python interpreter)
-	manifest.WriteString("program:/usr/bin/python3 ")
+	// Program to run (default to Python interpreter, but allow config override)
+	program := "/usr/bin/python3"
+	if config.Program != "" {
+		program = config.Program
+	}
+	manifest.WriteString("program:" + program + " ")
 
 	// Enable serial console output
 	manifest.WriteString("console:t ")
@@ -452,6 +457,13 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 	if bootloaderPath != "" {
 		mkfsArgs = append([]string{"-b", bootloaderPath}, mkfsArgs...)
 	}
+
+	// Add minimal rootfs if it exists (for /bin/sh, etc)
+	minimalRoot := "/tmp/nanos-root"
+	if _, err := os.Stat(minimalRoot); err == nil {
+		mkfsArgs = append(mkfsArgs, "-r", minimalRoot)
+	}
+
 	mkfsArgs = append(mkfsArgs, imagePath)
 
 	cmd := exec.Command(mkfsPath, mkfsArgs...)

@@ -73,6 +73,7 @@ void elf_symbols(buffer elf, elf_sym_handler each)
     msg_err("%s: failed to parse file, len %d", func_ss, buffer_length(elf));
 }
 
+#ifndef BOOT
 closure_function(6, 1, boolean, elf_sym_relocate,
                  buffer, elf, void *, load_addr, Elf64_Sym *, syms, u64, sym_count, Elf64_Shdr *, strtab, elf_sym_resolver, resolver,
                  Elf64_Rela *rel)
@@ -189,7 +190,16 @@ boolean elf_dyn_link(buffer elf, void *load_addr, elf_sym_resolver resolver)
                                                  symtab->sh_size / symtab->sh_entsize, strtab,
                                                  resolver));
 }
+#endif
 
+#ifdef BOOT
+/* Bootloader stub - UEFI bootloader starts but doesn't actually use this */
+void elf_dyn_relocate(u64 base, u64 offset, Elf64_Dyn *dyn, Elf64_Sym *syms)
+{
+}
+#endif
+
+#ifndef BOOT
 void elf_dyn_relocate(u64 base, u64 offset, Elf64_Dyn *dyn, Elf64_Sym *syms)
 {
     Elf64_Rela *rel = 0;
@@ -220,6 +230,7 @@ void elf_dyn_relocate(u64 base, u64 offset, Elf64_Dyn *dyn, Elf64_Sym *syms)
         relsz = relent * relcount;
     arch_elf_relocate(rel, relsz, syms, base, offset);
 }
+#endif
 
 boolean elf_plt_get(buffer elf, u64 *addr, u64 *offset, u64 *size)
 {
@@ -328,6 +339,15 @@ void *load_elf(buffer elf, u64 load_offset, elf_map_handler mapper)
     return INVALID_ADDRESS;
 }
 
+#ifdef BOOT
+/* Bootloader stub - not used by x86_64 (load_to_physical = false) */
+void load_elf_to_physical(heap h, elf_loader loader, u64 *entry, status_handler sh)
+{
+    halt("load_elf_to_physical not supported in bootloader");
+}
+#endif
+
+#ifndef BOOT
 closure_function(4, 1, void, elf_load_program_reloc,
                  Elf64_Rela *, reltab, u64, reltab_size, u64, physmem_offset, status_handler, sh,
                  status s)
@@ -469,7 +489,6 @@ closure_function(5, 1, void, elf_load_phdr,
     closure_finish();
 }
 
-
 void load_elf_to_physical(heap h, elf_loader loader, u64 *entry, status_handler sh)
 {
     Elf64_Ehdr *e = mem_alloc(h, sizeof(Elf64_Ehdr), MEM_NOFAIL);
@@ -477,3 +496,4 @@ void load_elf_to_physical(heap h, elf_loader loader, u64 *entry, status_handler 
     assert(load_phdr != INVALID_ADDRESS);
     apply(loader, 0, sizeof(Elf64_Ehdr), e, load_phdr);
 }
+#endif

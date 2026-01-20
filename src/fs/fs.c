@@ -419,6 +419,16 @@ void fsfile_flush(fsfile fsf, boolean datasync, status_handler completion)
 #endif
 }
 
+#ifdef BOOT
+/* In bootloader, no reference counting is needed (single-threaded context) */
+void filesystem_reserve(filesystem fs)
+{
+}
+
+void filesystem_release(filesystem fs)
+{
+}
+#else
 void filesystem_reserve(filesystem fs)
 {
     refcount_reserve(&fs->refcount);
@@ -428,6 +438,7 @@ void filesystem_release(filesystem fs)
 {
     refcount_release(&fs->refcount);
 }
+#endif
 
 static void fsdir_set_parent(tuple n, tuple parent)
 {
@@ -590,11 +601,16 @@ void filesystem_put_node(filesystem fs, tuple n)
 /* Called with fs unlocked; if inode number can be resolved, returns with fs locked. */
 tuple filesystem_get_meta(filesystem fs, inode n)
 {
+#ifdef BOOT
+    /* In bootloader, no locking is needed (single-threaded context) */
+    return fs->get_meta(fs, n);
+#else
     filesystem_lock(fs);
     tuple t = fs->get_meta(fs, n);
     if (!t)
         filesystem_unlock(fs);
     return t;
+#endif
 }
 
 void filesystem_put_meta(filesystem fs, tuple n)
@@ -1108,6 +1124,7 @@ void fs_set_path_helper(filesystem (*get_root_fs)(), inode (*get_mountpoint)(tup
     fs_path_helper.get_mountpoint = get_mountpoint;
 }
 
+#ifndef BOOT
 /* Requires that a mount point does not change while at least one of its two filesystems (parent and
  * child) is locked. */
 static tuple lookup_follow(filesystem *fs, tuple t, string a, tuple *p)
@@ -1530,6 +1547,7 @@ int file_get_path(filesystem fs, inode ino, char *buf, u64 len)
     filesystem_release(fs);
     return rv;
 }
+#endif
 
 /* Check if t1 is a (direct or indirect) ancestor of t2 (whose parent is p2). */
 boolean file_tuple_is_ancestor(tuple t1, tuple t2, tuple p2)

@@ -151,15 +151,15 @@ $(LIBAK_LIBDIR):
 	@mkdir -p $@
 
 # Compile libak object files with different naming
-# Use native compiler for libak, not cross-compiler (which lacks stdint.h)
+# Use target compiler to respect cross-compilation toolchain
 %.libak.o: %.c
-	@echo "  CC    $< (shared library)"
-	$(Q)gcc $(LIBAK_CFLAGS) -c $< -o $@
+	@echo "  CC    $< (shared library for $(ARCH))"
+	$(Q)$(CC) $(LIBAK_CFLAGS) -c $< -o $@
 
-# Link shared library using native compiler
+# Link shared library using target compiler
 $(LIBAK_LIB): $(LIBAK_LIBDIR) $(LIBAK_OBJS)
-	@echo "  LD    $@"
-	$(Q)gcc $(LIBAK_LDFLAGS) $(LIBAK_OBJS) -o $@
+	@echo "  LD    $@ (for $(ARCH))"
+	$(Q)$(CC) $(LIBAK_LDFLAGS) $(LIBAK_OBJS) -o $@
 ifeq ($(UNAME_s),Darwin)
 	@echo "  CODESIGN  $@"
 	$(Q)codesign -s - $@ 2>/dev/null || true
