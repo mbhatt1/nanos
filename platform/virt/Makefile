@@ -1,5 +1,13 @@
 include ../../vars.mk
 
+# On macOS, use ELF tools to avoid Apple ld/objcopy/strip incompatibilities
+ifeq ($(UNAME_s),Darwin)
+override LD             := /opt/homebrew/bin/aarch64-elf-ld
+override OBJCOPY       := /opt/homebrew/bin/aarch64-elf-objcopy
+override OBJDUMP       := /opt/homebrew/bin/aarch64-elf-objdump
+override STRIP         := /opt/homebrew/bin/aarch64-elf-strip
+endif
+
 ACPICA_DIR=	$(VENDORDIR)/acpica
 LWIPDIR=	$(VENDORDIR)/lwip
 CPYTHON_DIR=	$(VENDORDIR)/cpython
@@ -318,7 +326,8 @@ $(BOOTIMG): mbr.hex
 
 $(UEFI_OBJDIR)/aarch64/uefi-crt0.o:	$(SRCDIR)/aarch64/uefi-crt0.s
 	@$(MKDIR) $(dir $@)
-	$(call cmd,as)
+	@echo "AS	$@"
+	$(Q)aarch64-elf-as $(AFLAGS) $(AFLAGS-$(<F)) -I$(ARCHDIR) -I$(OBJDIR) $< -o $@
 
 $(UEFI_OBJDIR)/%.o: $(SRCDIR)/%.c $(GENHEADERS)
 	@$(MKDIR) $(dir $@)
@@ -331,6 +340,7 @@ $(UEFI_LOADER):	$(BOOT_OBJDIR)/uefi.so
 	$(call cmd,uefi_objcopy)
 
 LD=             $(CROSS_COMPILE)ld
+
 ifeq ($(UNAME_s),Darwin)
 REL_OS=		darwin
 QEMU_ACCEL=	-accel $(ACCEL) -cpu host
