@@ -108,8 +108,8 @@ ifeq ($(UNAME_s),Darwin)
 # macOS linker doesn't support -z, -nostdlib, -shared, -Bsymbolic
 LDLAGS-uefi= -T $(SRCDIR)/x86_64/uefi.lds -undefined suppress
 else
-# Linux linker supports GNU flags
-LDLAGS-uefi= -z noexecstack -nostdlib -shared -Bsymbolic -T $(SRCDIR)/x86_64/uefi.lds --allow-undefined
+# Linux linker supports GNU flags (note: -shared allows undefined symbols by default)
+LDLAGS-uefi= -z noexecstack -nostdlib -shared -Bsymbolic -T $(SRCDIR)/x86_64/uefi.lds
 endif
 
 DEPFILES+= $(DEPS-uefi)
