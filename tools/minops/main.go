@@ -110,6 +110,12 @@ func runApp(args []string) {
 		os.Exit(1)
 	}
 
+	// On macOS, use Docker to run the kernel
+	if runtime.GOOS == "darwin" {
+		runWithDocker(appFile, configFile, memory, verbose)
+		return
+	}
+
 	// Load config
 	config := &Config{
 		Args: []string{filepath.Base(appFile)},
@@ -384,8 +390,10 @@ func bundleTree(rootPath, dir, indent string, manifest *bytes.Buffer) error {
 			bundleTree(rootPath, relPath, indent+"  ", manifest)
 			manifest.WriteString(indent + "))\n")
 		} else {
-			// Include all files in Python stdlib
-			manifest.WriteString(indent + name + ":(contents:(host:" + fullPath + "))\n")
+			// Verify file exists before including (symlinks might be broken)
+			if _, err := os.Stat(fullPath); err == nil {
+				manifest.WriteString(indent + name + ":(contents:(host:" + fullPath + "))\n")
+			}
 		}
 	}
 
@@ -416,6 +424,12 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 
 	// Bundle /bin directory (Python, shell, etc.)
 	pythonRoot := "/tmp/nanos-root"
+
+	// Verify pythonRoot exists
+	if _, err := os.Stat(pythonRoot); err != nil {
+		return fmt.Errorf("pythonRoot not found: %s (build with Docker to populate)", pythonRoot)
+	}
+
 	manifest.WriteString("        bin:(children:(\n")
 	if _, err := os.Stat(pythonRoot + "/bin/python3.11"); err == nil {
 		manifest.WriteString("            python3.11:(contents:(host:" + pythonRoot + "/bin/python3.11))\n")
@@ -423,21 +437,27 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 	if _, err := os.Stat(pythonRoot + "/bin/python3"); err == nil {
 		manifest.WriteString("            python3:(contents:(host:" + pythonRoot + "/bin/python3))\n")
 	}
-	if _, err := os.Stat(pythonRoot + "/bin/sh"); err == nil {
-		manifest.WriteString("            sh:(contents:(host:" + pythonRoot + "/bin/sh))\n")
-	}
-	if _, err := os.Stat(pythonRoot + "/bin/busybox"); err == nil {
-		manifest.WriteString("            busybox:(contents:(host:" + pythonRoot + "/bin/busybox))\n")
+	// Always include busybox (should exist from alpine-rootfs COPY)
+	busyboxPath := pythonRoot + "/bin/busybox"
+	manifest.WriteString("            busybox:(contents:(host:" + busyboxPath + "))\n")
+	// Use Lstat to check for symlinks (doesn't follow the link)
+	if _, err := os.Lstat(pythonRoot + "/bin/sh"); err == nil {
+		// If sh is a symlink to busybox, include it as a reference to busybox
+		manifest.WriteString("            sh:(contents:(host:" + pythonRoot + "/bin/busybox))\n")
 	}
 	manifest.WriteString("        ))\n")
 
-	// Bundle /lib directory (runtime libraries)
+	// Bundle /lib directory (runtime libraries including libpython)
 	manifest.WriteString("        lib:(children:(\n")
 	if _, err := os.Stat(pythonRoot + "/lib/libc.musl-x86_64.so.1"); err == nil {
 		manifest.WriteString("            libc.musl-x86_64.so.1:(contents:(host:" + pythonRoot + "/lib/libc.musl-x86_64.so.1))\n")
 	}
 	if _, err := os.Stat(pythonRoot + "/lib/ld-musl-x86_64.so.1"); err == nil {
 		manifest.WriteString("            ld-musl-x86_64.so.1:(contents:(host:" + pythonRoot + "/lib/ld-musl-x86_64.so.1))\n")
+	}
+	// Include libpython (required by Python executable)
+	if _, err := os.Stat(pythonRoot + "/usr/lib/libpython3.11.so.1.0"); err == nil {
+		manifest.WriteString("            libpython3.11.so.1.0:(contents:(host:" + pythonRoot + "/usr/lib/libpython3.11.so.1.0))\n")
 	}
 	manifest.WriteString("        ))\n")
 
@@ -454,28 +474,60 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 	// Enable serial console output
 	manifest.WriteString("console:t ")
 
-	// Add command-line arguments (default to just main.py if not specified)
-	if len(config.Args) == 0 {
-		manifest.WriteString("arguments:[main.py]")
-	} else if len(config.Args) > 0 {
-		manifest.WriteString("arguments:[")
-		for i, arg := range config.Args {
-			if i > 0 {
-				manifest.WriteString(" ")
-			}
-			manifest.WriteString(arg)
+	// Add command-line arguments - always use main.py since that's how the app is stored
+	// For Python programs, add -u flag for unbuffered output by default
+	manifest.WriteString("arguments:[")
+	hasScript := false
+	hasUnbuffered := false
+
+	// Check if -u flag is already present
+	for _, arg := range config.Args {
+		if arg == "-u" {
+			hasUnbuffered = true
+			break
 		}
-		manifest.WriteString("]")
 	}
 
-	// Add environment variables if present
-	if len(config.Env) > 0 {
-		manifest.WriteString(" environment:(")
-		for k, v := range config.Env {
-			manifest.WriteString(k + ":" + v + " ")
-		}
-		manifest.WriteString(")")
+	// For Python, add -u if not present
+	if strings.Contains(program, "python") && !hasUnbuffered {
+		manifest.WriteString("-u ")
 	}
+
+	for i, arg := range config.Args {
+		if i > 0 || (strings.Contains(program, "python") && !hasUnbuffered) {
+			manifest.WriteString(" ")
+		}
+		// Replace the original script name with main.py
+		if strings.HasSuffix(arg, ".py") {
+			manifest.WriteString("main.py")
+			hasScript = true
+		} else {
+			manifest.WriteString(arg)
+		}
+	}
+	// If no .py file was in args, add main.py
+	if !hasScript {
+		manifest.WriteString(" main.py")
+	}
+	manifest.WriteString("]")
+
+	// Add environment variables - always include Python paths for Python programs
+	manifest.WriteString(" environment:(")
+	// Add default Python environment if running Python
+	if strings.Contains(program, "python") {
+		// Only add if not already specified in config
+		if _, ok := config.Env["PYTHONHOME"]; !ok {
+			manifest.WriteString("PYTHONHOME:/usr ")
+		}
+		if _, ok := config.Env["PYTHONPATH"]; !ok {
+			manifest.WriteString("PYTHONPATH:/usr/lib/python3.11 ")
+		}
+	}
+	// Add user-specified environment variables
+	for k, v := range config.Env {
+		manifest.WriteString(k + ":" + v + " ")
+	}
+	manifest.WriteString(")")
 
 	// Add manifest passthrough settings
 	if len(config.ManifestPassthrough) > 0 {
@@ -535,11 +587,8 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		mkfsArgs = append([]string{"-b", bootloaderPath}, mkfsArgs...)
 	}
 
-	// Add minimal rootfs if it exists (for /bin/sh, etc)
-	minimalRoot := "/tmp/nanos-root"
-	if _, err := os.Stat(minimalRoot); err == nil {
-		mkfsArgs = append(mkfsArgs, "-r", minimalRoot)
-	}
+	// NOTE: Do NOT use -r flag when explicit bundling is in manifest
+	// The explicit children entries in the manifest provide all necessary files
 
 	mkfsArgs = append(mkfsArgs, imagePath)
 
@@ -604,4 +653,71 @@ func launchQEMU(kernelPath, imagePath string, config *Config, memory int, verbos
 	}
 
 	return nil
+}
+
+// runWithDocker runs the app using Docker (for macOS)
+func runWithDocker(appFile, configFile string, memory int, verbose bool) {
+	// Get absolute path of app file
+	absAppFile, err := filepath.Abs(appFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting absolute path: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Get the directory containing the app for mounting
+	appDir := filepath.Dir(absAppFile)
+	appName := filepath.Base(absAppFile)
+
+	if verbose {
+		fmt.Printf("🐳 Running via Docker (macOS detected)\n")
+		fmt.Printf("   App: %s\n", absAppFile)
+		fmt.Printf("   Memory: %dMB\n", memory)
+		fmt.Printf("\n")
+	}
+
+	// Build docker run command
+	dockerArgs := []string{
+		"run", "--rm",
+		"--platform", "linux/amd64",
+		"-v", fmt.Sprintf("%s:/app:ro", appDir),
+	}
+
+	// Mount config file if it exists and is not default
+	if configFile != "config.json" {
+		absConfigFile, err := filepath.Abs(configFile)
+		if err == nil {
+			if _, err := os.Stat(absConfigFile); err == nil {
+				dockerArgs = append(dockerArgs, "-v", fmt.Sprintf("%s:/nanos/config.json:ro", absConfigFile))
+			}
+		}
+	} else if _, err := os.Stat(configFile); err == nil {
+		absConfigFile, _ := filepath.Abs(configFile)
+		dockerArgs = append(dockerArgs, "-v", fmt.Sprintf("%s:/nanos/config.json:ro", absConfigFile))
+	}
+
+	dockerArgs = append(dockerArgs, "nanos-python", "bash", "-c",
+		fmt.Sprintf("cd /nanos && cp /app/%s /tmp/app.py && tools/minops/minops run /tmp/app.py -m %d %s",
+			appName, memory, func() string {
+				if verbose {
+					return "-v"
+				}
+				return ""
+			}()))
+
+	if verbose {
+		fmt.Printf("🐳 Docker command: docker %s\n\n", strings.Join(dockerArgs, " "))
+	}
+
+	cmd := exec.Command("docker", dockerArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "Error running Docker: %v\n", err)
+		os.Exit(1)
+	}
 }

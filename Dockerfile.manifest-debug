@@ -1,0 +1,82 @@
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
+
+# Install build dependencies and Go
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    wget \
+    git \
+    golang-go \
+    qemu-system-x86 \
+    nasm \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /nanos
+COPY . /nanos
+
+# Initialize git repo for gitversion.c generation
+RUN cd /nanos && \
+    git init && \
+    git config user.email "build@nanos.local" && \
+    git config user.name "Build" && \
+    git add . && \
+    git commit --no-verify -m "Initial build" || echo "Git init completed"
+
+# Clean old build artifacts and build from scratch
+RUN cd /nanos && make clean && make -j$(nproc) 2>&1 | tail -50 || true
+
+# Build tools
+RUN cd /nanos && make -C tools all 2>&1 | tail -30 && \
+    echo "✅ mkfs compiled"
+
+# Build minops
+RUN cd /nanos/tools/minops && go build -o minops main.go && echo "✅ minops compiled"
+
+# Extract Alpine
+FROM --platform=linux/amd64 alpine:3.19 AS alpine-rootfs
+
+RUN apk add --no-cache python3 && \
+    echo "✅ Alpine Python installed"
+
+RUN mkdir -p /rootfs && \
+    for dir in bin sbin lib lib64 usr etc home opt root srv var boot media mnt tmp; do \
+      if [ -d /$dir ]; then \
+        cp -r /$dir /rootfs/; \
+      fi; \
+    done && \
+    mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev && \
+    cp /rootfs/usr/bin/python3.11 /rootfs/bin/python3.11 && \
+    ln -sf python3.11 /rootfs/bin/python3
+
+# Final stage
+FROM builder
+
+COPY --from=alpine-rootfs /rootfs /tmp/nanos-root
+
+RUN cat > /debug-manifest.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "===== DEBUG: MANIFEST GENERATION ====="
+echo ""
+
+cd /nanos
+export PATH="/nanos/output/tools/bin:$PATH"
+
+# Create a simple test Python file
+cat > /tmp/test-debug.py << 'PYEOF'
+print("DEBUG_TEST", flush=True)
+PYEOF
+
+# Run minops with verbose flag to see the manifest
+echo "Running: minops run /tmp/test-debug.py -m 512 -v"
+echo ""
+
+timeout 30 tools/minops/minops run /tmp/test-debug.py -m 512 -v 2>&1 | head -200
+
+echo ""
+echo "✅ Debug completed"
+EOF
+
+RUN chmod +x /debug-manifest.sh
+
+CMD ["/debug-manifest.sh"]

@@ -1,0 +1,88 @@
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
+
+# Install build dependencies and Go
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    wget \
+    git \
+    golang-go \
+    qemu-system-x86 \
+    nasm \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /nanos
+COPY . /nanos
+
+# Initialize git repo for gitversion.c generation
+RUN cd /nanos && \
+    git init && \
+    git config user.email "build@nanos.local" && \
+    git config user.name "Build" && \
+    git add . && \
+    git commit --no-verify -m "Initial build" || echo "Git init completed"
+
+# Clean old build artifacts and build from scratch
+RUN cd /nanos && make clean && make -j$(nproc) 2>&1 | tail -100 || echo "Build completed"
+
+# Build tools
+RUN cd /nanos && make -C tools all 2>&1 | tail -50 && \
+    echo "✅ mkfs compiled" && \
+    ls -lh /nanos/output/tools/bin/mkfs
+
+# Build minops
+RUN cd /nanos/tools/minops && go build -o minops main.go && echo "✅ minops compiled"
+
+# Extract Alpine Python
+FROM --platform=linux/amd64 alpine:3.19 AS alpine-rootfs
+
+RUN apk add --no-cache python3 && \
+    echo "✅ Alpine Python installed"
+
+RUN mkdir -p /rootfs && \
+    for dir in bin sbin lib lib64 usr etc home opt root srv var boot media mnt tmp; do \
+      if [ -d /$dir ]; then \
+        cp -r /$dir /rootfs/; \
+      fi; \
+    done && \
+    mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev && \
+    cp /rootfs/usr/bin/python3.11 /rootfs/bin/python3.11 && \
+    ln -sf python3.11 /rootfs/bin/python3 && \
+    echo "✅ Python symlinked"
+
+# Final stage for debugging
+FROM builder
+
+COPY --from=alpine-rootfs /rootfs /tmp/nanos-root
+
+# Debug: Show what's in the manifest
+RUN cat > /debug-test.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "🔍 DEBUG: Checking Alpine rootfs..."
+ls -lh /tmp/nanos-root/bin/python3* || echo "  ⚠️ Python not found in /bin"
+ls -lh /tmp/nanos-root/usr/bin/python3* || echo "  ⚠️ Python not found in /usr/bin"
+ls -lh /tmp/nanos-root/lib/*.so.* | head -5 || echo "  ⚠️ Libraries not found"
+
+echo ""
+echo "🔧 Generating manifest with minops..."
+cd /nanos
+
+# Create a simple Python test
+cat > /tmp/simple-test.py << 'PYEOF'
+print("PYTHON_WORKS", flush=True)
+PYEOF
+
+# Run minops with verbose flag to see manifest
+export PATH="/nanos/output/tools/bin:$PATH"
+
+# Capture manifest by creating a custom config
+timeout 30 tools/minops/minops run /tmp/simple-test.py -m 512 2>&1 || true
+
+echo ""
+echo "✅ Debug test completed"
+EOF
+
+RUN chmod +x /debug-test.sh
+
+CMD ["/debug-test.sh"]

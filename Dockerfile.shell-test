@@ -1,0 +1,116 @@
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
+
+# Install build dependencies and Go
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    wget \
+    git \
+    golang-go \
+    qemu-system-x86 \
+    nasm \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /nanos
+COPY . /nanos
+
+# Initialize git repo for gitversion.c generation
+RUN cd /nanos && \
+    git init && \
+    git config user.email "build@nanos.local" && \
+    git config user.name "Build" && \
+    git add . && \
+    git commit --no-verify -m "Initial build" || echo "Git init completed"
+
+# Clean old build artifacts and build from scratch
+RUN cd /nanos && make clean && make -j$(nproc) 2>&1 | tail -50 || true
+
+# Build tools
+RUN cd /nanos && make -C tools all 2>&1 | tail -30 && \
+    echo "✅ mkfs compiled"
+
+# Build minops
+RUN cd /nanos/tools/minops && go build -o minops main.go && echo "✅ minops compiled"
+
+# Extract Alpine
+FROM --platform=linux/amd64 alpine:3.19 AS alpine-rootfs
+
+RUN apk add --no-cache python3 && \
+    echo "✅ Alpine Python installed"
+
+RUN mkdir -p /rootfs && \
+    for dir in bin sbin lib lib64 usr etc home opt root srv var boot media mnt tmp; do \
+      if [ -d /$dir ]; then \
+        cp -r /$dir /rootfs/; \
+      fi; \
+    done && \
+    mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev && \
+    cp /rootfs/usr/bin/python3.11 /rootfs/bin/python3.11 && \
+    ln -sf python3.11 /rootfs/bin/python3
+
+# Final stage
+FROM builder
+
+COPY --from=alpine-rootfs /rootfs /tmp/nanos-root
+
+# Test 1: Shell with echo
+RUN cat > /test-shell.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo ""
+echo "🧪 TEST 1: Shell script execution"
+echo "=================================="
+
+cd /nanos
+export PATH="/nanos/output/tools/bin:$PATH"
+
+# Create shell command output file
+cat > /tmp/test-shell-echo.sh << 'SHEOF'
+echo "SHELL_ECHO_TEST_OUTPUT"
+SHEOF
+
+# Create config for /bin/sh to execute echo directly
+cat > /tmp/shell-config.json << 'CFGEOF'
+{
+  "Program": "/bin/sh",
+  "Args": ["-c", "echo TEST_SHELL_OUTPUT_FROM_BUSYBOX"]
+}
+CFGEOF
+
+echo "Running: /bin/sh -c 'echo TEST_SHELL_OUTPUT_FROM_BUSYBOX'"
+timeout 20 tools/minops/minops run /tmp/test-shell-echo.sh -c /tmp/shell-config.json -m 512 2>&1 || true
+
+echo ""
+echo "✅ Shell test completed"
+EOF
+
+RUN chmod +x /test-shell.sh
+
+# Test 2: Python with simple print
+RUN cat > /test-python.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo ""
+echo "🧪 TEST 2: Python with print"
+echo "================================"
+
+cd /nanos
+export PATH="/nanos/output/tools/bin:$PATH"
+
+# Create Python test
+cat > /tmp/test-python-simple.py << 'PYEOF'
+print("PYTHON_PRINT_TEST_OUTPUT", flush=True)
+PYEOF
+
+echo "Running: /bin/python3 /tmp/test-python-simple.py"
+timeout 20 tools/minops/minops run /tmp/test-python-simple.py -m 512 2>&1 || true
+
+echo ""
+echo "✅ Python test completed"
+EOF
+
+RUN chmod +x /test-python.sh
+
+# Run both tests
+CMD /bin/bash -c "/test-shell.sh && /test-python.sh"
