@@ -13,6 +13,7 @@
 #include "ak_syscall.h"
 #include "ak_inference.h"
 #include "ak_wasm.h"
+#include "ak_sanitize.h"
 
 /* ============================================================
  * GLOBAL STATE
@@ -172,6 +173,7 @@ void ak_init(heap h)
     ak_heap_init(h);
     ak_policy_init(h);
     ak_ipc_init(h);
+    ak_inference_init(h, NULL);  /* Initialize inference with default config */
 
     /* Create default policy */
     ak_state.default_policy = ak_policy_default(h);
@@ -1696,14 +1698,107 @@ ak_response_t *ak_handle_recv(ak_agent_context_t *ctx, ak_request_t *req)
 
 ak_response_t *ak_handle_respond(ak_agent_context_t *ctx, ak_request_t *req)
 {
-    /* Response to human/orchestrator */
-    (void)req;
+    /*
+     * RESPOND: Send response to human/orchestrator with DLP filtering
+     *
+     * DLP (Data Loss Prevention) applies sanitization based on taint level:
+     *   - AK_TAINT_TRUSTED: No sanitization (data from trusted sources)
+     *   - AK_TAINT_USER_INPUT: HTML escape to prevent XSS
+     *   - AK_TAINT_UNTRUSTED: Full sanitization (HTML + dangerous patterns)
+     *
+     * This prevents agents from:
+     *   - Exfiltrating secrets via XSS in UI responses
+     *   - Injecting malicious scripts into orchestrator UIs
+     *   - Embedding sensitive data in responses
+     */
 
-    buffer result = allocate_buffer(ctx->heap, 32);
-    if (!result)
+    if (!req || !ctx)
+        return ak_response_error(ctx->heap, req, AK_E_SCHEMA_INVALID);
+
+    /* Extract response content from request args */
+    buffer response_content = req->args;
+    ak_taint_t taint = req->taint;
+
+    if (!response_content || buffer_length(response_content) == 0) {
+        /* No content provided, just acknowledge */
+        buffer result = allocate_buffer(ctx->heap, 32);
+        if (!result)
+            return ak_response_error(ctx->heap, req, -ENOMEM);
+        buffer_write(result, "{\"acknowledged\":true}", 21);
+        return ak_response_success(ctx->heap, req, result);
+    }
+
+    /* Apply DLP based on taint level */
+    buffer sanitized = 0;
+
+    switch (taint) {
+    case AK_TAINT_TRUSTED:
+        /* Trusted data passes through unchanged */
+        sanitized = allocate_buffer(ctx->heap, buffer_length(response_content));
+        if (sanitized)
+            buffer_write(sanitized, buffer_ref(response_content, 0),
+                         buffer_length(response_content));
+        break;
+
+    case AK_TAINT_USER_INPUT:
+        /* User input gets HTML escaped to prevent XSS */
+        sanitized = ak_sanitize_html(ctx->heap, response_content);
+        break;
+
+    case AK_TAINT_UNTRUSTED:
+    default:
+        /* Untrusted data gets full sanitization */
+        /* First HTML escape */
+        buffer html_safe = ak_sanitize_html(ctx->heap, response_content);
+        if (!html_safe) {
+            return ak_response_error(ctx->heap, req, -ENOMEM);
+        }
+
+        /* Check for and redact potential secrets/sensitive patterns */
+        sanitized = ak_dlp_redact_secrets(ctx->heap, html_safe);
+        deallocate_buffer(html_safe);
+        break;
+    }
+
+    if (!sanitized)
         return ak_response_error(ctx->heap, req, -ENOMEM);
 
-    buffer_write(result, "{\"acknowledged\":true}", 21);
+    /* Build response JSON */
+    buffer result = allocate_buffer(ctx->heap, buffer_length(sanitized) + 64);
+    if (!result) {
+        deallocate_buffer(sanitized);
+        return ak_response_error(ctx->heap, req, -ENOMEM);
+    }
+
+    buffer_write(result, "{\"content\":\"", 12);
+    /* JSON-escape the sanitized content */
+    u8 *data = buffer_ref(sanitized, 0);
+    u64 len = buffer_length(sanitized);
+    for (u64 i = 0; i < len; i++) {
+        char c = data[i];
+        switch (c) {
+        case '"':  buffer_write(result, "\\\"", 2); break;
+        case '\\': buffer_write(result, "\\\\", 2); break;
+        case '\n': buffer_write(result, "\\n", 2); break;
+        case '\r': buffer_write(result, "\\r", 2); break;
+        case '\t': buffer_write(result, "\\t", 2); break;
+        default:
+            if (c >= 32 && c < 127)
+                buffer_write(result, &c, 1);
+            /* Skip non-printable chars */
+            break;
+        }
+    }
+    buffer_write(result, "\",\"sanitized\":true}", 19);
+
+    deallocate_buffer(sanitized);
+
+    /* Log DLP action to audit via existing append API */
+    /* Note: Using lifecycle log for DLP events until dedicated API is added */
+    if (taint != AK_TAINT_TRUSTED) {
+        ak_audit_log_lifecycle(ctx->run_id, "dlp_sanitized",
+            taint == AK_TAINT_UNTRUSTED ? "untrusted" : "user_input");
+    }
 
     return ak_response_success(ctx->heap, req, result);
 }

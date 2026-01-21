@@ -21,6 +21,7 @@ type Config struct {
 	ManifestPassthrough    map[string]interface{} `json:"ManifestPassthrough"`
 	Env                    map[string]string      `json:"Env"`
 	Files                  map[string]string      `json:"Files"`
+	Policy                 string                 `json:"Policy"` // Path to policy JSON file
 }
 
 func main() {
@@ -36,6 +37,12 @@ func main() {
 		runApp(os.Args[2:])
 	case "mkimage":
 		mkImageOnly(os.Args[2:])
+	case "deploy":
+		deployTool(os.Args[2:])
+	case "tools":
+		listTools(os.Args[2:])
+	case "proxy":
+		runProxy(os.Args[2:])
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -46,20 +53,46 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `minops - Minimal Nanos ops replacement
+	fmt.Fprintf(os.Stderr, `minops - Minimal Nanos ops with Authority Kernel
 
 Usage:
-  minops run <app.py> [-c config.json] [-m memory] [-v]
+  minops run <app.py> [-c config.json] [-m memory] [-p policy.json] [-v]
+  minops deploy <tool.wasm> [-p policy.json] [-n name]
+  minops tools [-l]
+  minops proxy [-s socket] [--llm-provider openai] [--llm-endpoint url]
 
-Options:
+Commands:
+  run       Run a Python application in Nanos with Authority Kernel
+  deploy    Deploy a WASM tool to the tool registry
+  tools     List deployed tools
+  proxy     Start the akproxy daemon for HTTP/LLM services
+
+Run Options:
   -c config.json    Configuration file (default: config.json)
+  -p policy.json    Authority Kernel policy file
   -m memory         Memory in MB (default: 512)
   -v, -verbose      Verbose output
-  -h, -help         Show this help
+
+Deploy Options:
+  -p policy.json    Tool capability policy
+  -n name           Tool name (default: derived from filename)
+  --signature sig   Signature file for verification
+
+Tools Options:
+  -l, --list        List all deployed tools
+
+Proxy Options:
+  -s socket         Unix socket path (default: /tmp/akproxy.sock)
+  --llm-provider    LLM provider: openai, anthropic, ollama
+  --llm-endpoint    LLM API endpoint URL
+  --allowed-dirs    Comma-separated allowed directories
 
 Examples:
   minops run main.py -c config.json
-  minops run myapp.py -m 1024 -v
+  minops run examples/01_heap_operations.py -p examples/policies/01_heap_policy.json
+  minops deploy mytool.wasm -p tool_policy.json -n my_tool
+  minops tools --list
+  minops proxy --llm-provider openai --llm-endpoint https://api.openai.com
 
 `)
 }
@@ -68,6 +101,7 @@ func runApp(args []string) {
 	var (
 		appFile    string
 		configFile = "config.json"
+		policyFile = ""
 		memory     = 512
 		verbose    bool
 	)
@@ -82,6 +116,11 @@ func runApp(args []string) {
 		case "-c":
 			if i+1 < len(args) {
 				configFile = args[i+1]
+				i++
+			}
+		case "-p":
+			if i+1 < len(args) {
+				policyFile = args[i+1]
 				i++
 			}
 		case "-m":
@@ -134,12 +173,25 @@ func runApp(args []string) {
 		}
 	}
 
+	// Auto-detect or use specified policy file
+	if policyFile == "" {
+		policyFile = findPolicyFile(appFile)
+	}
+	if policyFile != "" {
+		if _, err := os.Stat(policyFile); err == nil {
+			config.Policy = policyFile
+		}
+	}
+
 	if verbose {
 		fmt.Printf("🔧 Configuration:\n")
 		fmt.Printf("   App: %s\n", appFile)
 		fmt.Printf("   Args: %v\n", config.Args)
 		fmt.Printf("   Memory: %dMB\n", memory)
 		fmt.Printf("   Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+		if config.Policy != "" {
+			fmt.Printf("   Policy: %s\n", config.Policy)
+		}
 		fmt.Printf("\n")
 	}
 
@@ -366,6 +418,53 @@ func findBootloader() string {
 	return ""
 }
 
+// findPolicyFile auto-detects policy file based on script name
+// For example: examples/01_heap_operations.py -> examples/policies/01_heap_policy.json
+func findPolicyFile(appFile string) string {
+	basename := filepath.Base(appFile)
+	dir := filepath.Dir(appFile)
+
+	// Map script names to policy files
+	policyMapping := map[string]string{
+		"01_heap_operations.py": "01_heap_policy.json",
+		"02_authorization.py":   "02_authorization_policy.json",
+		"03_tool_execution.py":  "03_tool_policy.json",
+		"04_inference.py":       "04_inference_policy.json",
+		"05_audit_logging.py":   "05_audit_policy.json",
+	}
+
+	if policyName, ok := policyMapping[basename]; ok {
+		// Look for policy in examples/policies/ relative to app
+		candidates := []string{
+			filepath.Join(dir, "policies", policyName),
+			filepath.Join(dir, "..", "examples", "policies", policyName),
+			filepath.Join("examples", "policies", policyName),
+		}
+
+		for _, path := range candidates {
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
+		}
+	}
+
+	// Also check for a policy file with matching number prefix
+	// e.g., any 01_*.py -> 01_*_policy.json
+	if len(basename) >= 3 && basename[0:2] >= "01" && basename[0:2] <= "99" {
+		prefix := basename[0:2]
+		policiesDir := filepath.Join(dir, "policies")
+		if entries, err := ioutil.ReadDir(policiesDir); err == nil {
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), prefix) && strings.HasSuffix(entry.Name(), "_policy.json") {
+					return filepath.Join(policiesDir, entry.Name())
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
 // bundleTree recursively bundles a directory tree, skipping problematic entries
 func bundleTree(rootPath, dir, indent string, manifest *bytes.Buffer) error {
 	entries, err := ioutil.ReadDir(filepath.Join(rootPath, dir))
@@ -466,6 +565,18 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		manifest.WriteString("            libak.so:(contents:(host:" + pythonRoot + "/lib/libak.so))\n")
 	}
 	manifest.WriteString("        ))\n")
+
+	// Include Authority Kernel policy file at /ak/policy.json
+	if config.Policy != "" {
+		absPolicyPath, err := filepath.Abs(config.Policy)
+		if err == nil {
+			if _, err := os.Stat(absPolicyPath); err == nil {
+				manifest.WriteString("        ak:(children:(\n")
+				manifest.WriteString("            policy.json:(contents:(host:" + absPolicyPath + "))\n")
+				manifest.WriteString("        ))\n")
+			}
+		}
+	}
 
 	// Bundle Python stdlib via /usr/lib directory
 	manifest.WriteString("        usr:(children:(lib:(children:(\n")
@@ -840,6 +951,321 @@ func runWithDocker(appFile, configFile string, memory int, verbose bool) {
 			os.Exit(exitErr.ExitCode())
 		}
 		fmt.Fprintf(os.Stderr, "Error running Docker: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// ToolManifest represents a deployed tool
+type ToolManifest struct {
+	Name        string            `json:"name"`
+	Path        string            `json:"path"`
+	Policy      string            `json:"policy"`
+	Signature   string            `json:"signature,omitempty"`
+	Capabilities []string         `json:"capabilities,omitempty"`
+	DeployedAt  string            `json:"deployed_at"`
+	Hash        string            `json:"hash"`
+}
+
+// ToolRegistry stores deployed tools
+type ToolRegistry struct {
+	Tools   []ToolManifest `json:"tools"`
+	Version string         `json:"version"`
+}
+
+func getToolRegistryPath() string {
+	// Store in user's config directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "/tmp/ak-tools.json"
+	}
+	return filepath.Join(home, ".authority", "tools.json")
+}
+
+func loadToolRegistry() (*ToolRegistry, error) {
+	path := getToolRegistryPath()
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return &ToolRegistry{Version: "1.0", Tools: []ToolManifest{}}, nil
+	}
+
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var registry ToolRegistry
+	if err := json.Unmarshal(data, &registry); err != nil {
+		return nil, err
+	}
+
+	return &registry, nil
+}
+
+func saveToolRegistry(registry *ToolRegistry) error {
+	path := getToolRegistryPath()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(registry, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(path, data, 0644)
+}
+
+func deployTool(args []string) {
+	var (
+		toolFile   string
+		policyFile string
+		toolName   string
+		signature  string
+		verbose    bool
+	)
+
+	// Parse arguments
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "-v", "-verbose":
+			verbose = true
+		case "-p", "--policy":
+			if i+1 < len(args) {
+				policyFile = args[i+1]
+				i++
+			}
+		case "-n", "--name":
+			if i+1 < len(args) {
+				toolName = args[i+1]
+				i++
+			}
+		case "--signature":
+			if i+1 < len(args) {
+				signature = args[i+1]
+				i++
+			}
+		default:
+			if !strings.HasPrefix(arg, "-") && toolFile == "" {
+				toolFile = arg
+			}
+		}
+	}
+
+	if toolFile == "" {
+		fmt.Fprintf(os.Stderr, "Error: No tool file specified\n")
+		fmt.Fprintf(os.Stderr, "Usage: minops deploy <tool.wasm> [-p policy.json] [-n name]\n")
+		os.Exit(1)
+	}
+
+	// Check tool file exists
+	if _, err := os.Stat(toolFile); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: Tool file not found: %s\n", toolFile)
+		os.Exit(1)
+	}
+
+	// Default tool name from filename
+	if toolName == "" {
+		toolName = strings.TrimSuffix(filepath.Base(toolFile), filepath.Ext(toolFile))
+	}
+
+	// Read and hash the tool file
+	toolData, err := ioutil.ReadFile(toolFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading tool file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Simple hash (in production, use SHA-256)
+	hash := fmt.Sprintf("%x", len(toolData))
+
+	// Copy tool to registry directory
+	registryDir := filepath.Dir(getToolRegistryPath())
+	toolsDir := filepath.Join(registryDir, "wasm")
+	if err := os.MkdirAll(toolsDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating tools directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	destPath := filepath.Join(toolsDir, toolName+".wasm")
+	if err := ioutil.WriteFile(destPath, toolData, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error copying tool: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Copy policy if provided
+	var policyPath string
+	if policyFile != "" {
+		policyData, err := ioutil.ReadFile(policyFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading policy file: %v\n", err)
+			os.Exit(1)
+		}
+		policyPath = filepath.Join(toolsDir, toolName+"_policy.json")
+		if err := ioutil.WriteFile(policyPath, policyData, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error copying policy: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Load registry and add tool
+	registry, err := loadToolRegistry()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading tool registry: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Check if tool already exists and update
+	found := false
+	for i, t := range registry.Tools {
+		if t.Name == toolName {
+			registry.Tools[i] = ToolManifest{
+				Name:       toolName,
+				Path:       destPath,
+				Policy:     policyPath,
+				Signature:  signature,
+				DeployedAt: fmt.Sprintf("%d", os.Getpid()), // Placeholder timestamp
+				Hash:       hash,
+			}
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		registry.Tools = append(registry.Tools, ToolManifest{
+			Name:       toolName,
+			Path:       destPath,
+			Policy:     policyPath,
+			Signature:  signature,
+			DeployedAt: fmt.Sprintf("%d", os.Getpid()),
+			Hash:       hash,
+		})
+	}
+
+	if err := saveToolRegistry(registry); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving tool registry: %v\n", err)
+		os.Exit(1)
+	}
+
+	if verbose {
+		fmt.Printf("Tool deployed:\n")
+		fmt.Printf("  Name: %s\n", toolName)
+		fmt.Printf("  Path: %s\n", destPath)
+		fmt.Printf("  Policy: %s\n", policyPath)
+		fmt.Printf("  Hash: %s\n", hash)
+	} else {
+		fmt.Printf("✅ Deployed tool: %s\n", toolName)
+	}
+}
+
+func listTools(args []string) {
+	registry, err := loadToolRegistry()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading tool registry: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(registry.Tools) == 0 {
+		fmt.Println("No tools deployed")
+		fmt.Println("\nDeploy a tool with: minops deploy <tool.wasm> -p policy.json")
+		return
+	}
+
+	fmt.Printf("Deployed Tools (%d):\n", len(registry.Tools))
+	fmt.Println(strings.Repeat("-", 60))
+	for _, tool := range registry.Tools {
+		fmt.Printf("  %-20s %s\n", tool.Name, tool.Path)
+		if tool.Policy != "" {
+			fmt.Printf("    ├─ Policy: %s\n", tool.Policy)
+		}
+		if tool.Hash != "" {
+			fmt.Printf("    └─ Hash: %s\n", tool.Hash)
+		}
+	}
+}
+
+func runProxy(args []string) {
+	var (
+		socketPath  = "/tmp/akproxy.sock"
+		llmProvider = "openai"
+		llmEndpoint = ""
+		llmAPIKey   = ""
+		allowedDirs = "/tmp"
+	)
+
+	// Parse arguments
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "-s", "--socket":
+			if i+1 < len(args) {
+				socketPath = args[i+1]
+				i++
+			}
+		case "--llm-provider":
+			if i+1 < len(args) {
+				llmProvider = args[i+1]
+				i++
+			}
+		case "--llm-endpoint":
+			if i+1 < len(args) {
+				llmEndpoint = args[i+1]
+				i++
+			}
+		case "--llm-api-key":
+			if i+1 < len(args) {
+				llmAPIKey = args[i+1]
+				i++
+			}
+		case "--allowed-dirs":
+			if i+1 < len(args) {
+				allowedDirs = args[i+1]
+				i++
+			}
+		}
+	}
+
+	// Find akproxy binary
+	execDir, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+	akproxyPath := filepath.Join(execDir, "akproxy")
+
+	if _, err := os.Stat(akproxyPath); os.IsNotExist(err) {
+		// Try in tools/akproxy
+		akproxyPath = filepath.Join(execDir, "..", "akproxy", "akproxy")
+		if _, err := os.Stat(akproxyPath); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: akproxy binary not found\n")
+			fmt.Fprintf(os.Stderr, "Build it with: cd tools/akproxy && go build\n")
+			os.Exit(1)
+		}
+	}
+
+	// Build akproxy command
+	proxyArgs := []string{
+		"-socket", socketPath,
+		"-llm-provider", llmProvider,
+		"-allowed-dirs", allowedDirs,
+	}
+
+	if llmEndpoint != "" {
+		proxyArgs = append(proxyArgs, "-llm-endpoint", llmEndpoint)
+	}
+
+	if llmAPIKey != "" {
+		proxyArgs = append(proxyArgs, "-llm-api-key", llmAPIKey)
+	}
+
+	fmt.Printf("🚀 Starting Authority Kernel Proxy...\n")
+	fmt.Printf("   Socket: %s\n", socketPath)
+	fmt.Printf("   LLM Provider: %s\n", llmProvider)
+	fmt.Printf("   Allowed Dirs: %s\n", allowedDirs)
+
+	cmd := exec.Command(akproxyPath, proxyArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error running akproxy: %v\n", err)
 		os.Exit(1)
 	}
 }

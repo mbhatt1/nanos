@@ -1,5 +1,14 @@
 /**
  * libak - The Authority Kernel C Library Implementation
+ *
+ * Serializes requests as JSON to match kernel's ak_syscall_handler format.
+ *
+ * Kernel syscall convention:
+ *   arg0: agent_id pointer (u8[16]) or 0 to use root context
+ *   arg1: request buffer pointer (JSON)
+ *   arg2: request buffer length
+ *   arg3: response buffer pointer (output)
+ *   arg4: response buffer max length
  */
 
 #include <string.h>
@@ -8,23 +17,122 @@
 #include <sys/syscall.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <errno.h>
 #include "libak.h"
+
+/* ============================================================================
+   INTERNAL HELPERS
+   ============================================================================ */
+
+/* Response buffer size */
+#define RESP_BUF_SIZE 4096
+
+/* Simple JSON number parser - extract uint64 by key */
+static uint64_t json_get_u64(const char *json, size_t len, const char *key)
+{
+    if (!json || !key || len == 0) return 0;
+
+    size_t key_len = strlen(key);
+    for (size_t i = 0; i + key_len + 3 < len; i++) {
+        if (json[i] == '"' &&
+            memcmp(&json[i + 1], key, key_len) == 0 &&
+            json[i + 1 + key_len] == '"') {
+
+            size_t j = i + 1 + key_len + 1;
+            while (j < len && (json[j] == ':' || json[j] == ' ' || json[j] == '\t'))
+                j++;
+
+            if (j >= len) return 0;
+
+            uint64_t value = 0;
+            while (j < len && json[j] >= '0' && json[j] <= '9') {
+                value = value * 10 + (json[j] - '0');
+                j++;
+            }
+            return value;
+        }
+    }
+    return 0;
+}
+
+/* Simple JSON string extractor */
+static int json_get_string(const char *json, size_t len, const char *key,
+                           char *out, size_t out_max)
+{
+    if (!json || !key || !out || len == 0 || out_max == 0) return -1;
+
+    size_t key_len = strlen(key);
+    for (size_t i = 0; i + key_len + 4 < len; i++) {
+        if (json[i] == '"' &&
+            memcmp(&json[i + 1], key, key_len) == 0 &&
+            json[i + 1 + key_len] == '"') {
+
+            size_t j = i + 1 + key_len + 1;
+            while (j < len && (json[j] == ':' || json[j] == ' ' || json[j] == '\t'))
+                j++;
+
+            if (j >= len || json[j] != '"') return -1;
+            j++;  /* skip opening quote */
+
+            size_t start = j;
+            while (j < len && json[j] != '"') {
+                if (json[j] == '\\' && j + 1 < len) j++;
+                j++;
+            }
+
+            size_t value_len = j - start;
+            if (value_len >= out_max) value_len = out_max - 1;
+            memcpy(out, &json[start], value_len);
+            out[value_len] = '\0';
+            return (int)value_len;
+        }
+    }
+    return -1;
+}
 
 /* ============================================================================
    SYSCALL WRAPPER
    ============================================================================ */
 
 /**
- * Low-level syscall wrapper
- * Invokes AK syscalls (1024-1100)
+ * Low-level syscall wrapper using kernel's expected format.
+ *
+ * Kernel convention:
+ *   arg0 = 0 (use root context)
+ *   arg1 = request JSON buffer
+ *   arg2 = request length
+ *   arg3 = response buffer
+ *   arg4 = response max length
+ *
+ * Returns bytes written to response, or negative error code.
  */
-ak_err_t ak_syscall(uint64_t sysnum, uint64_t arg0, uint64_t arg1,
-                    uint64_t arg2, uint64_t arg3, uint64_t arg4)
+static long ak_raw_syscall(uint64_t sysnum, const char *req_json, size_t req_len,
+                           char *resp_buf, size_t resp_max)
 {
     long result;
 
-    result = syscall(sysnum, arg0, arg1, arg2, arg3, arg4);
+    errno = 0;
+    result = syscall(sysnum,
+                     (uint64_t)0,           /* arg0: use root context */
+                     (uint64_t)req_json,    /* arg1: request buffer */
+                     (uint64_t)req_len,     /* arg2: request length */
+                     (uint64_t)resp_buf,    /* arg3: response buffer */
+                     (uint64_t)resp_max);   /* arg4: response max */
 
+    /* musl's syscall() returns -1 and sets errno on error.
+     * We need to return the actual kernel error code. */
+    if (result == -1 && errno != 0) {
+        return -errno;  /* Return negative errno as error code */
+    }
+
+    return result;
+}
+
+/* Legacy syscall wrapper for compatibility */
+ak_err_t ak_syscall(uint64_t sysnum, uint64_t arg0, uint64_t arg1,
+                    uint64_t arg2, uint64_t arg3, uint64_t arg4)
+{
+    long result = syscall(sysnum, arg0, arg1, arg2, arg3, arg4);
     if (result < 0) {
         return (ak_err_t)result;
     }
@@ -42,7 +150,6 @@ ak_err_t ak_init(void)
     if (libak_initialized) {
         return AK_OK;
     }
-
     libak_initialized = true;
     return AK_OK;
 }
@@ -56,6 +163,12 @@ void ak_shutdown(void)
    TYPED HEAP OPERATIONS
    ============================================================================ */
 
+/**
+ * Allocate object in typed heap.
+ *
+ * Request: {"type": <hash>, "value": <initial_value_json>}
+ * Response: {"ptr": <ptr>, "version": 1}
+ */
 ak_err_t ak_alloc(const char *type_name, const uint8_t *initial_value,
                   size_t value_len, ak_handle_t *out_handle)
 {
@@ -63,38 +176,58 @@ ak_err_t ak_alloc(const char *type_name, const uint8_t *initial_value,
         return AK_E_INVAL;
     }
 
-    if (value_len > sizeof(((ak_effect_req_t *)0)->params)) {
+    /* Compute simple hash of type name */
+    uint64_t type_hash = 0;
+    for (const char *p = type_name; *p; p++) {
+        type_hash = type_hash * 31 + (uint8_t)*p;
+    }
+
+    /* Build JSON request */
+    char req_buf[2048];
+    int req_len;
+
+    if (initial_value && value_len > 0) {
+        /* Include value - assume it's already JSON */
+        req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"type\":%lu,\"value\":%.*s}",
+                          (unsigned long)type_hash,
+                          (int)value_len, (const char *)initial_value);
+    } else {
+        req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"type\":%lu,\"value\":null}",
+                          (unsigned long)type_hash);
+    }
+
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
         return AK_E_OVERFLOW;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_ALLOC,
-        .trace_id = 0,
-    };
-
-    /* Pack type name into target */
-    strncpy(req.target, type_name, sizeof(req.target) - 1);
-
-    /* Pack initial value into params */
-    if (initial_value && value_len > 0) {
-        memcpy(req.params, initial_value, value_len);
-    }
-    req.params_len = value_len;
-
     /* Make syscall */
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_ALLOC, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_ALLOC, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
 
-    if (err == AK_OK && out_handle) {
-        /* Parse handle from response */
-        if (resp.result_len >= sizeof(ak_handle_t)) {
-            memcpy(out_handle, resp.result, sizeof(ak_handle_t));
-        }
+    if (result < 0) {
+        return (ak_err_t)result;
     }
 
-    return err;
+    /* Parse response: {"ptr": N, "version": N} */
+    out_handle->id = json_get_u64(resp_buf, result, "ptr");
+    out_handle->version = (uint32_t)json_get_u64(resp_buf, result, "version");
+
+    if (out_handle->id == 0) {
+        return AK_E_NOMEM;
+    }
+
+    return AK_OK;
 }
 
+/**
+ * Read object from typed heap.
+ *
+ * Request: {"ptr": <ptr>}
+ * Response: {"value": <json>, "version": N}
+ */
 ak_err_t ak_read(ak_handle_t handle, uint8_t *out_value,
                  size_t max_len, size_t *out_len)
 {
@@ -102,27 +235,71 @@ ak_err_t ak_read(ak_handle_t handle, uint8_t *out_value,
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_READ,
-        .trace_id = 0,
-    };
+    /* Build JSON request */
+    char req_buf[128];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"ptr\":%lu}",
+                          (unsigned long)handle.id);
 
-    /* Pack handle into params */
-    memcpy(req.params, &handle, sizeof(ak_handle_t));
-    req.params_len = sizeof(ak_handle_t);
-
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_READ, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK) {
-        size_t copy_len = (resp.result_len < max_len) ? resp.result_len : max_len;
-        memcpy(out_value, resp.result, copy_len);
-        *out_len = copy_len;
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
+        return AK_E_OVERFLOW;
     }
 
-    return err;
+    /* Make syscall */
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_READ, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
+
+    if (result < 0) {
+        return (ak_err_t)result;
+    }
+
+    /* Extract value from response - look for "value": */
+    const char *value_start = strstr(resp_buf, "\"value\":");
+    if (value_start) {
+        value_start += 8;  /* skip "value": */
+        while (*value_start == ' ' || *value_start == '\t') value_start++;
+
+        /* Find end of value (next comma or closing brace at same level) */
+        const char *value_end = value_start;
+        int depth = 0;
+        bool in_string = false;
+        while (*value_end) {
+            if (in_string) {
+                if (*value_end == '\\' && *(value_end+1)) {
+                    value_end++;
+                } else if (*value_end == '"') {
+                    in_string = false;
+                }
+            } else {
+                if (*value_end == '"') in_string = true;
+                else if (*value_end == '{' || *value_end == '[') depth++;
+                else if (*value_end == '}' || *value_end == ']') {
+                    if (depth == 0) break;
+                    depth--;
+                }
+                else if (*value_end == ',' && depth == 0) break;
+            }
+            value_end++;
+        }
+
+        size_t value_len = value_end - value_start;
+        if (value_len > max_len) value_len = max_len;
+        memcpy(out_value, value_start, value_len);
+        *out_len = value_len;
+    } else {
+        *out_len = 0;
+    }
+
+    return AK_OK;
 }
 
+/**
+ * Write (update) object in typed heap.
+ *
+ * Request: {"ptr": <ptr>, "version": <expected>, "patch": <json_patch>}
+ * Response: {"version": N}
+ */
 ak_err_t ak_write(ak_handle_t handle, const uint8_t *patch, size_t patch_len,
                   uint32_t expected_version, uint32_t *out_new_version)
 {
@@ -130,53 +307,76 @@ ak_err_t ak_write(ak_handle_t handle, const uint8_t *patch, size_t patch_len,
         return AK_E_INVAL;
     }
 
-    if (patch_len > sizeof(((ak_effect_req_t *)0)->params) - sizeof(ak_handle_t) - 4) {
+    /* Build JSON request */
+    char req_buf[2048];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"ptr\":%lu,\"version\":%u,\"patch\":%.*s}",
+                          (unsigned long)handle.id,
+                          expected_version,
+                          (int)patch_len, (const char *)patch);
+
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
         return AK_E_OVERFLOW;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_WRITE,
-        .trace_id = 0,
-    };
+    /* Make syscall */
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_WRITE, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
 
-    /* Pack handle, version, and patch into params */
-    uint8_t *p = req.params;
-    memcpy(p, &handle, sizeof(ak_handle_t));
-    p += sizeof(ak_handle_t);
-    memcpy(p, &expected_version, sizeof(uint32_t));
-    p += sizeof(uint32_t);
-    memcpy(p, patch, patch_len);
-
-    req.params_len = sizeof(ak_handle_t) + sizeof(uint32_t) + patch_len;
-
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_WRITE, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK && resp.result_len >= sizeof(uint32_t) && out_new_version) {
-        memcpy(out_new_version, resp.result, sizeof(uint32_t));
+    if (result < 0) {
+        return (ak_err_t)result;
     }
 
-    return err;
+    /* Parse response: {"version": N} */
+    if (out_new_version) {
+        *out_new_version = (uint32_t)json_get_u64(resp_buf, result, "version");
+    }
+
+    return AK_OK;
 }
 
+/**
+ * Delete object from typed heap.
+ *
+ * Request: {"ptr": <ptr>, "version": <expected>}
+ * Response: {"deleted": true}
+ */
 ak_err_t ak_delete(ak_handle_t handle)
 {
-    ak_effect_req_t req = {
-        .op = AK_SYS_DELETE,
-        .trace_id = 0,
-    };
+    /* Build JSON request */
+    char req_buf[128];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"ptr\":%lu,\"version\":%u}",
+                          (unsigned long)handle.id,
+                          handle.version);
 
-    memcpy(req.params, &handle, sizeof(ak_handle_t));
-    req.params_len = sizeof(ak_handle_t);
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
+        return AK_E_OVERFLOW;
+    }
 
-    ak_effect_resp_t resp = {0};
-    return ak_syscall(AK_SYS_DELETE, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
+    /* Make syscall */
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_DELETE, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
+
+    if (result < 0) {
+        return (ak_err_t)result;
+    }
+
+    return AK_OK;
 }
 
 /* ============================================================================
    TOOL EXECUTION
    ============================================================================ */
 
+/**
+ * Execute tool in WASM sandbox.
+ *
+ * Request: {"tool": "<name>", "args": <json>}
+ * Response: {"result": <json>}
+ */
 ak_err_t ak_call_tool(const ak_tool_call_t *tool_call,
                       uint8_t *out_result, size_t max_len, size_t *out_len)
 {
@@ -184,64 +384,75 @@ ak_err_t ak_call_tool(const ak_tool_call_t *tool_call,
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_CALL,
-        .trace_id = 0,
-    };
+    /* Build JSON request */
+    char req_buf[4096];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"tool\":\"%s\",\"args\":%.*s}",
+                          tool_call->tool_name,
+                          (int)tool_call->args_len,
+                          (const char *)tool_call->args_json);
 
-    /* Pack tool call into target and params */
-    strncpy(req.target, tool_call->tool_name, sizeof(req.target) - 1);
-
-    if (tool_call->args_len > sizeof(req.params)) {
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
         return AK_E_OVERFLOW;
     }
 
-    memcpy(req.params, tool_call->args_json, tool_call->args_len);
-    req.params_len = tool_call->args_len;
+    /* Make syscall */
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_CALL, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
 
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_CALL, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK) {
-        size_t copy_len = (resp.result_len < max_len) ? resp.result_len : max_len;
-        memcpy(out_result, resp.result, copy_len);
-        *out_len = copy_len;
+    if (result < 0) {
+        return (ak_err_t)result;
     }
 
-    return err;
+    /* Copy response (could parse "result" field, but return whole response) */
+    size_t copy_len = (size_t)result < max_len ? (size_t)result : max_len;
+    memcpy(out_result, resp_buf, copy_len);
+    *out_len = copy_len;
+
+    return AK_OK;
 }
 
+/**
+ * List available tools.
+ *
+ * Request: {"query": "tools"}
+ * Response: {"tools": [...]}
+ */
 ak_err_t ak_list_tools(uint8_t *out_tools, size_t max_len, size_t *out_len)
 {
     if (!out_tools || !out_len) {
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_QUERY,
-        .trace_id = 0,
-    };
+    const char *req_buf = "{\"query\":\"tools\"}";
+    size_t req_len = strlen(req_buf);
 
-    strncpy(req.target, "tools", sizeof(req.target) - 1);
-    req.target[sizeof(req.target) - 1] = '\0';
-    req.params_len = 0;
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_QUERY, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
 
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_QUERY, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK) {
-        size_t copy_len = (resp.result_len < max_len) ? resp.result_len : max_len;
-        memcpy(out_tools, resp.result, copy_len);
-        *out_len = copy_len;
+    if (result < 0) {
+        return (ak_err_t)result;
     }
 
-    return err;
+    size_t copy_len = (size_t)result < max_len ? (size_t)result : max_len;
+    memcpy(out_tools, resp_buf, copy_len);
+    *out_len = copy_len;
+
+    return AK_OK;
 }
 
 /* ============================================================================
    LLM INFERENCE
    ============================================================================ */
 
+/**
+ * Request LLM inference.
+ *
+ * Request: {"model": "<name>", "max_tokens": N, "prompt": "<text>"}
+ * Response: {"response": "<text>", "tokens_used": N}
+ */
 ak_err_t ak_inference(const ak_inference_req_t *req,
                       uint8_t *out_response, size_t max_len, size_t *out_len)
 {
@@ -249,58 +460,72 @@ ak_err_t ak_inference(const ak_inference_req_t *req,
         return AK_E_INVAL;
     }
 
-    if (req->prompt_len > sizeof(((ak_effect_req_t *)0)->params)) {
+    /* Build JSON request - escape prompt for JSON */
+    char req_buf[8192];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"model\":\"%s\",\"max_tokens\":%u,\"prompt\":\"%.*s\"}",
+                          req->model,
+                          req->max_tokens,
+                          (int)req->prompt_len, (const char *)req->prompt);
+
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
         return AK_E_OVERFLOW;
     }
 
-    ak_effect_req_t effect_req = {
-        .op = AK_SYS_INFERENCE,
-        .trace_id = 0,
-    };
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_INFERENCE, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
 
-    strncpy(effect_req.target, req->model, sizeof(effect_req.target) - 1);
-
-    /* Pack max_tokens + prompt into params */
-    uint8_t *p = effect_req.params;
-    memcpy(p, &req->max_tokens, sizeof(uint32_t));
-    p += sizeof(uint32_t);
-    memcpy(p, req->prompt, req->prompt_len);
-
-    effect_req.params_len = sizeof(uint32_t) + req->prompt_len;
-
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_INFERENCE, (uint64_t)&effect_req,
-                              (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK) {
-        size_t copy_len = (resp.result_len < max_len) ? resp.result_len : max_len;
-        memcpy(out_response, resp.result, copy_len);
-        *out_len = copy_len;
+    if (result < 0) {
+        return (ak_err_t)result;
     }
 
-    return err;
+    size_t copy_len = (size_t)result < max_len ? (size_t)result : max_len;
+    memcpy(out_response, resp_buf, copy_len);
+    *out_len = copy_len;
+
+    return AK_OK;
 }
 
 /* ============================================================================
    POLICY & AUTHORIZATION
    ============================================================================ */
 
+/**
+ * Check if operation is authorized.
+ *
+ * Request: {"check": "<op>", "target": "<path>"}
+ * Response: {"allowed": true/false}
+ */
 ak_err_t ak_authorize(uint16_t effect_op, const char *target)
 {
     if (!target) {
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = effect_op,
-        .trace_id = 0,
-    };
+    char req_buf[1024];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"check\":%u,\"target\":\"%s\"}",
+                          effect_op, target);
 
-    strncpy(req.target, target, sizeof(req.target) - 1);
-    req.params_len = 0;
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
+        return AK_E_OVERFLOW;
+    }
 
-    ak_effect_resp_t resp = {0};
-    return ak_syscall(effect_op, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_QUERY, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
+
+    if (result < 0) {
+        return (ak_err_t)result;
+    }
+
+    /* Check if allowed */
+    if (strstr(resp_buf, "\"allowed\":true") || strstr(resp_buf, "\"allowed\": true")) {
+        return AK_OK;
+    }
+
+    return AK_E_DENIED;
 }
 
 ak_err_t ak_authorize_details(uint16_t effect_op, const char *target,
@@ -310,24 +535,27 @@ ak_err_t ak_authorize_details(uint16_t effect_op, const char *target,
         return AK_E_INVAL;
     }
 
-    /* Query authorization details */
-    ak_effect_req_t req = {
-        .op = AK_SYS_QUERY,
-        .trace_id = 0,
-    };
+    char req_buf[1024];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"query\":\"auth\",\"op\":%u,\"target\":\"%s\"}",
+                          effect_op, target);
 
-    snprintf(req.target, sizeof(req.target), "auth:%u:%s", effect_op, target);
-    req.params_len = 0;
-
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_QUERY, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK) {
-        size_t copy_len = (resp.result_len < max_len) ? resp.result_len : max_len;
-        memcpy(out_details, resp.result, copy_len);
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
+        return AK_E_OVERFLOW;
     }
 
-    return err;
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_QUERY, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
+
+    if (result < 0) {
+        return (ak_err_t)result;
+    }
+
+    size_t copy_len = (size_t)result < max_len ? (size_t)result : max_len;
+    memcpy(out_details, resp_buf, copy_len);
+
+    return AK_OK;
 }
 
 /* ============================================================================
@@ -341,23 +569,27 @@ ak_err_t ak_budget_status(const char *resource_type,
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_QUERY,
-        .trace_id = 0,
-    };
+    char req_buf[256];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"query\":\"budget\",\"resource\":\"%s\"}",
+                          resource_type);
 
-    snprintf(req.target, sizeof(req.target), "budget:%s", resource_type);
-    req.params_len = 0;
-
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_QUERY, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK && resp.result_len >= sizeof(uint64_t) * 2) {
-        memcpy(out_used, resp.result, sizeof(uint64_t));
-        memcpy(out_remaining, resp.result + sizeof(uint64_t), sizeof(uint64_t));
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
+        return AK_E_OVERFLOW;
     }
 
-    return err;
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_QUERY, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
+
+    if (result < 0) {
+        return (ak_err_t)result;
+    }
+
+    *out_used = json_get_u64(resp_buf, result, "used");
+    *out_remaining = json_get_u64(resp_buf, result, "remaining");
+
+    return AK_OK;
 }
 
 ak_err_t ak_budget_reserve(const char *resource_type, uint64_t amount)
@@ -366,23 +598,35 @@ ak_err_t ak_budget_reserve(const char *resource_type, uint64_t amount)
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_ALLOC,
-        .trace_id = 0,
-    };
+    char req_buf[256];
+    int req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"reserve\":\"%s\",\"amount\":%lu}",
+                          resource_type, (unsigned long)amount);
 
-    snprintf(req.target, sizeof(req.target), "budget:%s", resource_type);
-    memcpy(req.params, &amount, sizeof(uint64_t));
-    req.params_len = sizeof(uint64_t);
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
+        return AK_E_OVERFLOW;
+    }
 
-    ak_effect_resp_t resp = {0};
-    return ak_syscall(AK_SYS_ALLOC, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_ALLOC, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
+
+    if (result < 0) {
+        return (ak_err_t)result;
+    }
+
+    return AK_OK;
 }
 
 /* ============================================================================
    AUDIT & LOGGING
    ============================================================================ */
 
+/**
+ * Log audit event.
+ *
+ * Request: {"event": "<type>", "details": <json>}
+ */
 ak_err_t ak_audit_log(const char *event_type, const uint8_t *details,
                       size_t details_len)
 {
@@ -390,25 +634,32 @@ ak_err_t ak_audit_log(const char *event_type, const uint8_t *details,
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_ASSERT,
-        .trace_id = 0,
-    };
-
-    strncpy(req.target, event_type, sizeof(req.target) - 1);
+    char req_buf[2048];
+    int req_len;
 
     if (details && details_len > 0) {
-        if (details_len > sizeof(req.params)) {
-            return AK_E_OVERFLOW;
-        }
-        memcpy(req.params, details, details_len);
-        req.params_len = details_len;
+        req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"event\":\"%s\",\"details\":%.*s}",
+                          event_type, (int)details_len, (const char *)details);
     } else {
-        req.params_len = 0;
+        req_len = snprintf(req_buf, sizeof(req_buf),
+                          "{\"event\":\"%s\"}",
+                          event_type);
     }
 
-    ak_effect_resp_t resp = {0};
-    return ak_syscall(AK_SYS_ASSERT, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
+    if (req_len < 0 || (size_t)req_len >= sizeof(req_buf)) {
+        return AK_E_OVERFLOW;
+    }
+
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_ASSERT, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
+
+    if (result < 0) {
+        return (ak_err_t)result;
+    }
+
+    return AK_OK;
 }
 
 ak_err_t ak_get_last_denial(uint8_t *out_reason, size_t max_len)
@@ -417,24 +668,21 @@ ak_err_t ak_get_last_denial(uint8_t *out_reason, size_t max_len)
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_QUERY,
-        .trace_id = 0,
-    };
+    const char *req_buf = "{\"query\":\"last_denial\"}";
+    size_t req_len = strlen(req_buf);
 
-    strncpy(req.target, "last_denial", sizeof(req.target) - 1);
-    req.target[sizeof(req.target) - 1] = '\0';
-    req.params_len = 0;
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_QUERY, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
 
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_QUERY, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK) {
-        size_t copy_len = (resp.result_len < max_len) ? resp.result_len : max_len;
-        memcpy(out_reason, resp.result, copy_len);
+    if (result < 0) {
+        return (ak_err_t)result;
     }
 
-    return err;
+    size_t copy_len = (size_t)result < max_len ? (size_t)result : max_len;
+    memcpy(out_reason, resp_buf, copy_len);
+
+    return AK_OK;
 }
 
 /* ============================================================================
@@ -448,7 +696,7 @@ ak_err_t ak_file_read(const char *path, uint8_t *out_data,
         return AK_E_INVAL;
     }
 
-    /* Use POSIX read - routes through policy */
+    /* Use POSIX read - routes through policy in kernel */
     FILE *f = fopen(path, "rb");
     if (!f) {
         return AK_E_NOENT;
@@ -458,9 +706,8 @@ ak_err_t ak_file_read(const char *path, uint8_t *out_data,
     int err_flag = ferror(f);
     fclose(f);
 
-    /* Check for I/O errors (not just EOF) */
     if (err_flag) {
-        return AK_E_INVAL;  /* I/O error occurred */
+        return AK_E_INVAL;
     }
 
     *out_len = n;
@@ -473,7 +720,6 @@ ak_err_t ak_file_write(const char *path, const uint8_t *data, size_t len)
         return AK_E_INVAL;
     }
 
-    /* Use POSIX write - routes through policy */
     FILE *f = fopen(path, "wb");
     if (!f) {
         return AK_E_NOENT;
@@ -501,11 +747,10 @@ ak_err_t ak_http_request(const char *method, const char *url,
         return AK_E_INVAL;
     }
 
-    /* Use http_request tool through ak_call_tool */
+    /* Build tool call for http_request */
     ak_tool_call_t tool_call = {0};
-    snprintf(tool_call.tool_name, sizeof(tool_call.tool_name), "http_request");
+    strncpy(tool_call.tool_name, "http_request", sizeof(tool_call.tool_name) - 1);
 
-    /* Construct JSON payload: {"method": "GET", "url": "...", "body_len": ...} */
     int json_len = snprintf((char *)tool_call.args_json, sizeof(tool_call.args_json),
                             "{\"method\":\"%s\",\"url\":\"%s\",\"body_len\":%zu}",
                             method, url, body_len);
@@ -515,12 +760,6 @@ ak_err_t ak_http_request(const char *method, const char *url,
     }
 
     tool_call.args_len = (uint32_t)json_len;
-
-    /* If there's a body, validate it fits with the JSON metadata */
-    if (body_len > 0) {
-        /* Body is passed separately in the actual implementation */
-        /* For now, we encode body_len in the JSON which the tool parses */
-    }
 
     return ak_call_tool(&tool_call, out_response, max_len, out_len);
 }
@@ -555,6 +794,12 @@ const char *ak_strerror(ak_err_t err)
     case AK_E_TIMEOUT:
         return "Operation timeout";
     default:
+        if (err < 0) {
+            /* Map Linux errno to description */
+            static char buf[64];
+            snprintf(buf, sizeof(buf), "System error %d", -err);
+            return buf;
+        }
         return "Unknown error";
     }
 }
@@ -582,24 +827,21 @@ ak_err_t ak_get_context(uint8_t *out_info, size_t max_len)
         return AK_E_INVAL;
     }
 
-    ak_effect_req_t req = {
-        .op = AK_SYS_QUERY,
-        .trace_id = 0,
-    };
+    const char *req_buf = "{\"query\":\"context\"}";
+    size_t req_len = strlen(req_buf);
 
-    strncpy(req.target, "context", sizeof(req.target) - 1);
-    req.target[sizeof(req.target) - 1] = '\0';
-    req.params_len = 0;
+    char resp_buf[RESP_BUF_SIZE];
+    long result = ak_raw_syscall(AK_SYS_QUERY, req_buf, req_len,
+                                 resp_buf, sizeof(resp_buf));
 
-    ak_effect_resp_t resp = {0};
-    ak_err_t err = ak_syscall(AK_SYS_QUERY, (uint64_t)&req, (uint64_t)&resp, 0, 0, 0);
-
-    if (err == AK_OK) {
-        size_t copy_len = (resp.result_len < max_len) ? resp.result_len : max_len;
-        memcpy(out_info, resp.result, copy_len);
+    if (result < 0) {
+        return (ak_err_t)result;
     }
 
-    return err;
+    size_t copy_len = (size_t)result < max_len ? (size_t)result : max_len;
+    memcpy(out_info, resp_buf, copy_len);
+
+    return AK_OK;
 }
 
 void ak_debug_enable(void)

@@ -146,4 +146,55 @@ ak_sanitizer_fn ak_get_sanitizer(ak_taint_t from_taint, ak_taint_t to_taint);
 ak_taint_t ak_sanitize_apply(heap h, buffer input, ak_taint_t input_taint,
                               ak_taint_t to_taint, buffer *output);
 
+/* ============================================================
+ * DLP (DATA LOSS PREVENTION)
+ * ============================================================ */
+
+/*
+ * Secret patterns to detect and redact.
+ * Used by ak_dlp_redact_secrets() for automatic redaction.
+ */
+#define AK_DLP_PATTERN_API_KEY      (1 << 0)  /* API keys (sk-xxx, Bearer xxx) */
+#define AK_DLP_PATTERN_JWT          (1 << 1)  /* JWT tokens */
+#define AK_DLP_PATTERN_PASSWORD     (1 << 2)  /* password=xxx patterns */
+#define AK_DLP_PATTERN_PRIVATE_KEY  (1 << 3)  /* PEM private keys */
+#define AK_DLP_PATTERN_CREDIT_CARD  (1 << 4)  /* Credit card numbers */
+#define AK_DLP_PATTERN_SSN          (1 << 5)  /* Social security numbers */
+#define AK_DLP_PATTERN_ALL          0xFFFF    /* All patterns */
+
+/*
+ * Redact potential secrets from output.
+ *
+ * Scans content for patterns that look like secrets and replaces them
+ * with [REDACTED]. Default patterns include:
+ *   - API keys (sk-xxx, Bearer tokens)
+ *   - JWT tokens (eyJ...)
+ *   - password=xxx in URLs/JSON
+ *   - Private keys (-----BEGIN PRIVATE KEY-----)
+ *
+ * @param h       Heap for allocation
+ * @param input   Potentially secret-containing content
+ * @return        Content with secrets redacted
+ */
+buffer ak_dlp_redact_secrets(heap h, buffer input);
+
+/*
+ * Redact secrets with custom pattern mask.
+ *
+ * @param h         Heap for allocation
+ * @param input     Input content
+ * @param patterns  Bitmask of AK_DLP_PATTERN_* to detect
+ * @return          Content with matched patterns redacted
+ */
+buffer ak_dlp_redact_patterns(heap h, buffer input, u32 patterns);
+
+/*
+ * Check if content contains potential secrets.
+ *
+ * @param input     Content to check
+ * @param patterns  Bitmask of patterns to detect (0 = all)
+ * @return          Bitmask of detected patterns, 0 if none
+ */
+u32 ak_dlp_detect_secrets(buffer input, u32 patterns);
+
 #endif /* AK_SANITIZE_H */

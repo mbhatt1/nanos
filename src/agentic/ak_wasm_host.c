@@ -18,6 +18,7 @@
 #include "ak_secrets.h"
 #include "ak_compat.h"
 #include "ak_heap.h"
+#include "ak_virtio_proxy.h"
 
 /* ============================================================
  * LIMITS AND CONSTANTS
@@ -250,8 +251,56 @@ s64 ak_host_http_get(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* See function header for rationale on NOT_IMPLEMENTED status */
-    return AK_E_NOT_IMPLEMENTED;
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected())
+        return AK_E_NOT_IMPLEMENTED;
+
+    /* Perform HTTP GET via virtio proxy */
+    ak_http_response_t response;
+    s64 err = ak_proxy_http_get(url_buf, 0, &response);
+    if (err < 0) {
+        return err;
+    }
+
+    /* Build result JSON */
+    buffer res = allocate_buffer(ctx->agent->heap, 256 +
+        (response.body ? buffer_length(response.body) : 0));
+    if (res == INVALID_ADDRESS) {
+        ak_proxy_free_http_response(&response);
+        return AK_E_WASM_OOM;
+    }
+
+    buffer_write(res, "{\"status\": ", 11);
+
+    /* Write status code */
+    char status_buf[16];
+    int status_len = 0;
+    int status = response.status;
+    if (status == 0) {
+        status_buf[status_len++] = '0';
+    } else {
+        char temp[16];
+        int temp_len = 0;
+        while (status > 0) {
+            temp[temp_len++] = '0' + (status % 10);
+            status /= 10;
+        }
+        for (int i = temp_len - 1; i >= 0; i--) {
+            status_buf[status_len++] = temp[i];
+        }
+    }
+    buffer_write(res, status_buf, status_len);
+
+    buffer_write(res, ", \"body\": \"", 10);
+    if (response.body && buffer_length(response.body) > 0) {
+        /* TODO: JSON escape the body */
+        buffer_write(res, buffer_ref(response.body, 0), buffer_length(response.body));
+    }
+    buffer_write(res, "\"}", 2);
+
+    ak_proxy_free_http_response(&response);
+    *result = res;
+    return 0;
 }
 
 /*
@@ -309,8 +358,72 @@ s64 ak_host_http_post(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* See function header for rationale on NOT_IMPLEMENTED status */
-    return AK_E_NOT_IMPLEMENTED;
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected())
+        return AK_E_NOT_IMPLEMENTED;
+
+    /* Parse body from args */
+    u64 body_len;
+    const char *body_str = parse_json_string(args, "body", &body_len);
+
+    /* Create body buffer if provided */
+    buffer body_buf = 0;
+    if (body_str && body_len > 0) {
+        body_buf = allocate_buffer(ctx->agent->heap, body_len);
+        if (body_buf == INVALID_ADDRESS)
+            return AK_E_WASM_OOM;
+        buffer_write(body_buf, body_str, body_len);
+    }
+
+    /* Perform HTTP POST via virtio proxy */
+    ak_http_response_t response;
+    s64 err = ak_proxy_http_post(url_buf, 0, body_buf, &response);
+
+    if (body_buf)
+        deallocate_buffer(body_buf);
+
+    if (err < 0) {
+        return err;
+    }
+
+    /* Build result JSON */
+    buffer res = allocate_buffer(ctx->agent->heap, 256 +
+        (response.body ? buffer_length(response.body) : 0));
+    if (res == INVALID_ADDRESS) {
+        ak_proxy_free_http_response(&response);
+        return AK_E_WASM_OOM;
+    }
+
+    buffer_write(res, "{\"status\": ", 11);
+
+    /* Write status code */
+    char status_buf[16];
+    int status_len = 0;
+    int status = response.status;
+    if (status == 0) {
+        status_buf[status_len++] = '0';
+    } else {
+        char temp[16];
+        int temp_len = 0;
+        while (status > 0) {
+            temp[temp_len++] = '0' + (status % 10);
+            status /= 10;
+        }
+        for (int i = temp_len - 1; i >= 0; i--) {
+            status_buf[status_len++] = temp[i];
+        }
+    }
+    buffer_write(res, status_buf, status_len);
+
+    buffer_write(res, ", \"body\": \"", 10);
+    if (response.body && buffer_length(response.body) > 0) {
+        buffer_write(res, buffer_ref(response.body, 0), buffer_length(response.body));
+    }
+    buffer_write(res, "\"}", 2);
+
+    ak_proxy_free_http_response(&response);
+    *result = res;
+    return 0;
 }
 
 /*
@@ -489,8 +602,28 @@ s64 ak_host_fs_read(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* STUB: Returns empty content - see section header for implementation status */
-    *result = create_json_result(ctx->agent->heap, "content", "", 0);
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected()) {
+        /* Fallback: return empty content */
+        *result = create_json_result(ctx->agent->heap, "content", "", 0);
+        return (*result) ? 0 : AK_E_WASM_OOM;
+    }
+
+    /* Read file via virtio proxy */
+    buffer content = 0;
+    s64 err = ak_proxy_fs_read(path_buf, &content);
+    if (err < 0) {
+        return err;
+    }
+
+    /* Build result JSON */
+    *result = create_json_result(ctx->agent->heap, "content",
+        content ? (const char *)buffer_ref(content, 0) : "",
+        content ? buffer_length(content) : 0);
+
+    if (content)
+        deallocate_buffer(content);
+
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 
@@ -523,8 +656,52 @@ s64 ak_host_fs_write(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* STUB: Returns 0 bytes written - see section header for implementation status */
-    *result = create_json_result(ctx->agent->heap, "bytes_written", "0", 1);
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected()) {
+        /* Fallback: return 0 bytes written */
+        *result = create_json_result(ctx->agent->heap, "bytes_written", "0", 1);
+        return (*result) ? 0 : AK_E_WASM_OOM;
+    }
+
+    /* Parse content from args */
+    u64 content_len;
+    const char *content_str = parse_json_string(args, "content", &content_len);
+    if (!content_str)
+        return AK_E_SCHEMA_INVALID;
+
+    /* Create content buffer */
+    buffer content = allocate_buffer(ctx->agent->heap, content_len);
+    if (content == INVALID_ADDRESS)
+        return AK_E_WASM_OOM;
+    buffer_write(content, content_str, content_len);
+
+    /* Write file via virtio proxy */
+    s64 bytes_written = ak_proxy_fs_write(path_buf, content);
+    deallocate_buffer(content);
+
+    if (bytes_written < 0) {
+        return bytes_written;
+    }
+
+    /* Build result JSON */
+    char num_buf[32];
+    int num_len = 0;
+    u64 bw = (u64)bytes_written;
+    if (bw == 0) {
+        num_buf[num_len++] = '0';
+    } else {
+        char temp[32];
+        int temp_len = 0;
+        while (bw > 0) {
+            temp[temp_len++] = '0' + (bw % 10);
+            bw /= 10;
+        }
+        for (int i = temp_len - 1; i >= 0; i--) {
+            num_buf[num_len++] = temp[i];
+        }
+    }
+
+    *result = create_json_result(ctx->agent->heap, "bytes_written", num_buf, num_len);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 
@@ -825,14 +1002,65 @@ s64 ak_host_llm_complete(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /*
-     * Routes to LLM gateway (ak_inference.c).
-     * Supports local model (virtio-serial) or external API (HTTPS).
-     * Budget tracking via capability rate limits.
-     */
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected()) {
+        *result = create_json_result(ctx->agent->heap, "completion", "", 0);
+        return (*result) ? 0 : AK_E_WASM_OOM;
+    }
 
-    *result = create_json_result(ctx->agent->heap, "completion", "", 0);
-    return (*result) ? 0 : AK_E_WASM_OOM;
+    /* Parse optional model from args */
+    u64 model_len;
+    const char *model_str = parse_json_string(args, "model", &model_len);
+    char model_buf[64] = {0};
+    if (model_str && model_len > 0 && model_len < sizeof(model_buf)) {
+        runtime_memcpy(model_buf, model_str, model_len);
+    }
+
+    /* Null-terminate prompt for proxy call */
+    char *prompt_buf = allocate(ctx->agent->heap, prompt_len + 1);
+    if (!prompt_buf)
+        return AK_E_WASM_OOM;
+    runtime_memcpy(prompt_buf, prompt, prompt_len);
+    prompt_buf[prompt_len] = 0;
+
+    /* Parse optional max_tokens */
+    s64 max_tokens = parse_json_integer(args, "max_tokens");
+    if (max_tokens <= 0)
+        max_tokens = 1000;
+
+    /* Call LLM via virtio proxy */
+    ak_llm_response_t llm_response;
+    runtime_memset(&llm_response, 0, sizeof(llm_response));
+    s64 err = ak_proxy_llm_complete(model_buf[0] ? model_buf : 0, prompt_buf, (u64)max_tokens, &llm_response);
+
+    deallocate(ctx->agent->heap, prompt_buf, prompt_len + 1);
+
+    if (err < 0) {
+        return err;
+    }
+
+    /* Build result JSON */
+    u64 content_len = llm_response.content ? buffer_length(llm_response.content) : 0;
+    buffer res = allocate_buffer(ctx->agent->heap, 256 + content_len);
+    if (res == INVALID_ADDRESS) {
+        ak_proxy_free_llm_response(&llm_response);
+        return AK_E_WASM_OOM;
+    }
+
+    buffer_write(res, "{\"completion\": \"", 16);
+    if (llm_response.content && content_len > 0) {
+        /* TODO: JSON escape the content */
+        buffer_write(res, buffer_ref(llm_response.content, 0), content_len);
+    }
+    buffer_write(res, "\", \"model\": \"", 12);
+    buffer_write(res, llm_response.model, runtime_strlen(llm_response.model));
+    buffer_write(res, "\", \"finish_reason\": \"", 20);
+    buffer_write(res, llm_response.finish_reason, runtime_strlen(llm_response.finish_reason));
+    buffer_write(res, "\"}", 2);
+
+    ak_proxy_free_llm_response(&llm_response);
+    *result = res;
+    return 0;
 }
 
 /* ============================================================

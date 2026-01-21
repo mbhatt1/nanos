@@ -400,3 +400,212 @@ ak_taint_t ak_sanitize_apply(heap h, buffer input, ak_taint_t input_taint,
 
     return to_taint;
 }
+
+/* ============================================================
+ * DLP (DATA LOSS PREVENTION)
+ * ============================================================ */
+
+/*
+ * Pattern matchers for secret detection.
+ * Return true if pattern matches at given position.
+ */
+
+/* Check for API key patterns: sk-xxx, Bearer xxx */
+static boolean match_api_key(const u8 *data, u64 len, u64 pos)
+{
+    /* OpenAI-style: sk-... */
+    if (pos + 3 <= len &&
+        data[pos] == 's' && data[pos + 1] == 'k' && data[pos + 2] == '-') {
+        return true;
+    }
+
+    /* Bearer token */
+    if (pos + 7 <= len &&
+        runtime_memcmp(&data[pos], "Bearer ", 7) == 0) {
+        return true;
+    }
+
+    /* Anthropic-style: sk-ant-... */
+    if (pos + 7 <= len &&
+        runtime_memcmp(&data[pos], "sk-ant-", 7) == 0) {
+        return true;
+    }
+
+    return false;
+}
+
+/* Check for JWT pattern: eyJ... */
+static boolean match_jwt(const u8 *data, u64 len, u64 pos)
+{
+    if (pos + 3 <= len &&
+        data[pos] == 'e' && data[pos + 1] == 'y' && data[pos + 2] == 'J') {
+        return true;
+    }
+    return false;
+}
+
+/* Check for password patterns */
+static boolean match_password(const u8 *data, u64 len, u64 pos)
+{
+    /* password=xxx, pwd=xxx, passwd=xxx */
+    const char *patterns[] = {"password=", "pwd=", "passwd=", "secret="};
+    int pattern_count = 4;
+
+    for (int i = 0; i < pattern_count; i++) {
+        u64 plen = runtime_strlen(patterns[i]);
+        if (pos + plen <= len &&
+            runtime_memcmp(&data[pos], patterns[i], plen) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Check for private key patterns */
+static boolean match_private_key(const u8 *data, u64 len, u64 pos)
+{
+    if (pos + 27 <= len &&
+        runtime_memcmp(&data[pos], "-----BEGIN PRIVATE KEY-----", 27) == 0) {
+        return true;
+    }
+    if (pos + 31 <= len &&
+        runtime_memcmp(&data[pos], "-----BEGIN RSA PRIVATE KEY-----", 31) == 0) {
+        return true;
+    }
+    return false;
+}
+
+/* Find end of secret token (word boundary) */
+static u64 find_token_end(const u8 *data, u64 len, u64 start)
+{
+    u64 pos = start;
+    while (pos < len) {
+        u8 c = data[pos];
+        /* Stop at whitespace, quotes, or common delimiters */
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+            c == '"' || c == '\'' || c == ',' || c == ';' ||
+            c == '}' || c == ']' || c == ')' || c == '&') {
+            break;
+        }
+        pos++;
+    }
+    return pos;
+}
+
+u32 ak_dlp_detect_secrets(buffer input, u32 patterns)
+{
+    if (!input || buffer_length(input) == 0)
+        return 0;
+
+    u32 detected = 0;
+    const u8 *data = buffer_ref(input, 0);
+    u64 len = buffer_length(input);
+
+    if (patterns == 0)
+        patterns = AK_DLP_PATTERN_ALL;
+
+    for (u64 i = 0; i < len; i++) {
+        if ((patterns & AK_DLP_PATTERN_API_KEY) && match_api_key(data, len, i))
+            detected |= AK_DLP_PATTERN_API_KEY;
+
+        if ((patterns & AK_DLP_PATTERN_JWT) && match_jwt(data, len, i))
+            detected |= AK_DLP_PATTERN_JWT;
+
+        if ((patterns & AK_DLP_PATTERN_PASSWORD) && match_password(data, len, i))
+            detected |= AK_DLP_PATTERN_PASSWORD;
+
+        if ((patterns & AK_DLP_PATTERN_PRIVATE_KEY) && match_private_key(data, len, i))
+            detected |= AK_DLP_PATTERN_PRIVATE_KEY;
+    }
+
+    return detected;
+}
+
+buffer ak_dlp_redact_patterns(heap h, buffer input, u32 patterns)
+{
+    if (!input)
+        return 0;
+
+    u64 len = buffer_length(input);
+    if (len == 0)
+        return allocate_buffer(h, 0);
+
+    /* Allocate output (same size, redaction doesn't expand) */
+    buffer out = allocate_buffer(h, len + 64);
+    if (out == INVALID_ADDRESS)
+        return 0;
+
+    const u8 *data = buffer_ref(input, 0);
+    u64 i = 0;
+
+    if (patterns == 0)
+        patterns = AK_DLP_PATTERN_ALL;
+
+    while (i < len) {
+        boolean redacted = false;
+
+        /* Check for API key patterns */
+        if ((patterns & AK_DLP_PATTERN_API_KEY) && match_api_key(data, len, i)) {
+            u64 end = find_token_end(data, len, i);
+            buffer_write_cstring(out, "[REDACTED:API_KEY]");
+            i = end;
+            redacted = true;
+        }
+
+        /* Check for JWT */
+        if (!redacted && (patterns & AK_DLP_PATTERN_JWT) && match_jwt(data, len, i)) {
+            u64 end = find_token_end(data, len, i);
+            buffer_write_cstring(out, "[REDACTED:JWT]");
+            i = end;
+            redacted = true;
+        }
+
+        /* Check for password patterns */
+        if (!redacted && (patterns & AK_DLP_PATTERN_PASSWORD) && match_password(data, len, i)) {
+            /* Find the '=' and skip the pattern name */
+            while (i < len && data[i] != '=')
+                push_u8(out, data[i++]);
+            if (i < len) {
+                push_u8(out, '=');  /* Include the '=' */
+                i++;
+                /* Redact the value */
+                u64 end = find_token_end(data, len, i);
+                buffer_write_cstring(out, "[REDACTED]");
+                i = end;
+            }
+            redacted = true;
+        }
+
+        /* Check for private key */
+        if (!redacted && (patterns & AK_DLP_PATTERN_PRIVATE_KEY) && match_private_key(data, len, i)) {
+            /* Skip entire key block */
+            buffer_write_cstring(out, "[REDACTED:PRIVATE_KEY]");
+            /* Find END marker */
+            while (i < len) {
+                if (i + 23 <= len &&
+                    runtime_memcmp(&data[i], "-----END ", 9) == 0) {
+                    /* Skip to end of line */
+                    while (i < len && data[i] != '\n')
+                        i++;
+                    if (i < len)
+                        i++;
+                    break;
+                }
+                i++;
+            }
+            redacted = true;
+        }
+
+        if (!redacted) {
+            push_u8(out, data[i]);
+            i++;
+        }
+    }
+
+    return out;
+}
+
+buffer ak_dlp_redact_secrets(heap h, buffer input)
+{
+    return ak_dlp_redact_patterns(h, input, AK_DLP_PATTERN_ALL);
+}

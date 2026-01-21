@@ -22,6 +22,7 @@
 #include "ak_policy.h"
 #include "ak_stream.h"
 #include "ak_syscall.h"
+#include "ak_virtio_proxy.h"
 
 /* ============================================================
  * INTERNAL STATE
@@ -887,6 +888,53 @@ ak_inference_response_t *ak_local_inference_request(ak_inference_request_t *req)
     if (res == INVALID_ADDRESS)
         return 0;
     runtime_memset((u8 *)res, 0, sizeof(ak_inference_response_t));
+
+    /* Try akproxy (newline-delimited JSON protocol) first */
+    if (ak_proxy_connected()) {
+        /* Extract prompt from request */
+        const char *prompt_str = 0;
+        u64 prompt_len = 0;
+        if (req->prompt) {
+            prompt_str = (const char *)buffer_ref(req->prompt, 0);
+            prompt_len = buffer_length(req->prompt);
+        }
+
+        /* Need null-terminated strings */
+        char *prompt_buf = 0;
+        if (prompt_str && prompt_len > 0) {
+            prompt_buf = allocate(ak_inf_state.h, prompt_len + 1);
+            if (prompt_buf) {
+                runtime_memcpy(prompt_buf, prompt_str, prompt_len);
+                prompt_buf[prompt_len] = 0;
+            }
+        }
+
+        ak_llm_response_t proxy_res;
+        runtime_memset(&proxy_res, 0, sizeof(proxy_res));
+        s64 err = ak_proxy_llm_complete(
+            req->model[0] ? req->model : 0,
+            prompt_buf ? prompt_buf : "",
+            req->max_tokens > 0 ? req->max_tokens : 1024,
+            &proxy_res
+        );
+
+        if (prompt_buf)
+            deallocate(ak_inf_state.h, prompt_buf, prompt_len + 1);
+
+        if (err == 0 && proxy_res.content) {
+            res->success = true;
+            res->content = proxy_res.content;
+            proxy_res.content = 0; /* Transfer ownership */
+            runtime_memcpy(res->model, proxy_res.model, sizeof(res->model));
+            runtime_memcpy(res->finish_reason, proxy_res.finish_reason, sizeof(res->finish_reason));
+            res->usage.prompt_tokens = proxy_res.prompt_tokens;
+            res->usage.completion_tokens = proxy_res.completion_tokens;
+            res->usage.total_tokens = proxy_res.total_tokens;
+            return res;
+        }
+
+        /* Fall through to legacy virtio protocol if proxy fails */
+    }
 
     if (!ak_inf_state.local_connected || ak_inf_state.local_fd < 0) {
         res->success = false;
@@ -1891,8 +1939,15 @@ void ak_inference_response_free(heap h, ak_inference_response_t *res)
 
 ak_response_t *ak_handle_inference(ak_agent_context_t *ctx, ak_request_t *req)
 {
-    if (!ctx || !req)
-        return ak_response_error(ak_inf_state.h, req, AK_E_SCHEMA_INVALID);
+    /* Use ctx->heap as fallback if inference subsystem not initialized */
+    heap h = ak_inf_state.h ? ak_inf_state.h : (ctx ? ctx->heap : 0);
+
+    if (!ctx || !req || !h)
+        return 0;  /* Cannot allocate response without heap */
+
+    if (!ak_inf_state.initialized) {
+        return ak_response_error(h, req, AK_E_LLM_NOT_CONFIGURED);
+    }
 
     /* Parse inference request from JSON args */
     ak_inference_request_t inf_req;

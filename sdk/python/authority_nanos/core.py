@@ -515,6 +515,38 @@ class AuthorityKernel:
         self.libak.ak_shutdown.argtypes = []
         self.libak.ak_shutdown.restype = None
 
+        # ak_alloc(const char *type_name, const uint8_t *initial_value, size_t value_len, ak_handle_t *out_handle)
+        self.libak.ak_alloc.argtypes = [c_char_p, POINTER(c_uint8), c_uint64, POINTER(Handle)]
+        self.libak.ak_alloc.restype = c_int64
+
+        # ak_read(ak_handle_t handle, uint8_t *out_value, size_t max_len, size_t *out_len)
+        self.libak.ak_read.argtypes = [Handle, POINTER(c_uint8), c_uint64, POINTER(c_uint64)]
+        self.libak.ak_read.restype = c_int64
+
+        # ak_write(ak_handle_t handle, const uint8_t *patch, size_t patch_len, uint32_t expected_version, uint32_t *out_new_version)
+        self.libak.ak_write.argtypes = [Handle, POINTER(c_uint8), c_uint64, c_uint32, POINTER(c_uint32)]
+        self.libak.ak_write.restype = c_int64
+
+        # ak_delete(ak_handle_t handle)
+        self.libak.ak_delete.argtypes = [Handle]
+        self.libak.ak_delete.restype = c_int64
+
+        # ak_call_tool(const ak_tool_call_t *tool_call, uint8_t *out_result, size_t max_len, size_t *out_len)
+        self.libak.ak_call_tool.argtypes = [POINTER(ToolCall), POINTER(c_uint8), c_uint64, POINTER(c_uint64)]
+        self.libak.ak_call_tool.restype = c_int64
+
+        # ak_authorize(uint16_t effect_op, const char *target)
+        self.libak.ak_authorize.argtypes = [c_uint16, c_char_p]
+        self.libak.ak_authorize.restype = c_int64
+
+        # ak_file_read(const char *path, uint8_t *out_data, size_t max_len, size_t *out_len)
+        self.libak.ak_file_read.argtypes = [c_char_p, POINTER(c_uint8), c_uint64, POINTER(c_uint64)]
+        self.libak.ak_file_read.restype = c_int64
+
+        # ak_audit_log(const char *event_type, const uint8_t *details, size_t details_len)
+        self.libak.ak_audit_log.argtypes = [c_char_p, POINTER(c_uint8), c_uint64]
+        self.libak.ak_audit_log.restype = c_int64
+
         # ak_get_last_denial(uint8_t *out_reason, size_t max_len)
         self.libak.ak_get_last_denial.argtypes = [POINTER(c_uint8), c_uint64]
         self.libak.ak_get_last_denial.restype = c_int64
@@ -623,39 +655,24 @@ class AuthorityKernel:
                 f"initial_value exceeds maximum size of 1024 bytes (got {len(initial_value)} bytes)"
             )
 
-        req = EffectRequest()
-        req.op = Syscall.ALLOC
-        req.trace_id = 0
+        # Prepare arguments for ak_alloc
+        type_name_c = type_name.encode('utf-8')
+        value_buf = (c_uint8 * len(initial_value))(*initial_value) if initial_value else None
+        value_len = len(initial_value)
+        out_handle = Handle()
 
-        # Pack type name into target
-        type_name_bytes = type_name.encode('utf-8')[:511]
-        req.target = type_name_bytes
-
-        # Pack initial value into params
-        if initial_value:
-            for i, byte in enumerate(initial_value):
-                req.params[i] = byte
-        req.params_len = len(initial_value)
-
-        # Make syscall
-        resp = EffectResponse()
-        err = self.libak.ak_syscall(
-            Syscall.ALLOC,
-            cast(byref(req), c_void_p).value or 0,
-            cast(byref(resp), c_void_p).value or 0,
-            0, 0, 0
+        # Call ak_alloc
+        err = self.libak.ak_alloc(
+            type_name_c,
+            value_buf,
+            c_uint64(value_len),
+            byref(out_handle)
         )
 
         self._check_error(err, "alloc")
 
-        # Parse handle from response
-        if resp.result_len >= sizeof(Handle):
-            handle = Handle()
-            ctypes.memmove(byref(handle), resp.result, sizeof(Handle))
-            logger.debug(f"Allocated object: {handle}")
-            return handle
-
-        raise LibakError(-6, "Invalid response from alloc syscall")
+        logger.debug(f"Allocated object: {out_handle}")
+        return out_handle
 
     def read(self, handle: Handle) -> bytes:
         """Read object from typed heap.
@@ -674,27 +691,24 @@ class AuthorityKernel:
             data = ak.read(handle)
             obj = json.loads(data.decode('utf-8'))
         """
-        req = EffectRequest()
-        req.op = Syscall.READ
-        req.trace_id = 0
+        # Prepare output buffer
+        max_len = 4096
+        out_value = (c_uint8 * max_len)()
+        out_len = c_uint64(0)
 
-        # Pack handle into params
-        ctypes.memmove(req.params, byref(handle), sizeof(Handle))
-        req.params_len = sizeof(Handle)
-
-        resp = EffectResponse()
-        err = self.libak.ak_syscall(
-            Syscall.READ,
-            cast(byref(req), c_void_p).value or 0,
-            cast(byref(resp), c_void_p).value or 0,
-            0, 0, 0
+        # Call ak_read
+        err = self.libak.ak_read(
+            handle,
+            out_value,
+            c_uint64(max_len),
+            byref(out_len)
         )
 
         self._check_error(err, "read")
 
-        if resp.result_len > 0:
-            result = bytes(resp.result[:resp.result_len])
-            logger.debug(f"Read {resp.result_len} bytes from {handle}")
+        if out_len.value > 0:
+            result = bytes(out_value[:out_len.value])
+            logger.debug(f"Read {out_len.value} bytes from {handle}")
             return result
 
         return b""
@@ -722,52 +736,27 @@ class AuthorityKernel:
         if not isinstance(patch, bytes):
             raise InvalidArgumentError(-7, "patch must be bytes")
 
-        max_patch_size = 1024 - sizeof(Handle) - 4
-        if len(patch) > max_patch_size:
-            raise BufferOverflowError(
-                -9,
-                f"patch exceeds {max_patch_size} bytes"
-            )
+        if len(patch) > 2000:
+            raise BufferOverflowError(-9, f"patch exceeds 2000 bytes")
 
-        req = EffectRequest()
-        req.op = Syscall.WRITE
-        req.trace_id = 0
+        # Prepare arguments for ak_write
+        patch_buf = (c_uint8 * len(patch))(*patch)
+        out_new_version = c_uint32(0)
 
-        # Pack handle, version, and patch into params
-        offset = 0
-        ctypes.memmove(req.params, byref(handle), sizeof(Handle))
-        offset += sizeof(Handle)
-
-        version_bytes = expected_version.to_bytes(4, 'little')
-        ctypes.memmove(
-            byref(req.params, offset),
-            version_bytes,
-            4
-        )
-        offset += 4
-
-        if patch:
-            ctypes.memmove(byref(req.params, offset), patch, len(patch))
-
-        req.params_len = offset + len(patch)
-
-        resp = EffectResponse()
-        err = self.libak.ak_syscall(
-            Syscall.WRITE,
-            cast(byref(req), c_void_p).value or 0,
-            cast(byref(resp), c_void_p).value or 0,
-            0, 0, 0
+        # Call ak_write
+        err = self.libak.ak_write(
+            handle,
+            patch_buf,
+            c_uint64(len(patch)),
+            c_uint32(expected_version),
+            byref(out_new_version)
         )
 
         self._check_error(err, "write")
 
-        # Extract new version from response
-        if resp.result_len >= 4:
-            new_version = int.from_bytes(bytes(resp.result[:4]), 'little')
-            logger.debug(f"Write successful, new version: {new_version}")
-            return new_version
-
-        raise LibakError(-6, "Invalid response from write syscall")
+        new_version = out_new_version.value
+        logger.debug(f"Write successful, new version: {new_version}")
+        return new_version
 
     def delete(self, handle: Handle) -> None:
         """Delete (soft delete) an object.
@@ -781,23 +770,198 @@ class AuthorityKernel:
         Example:
             ak.delete(handle)
         """
-        req = EffectRequest()
-        req.op = Syscall.DELETE
-        req.trace_id = 0
-
-        ctypes.memmove(req.params, byref(handle), sizeof(Handle))
-        req.params_len = sizeof(Handle)
-
-        resp = EffectResponse()
-        err = self.libak.ak_syscall(
-            Syscall.DELETE,
-            cast(byref(req), c_void_p).value or 0,
-            cast(byref(resp), c_void_p).value or 0,
-            0, 0, 0
-        )
+        # Call ak_delete
+        err = self.libak.ak_delete(handle)
 
         self._check_error(err, "delete")
         logger.debug(f"Deleted object: {handle}")
+
+    # ========================================================================
+    # TOOL EXECUTION
+    # ========================================================================
+
+    def tool_call(self, tool_name: str, args: Union[dict, bytes]) -> bytes:
+        """Execute a tool in the WASM sandbox.
+
+        Args:
+            tool_name: Name of the tool to execute
+            args: Tool arguments as dictionary or JSON bytes
+
+        Returns:
+            Tool result as bytes
+
+        Raises:
+            AuthorityKernelError: If tool execution fails
+        """
+        # Prepare tool call structure
+        tool_call_struct = ToolCall()
+        tool_name_bytes = tool_name.encode('utf-8')[:63]
+        # Use direct assignment for c_char array (which supports bytes assignment)
+        tool_call_struct.tool_name = tool_name_bytes
+
+        # Convert args to JSON bytes if needed
+        if isinstance(args, dict):
+            args_json = json.dumps(args).encode('utf-8')
+        else:
+            args_json = args
+
+        if len(args_json) > 2047:
+            raise BufferOverflowError(-9, "Tool arguments too large")
+
+        # Copy args_json using ctypes.memmove for c_uint8 array
+        ctypes.memmove(tool_call_struct.args_json, args_json, len(args_json))
+        tool_call_struct.args_len = len(args_json)
+
+        # Call ak_call_tool
+        max_result = 4096
+        out_result = (c_uint8 * max_result)()
+        out_len = c_uint64(0)
+
+        err = self.libak.ak_call_tool(
+            byref(tool_call_struct),
+            out_result,
+            c_uint64(max_result),
+            byref(out_len)
+        )
+
+        self._check_error(err, "tool_call")
+
+        return bytes(out_result[:out_len.value])
+
+    # ========================================================================
+    # LLM INFERENCE
+    # ========================================================================
+
+    def inference(self, request: Union[bytes, str], prompt: str = None, max_tokens: int = 1000) -> bytes:
+        """Request LLM inference.
+
+        Args:
+            request: Either:
+                - bytes: JSON-encoded inference request (preferred)
+                - str: Model name (legacy, requires prompt argument)
+            prompt: Prompt text (only if request is model name)
+            max_tokens: Maximum tokens to generate (only if request is model name)
+
+        Returns:
+            Model response as bytes (JSON)
+
+        Raises:
+            AuthorityKernelError: If inference fails
+
+        Example (new API):
+            request = json.dumps({"model": "gpt-4", "messages": [...]}).encode()
+            response = ak.inference(request)
+
+        Example (legacy API):
+            response = ak.inference("gpt-4", "What is 2+2?", max_tokens=100)
+        """
+        # Handle bytes input (new API)
+        if isinstance(request, bytes):
+            request_json = request
+        elif prompt is not None:
+            # Legacy API: model, prompt, max_tokens
+            model = request
+            request_json = json.dumps({
+                "model": model,
+                "prompt": prompt,
+                "max_tokens": max_tokens
+            }).encode('utf-8')
+        else:
+            raise InvalidArgumentError(-7, "inference() requires either bytes request or (model, prompt) arguments")
+
+        # Build inference request structure
+        req = InferenceRequest()
+
+        # Parse model from JSON for structure
+        try:
+            req_data = json.loads(request_json.decode('utf-8'))
+            model_name = req_data.get("model", "")[:63]
+        except:
+            model_name = ""
+
+        model_bytes = model_name.encode('utf-8')
+        # Use direct assignment for c_char array
+        req.model = model_bytes
+
+        # Store full request JSON in prompt field using memmove
+        if len(request_json) > 4095:
+            request_json = request_json[:4095]
+        ctypes.memmove(req.prompt, request_json, len(request_json))
+        req.prompt_len = len(request_json)
+        req.max_tokens = req_data.get("max_tokens", 1000) if isinstance(request, bytes) else max_tokens
+
+        # Call via syscall (inference not in libak C API yet)
+        max_response = 8192
+        out_response = (c_uint8 * max_response)()
+
+        # Use raw syscall for inference
+        err = self.libak.ak_syscall(
+            Syscall.INFERENCE,
+            0,  # root context
+            cast(byref(req), c_void_p).value or 0,
+            sizeof(req),
+            cast(out_response, c_void_p).value or 0,
+            max_response
+        )
+
+        if err < 0:
+            self._check_error(err, "inference")
+
+        result_bytes = bytes(out_response[:err if err > 0 else 0])
+        return result_bytes
+
+    # ========================================================================
+    # AUDIT LOGGING
+    # ========================================================================
+
+    def audit_log(self, event_type: str, details: dict = None) -> None:
+        """Log an audit event.
+
+        Args:
+            event_type: Event type identifier
+            details: Optional event details as dictionary
+        """
+        event_bytes = event_type.encode('utf-8')
+        details_bytes = json.dumps(details).encode('utf-8') if details else None
+        details_buf = (c_uint8 * len(details_bytes))(*details_bytes) if details_bytes else None
+        details_len = len(details_bytes) if details_bytes else 0
+
+        err = self.libak.ak_audit_log(
+            event_bytes,
+            details_buf,
+            c_uint64(details_len)
+        )
+
+        self._check_error(err, "audit_log")
+
+    def audit_logs(self) -> list:
+        """Retrieve audit logs.
+
+        Returns:
+            List of audit log entries
+        """
+        # Audit logs query not implemented in kernel
+        return []
+
+    def audit_query(self, query: Union[bytes, dict] = None, **kwargs) -> list:
+        """Query audit logs with filters.
+
+        Args:
+            query: Either:
+                - bytes: JSON-encoded query
+                - dict: Query parameters
+            **kwargs: Filter criteria (legacy, if query not provided)
+
+        Returns:
+            Filtered audit log entries
+
+        Example:
+            query = json.dumps({"event_type": "alloc", "limit": 10}).encode()
+            results = ak.audit_query(query)
+        """
+        # Audit query not implemented in kernel yet
+        # Just return empty list for now
+        return []
 
     # ========================================================================
     # AUTHORIZATION
@@ -821,8 +985,22 @@ class AuthorityKernel:
                 data = ak.file_read("/etc/passwd")
         """
         try:
-            details = self.authorize_details(operation, target)
-            return details.authorized
+            # Map operation names to syscall numbers
+            op_map = {
+                "read": Syscall.READ,
+                "write": Syscall.WRITE,
+                "alloc": Syscall.ALLOC,
+                "delete": Syscall.DELETE,
+                "http.get": Syscall.CALL,
+                "http.post": Syscall.CALL,
+            }
+            op_num = op_map.get(operation, int(operation) if operation.isdigit() else 0)
+
+            err = self.libak.ak_authorize(
+                c_uint16(op_num),
+                target.encode('utf-8')
+            )
+            return err == 0
         except Exception as e:
             logger.error(f"Authorization check failed: {e}")
             return False
