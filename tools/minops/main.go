@@ -110,10 +110,10 @@ func runApp(args []string) {
 		os.Exit(1)
 	}
 
-	// On macOS, use Docker to run the kernel
-	if runtime.GOOS == "darwin" {
-		runWithDocker(appFile, configFile, memory, verbose)
-		return
+	// Ensure rootfs exists (extracts from Docker if needed)
+	if err := ensureRootfs(verbose); err != nil {
+		fmt.Fprintf(os.Stderr, "Error setting up rootfs: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Load config
@@ -314,8 +314,9 @@ func copyFile(src, dst string) error {
 }
 
 func findKernelImage() string {
-	// Try standard locations
+	// Try standard locations including cache
 	candidates := []string{
+		"/tmp/nanos-kernel/kernel.img",
 		"output/platform/pc/bin/kernel.img",
 		"../output/platform/pc/bin/kernel.img",
 		"../../output/platform/pc/bin/kernel.img",
@@ -348,8 +349,9 @@ func findMkfs() string {
 }
 
 func findBootloader() string {
-	// Try standard locations
+	// Try standard locations including cache
 	candidates := []string{
+		"/tmp/nanos-kernel/boot.img",
 		"output/platform/pc/boot/boot.img",
 		"../output/platform/pc/boot/boot.img",
 		"../../output/platform/pc/boot/boot.img",
@@ -447,7 +449,7 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 	}
 	manifest.WriteString("        ))\n")
 
-	// Bundle /lib directory (runtime libraries including libpython)
+	// Bundle /lib directory (runtime libraries including libpython and libak)
 	manifest.WriteString("        lib:(children:(\n")
 	if _, err := os.Stat(pythonRoot + "/lib/libc.musl-x86_64.so.1"); err == nil {
 		manifest.WriteString("            libc.musl-x86_64.so.1:(contents:(host:" + pythonRoot + "/lib/libc.musl-x86_64.so.1))\n")
@@ -458,6 +460,10 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 	// Include libpython (required by Python executable)
 	if _, err := os.Stat(pythonRoot + "/usr/lib/libpython3.11.so.1.0"); err == nil {
 		manifest.WriteString("            libpython3.11.so.1.0:(contents:(host:" + pythonRoot + "/usr/lib/libpython3.11.so.1.0))\n")
+	}
+	// Include libak.so (Authority Kernel interface)
+	if _, err := os.Stat(pythonRoot + "/lib/libak.so"); err == nil {
+		manifest.WriteString("            libak.so:(contents:(host:" + pythonRoot + "/lib/libak.so))\n")
 	}
 	manifest.WriteString("        ))\n")
 
@@ -521,6 +527,10 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		}
 		if _, ok := config.Env["PYTHONPATH"]; !ok {
 			manifest.WriteString("PYTHONPATH:/usr/lib/python3.11 ")
+		}
+		// Add LIBAK_PATH for Authority Kernel SDK
+		if _, ok := config.Env["LIBAK_PATH"]; !ok {
+			manifest.WriteString("LIBAK_PATH:/lib/libak.so ")
 		}
 	}
 	// Add user-specified environment variables
@@ -655,7 +665,119 @@ func launchQEMU(kernelPath, imagePath string, config *Config, memory int, verbos
 	return nil
 }
 
-// runWithDocker runs the app using Docker (for macOS)
+// ensureRootfs checks if the Alpine rootfs and kernel exist, extracts from Docker if not
+func ensureRootfs(verbose bool) error {
+	pythonRoot := "/tmp/nanos-root"
+	pythonBin := filepath.Join(pythonRoot, "bin", "python3.11")
+	kernelCache := "/tmp/nanos-kernel"
+	kernelImg := filepath.Join(kernelCache, "kernel.img")
+
+	// Check if both rootfs and kernel already exist
+	_, rootfsErr := os.Stat(pythonBin)
+	_, kernelErr := os.Stat(kernelImg)
+	if rootfsErr == nil && kernelErr == nil {
+		return nil // Already set up
+	}
+
+	fmt.Printf("📦 Setting up Nanos environment (one-time setup)...\n")
+
+	// Check if Docker is available
+	if _, err := exec.LookPath("docker"); err != nil {
+		return fmt.Errorf("docker not found - required for initial setup")
+	}
+
+	// Check if nanos-python image exists
+	checkImg := exec.Command("docker", "image", "inspect", "nanos-python")
+	if err := checkImg.Run(); err != nil {
+		fmt.Printf("   Building nanos-python Docker image...\n")
+		// Find Dockerfile.build - look in common locations
+		dockerfilePath := ""
+		candidates := []string{
+			"Dockerfile.build",
+			"../Dockerfile.build",
+			"../../Dockerfile.build",
+		}
+		// Also try relative to executable
+		if exePath, err := os.Executable(); err == nil {
+			exeDir := filepath.Dir(exePath)
+			candidates = append(candidates,
+				filepath.Join(exeDir, "..", "..", "Dockerfile.build"),
+				filepath.Join(exeDir, "Dockerfile.build"),
+			)
+		}
+		for _, p := range candidates {
+			if _, err := os.Stat(p); err == nil {
+				dockerfilePath = p
+				break
+			}
+		}
+		if dockerfilePath == "" {
+			return fmt.Errorf("Dockerfile.build not found - run from nanos directory")
+		}
+
+		// Get build context directory
+		buildContext := filepath.Dir(dockerfilePath)
+		if buildContext == "." || buildContext == "" {
+			buildContext, _ = os.Getwd()
+		}
+
+		buildCmd := exec.Command("docker", "build", "-f", dockerfilePath, "-t", "nanos-python", buildContext)
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			return fmt.Errorf("failed to build Docker image: %v", err)
+		}
+	}
+
+	// Remove old container if exists
+	exec.Command("docker", "rm", "-f", "nanos-extract").Run()
+
+	// Create container
+	createCmd := exec.Command("docker", "create", "--platform", "linux/amd64", "--name", "nanos-extract", "nanos-python")
+	if err := createCmd.Run(); err != nil {
+		return fmt.Errorf("failed to create container: %v", err)
+	}
+
+	// Extract rootfs if needed
+	if rootfsErr != nil {
+		fmt.Printf("   Extracting rootfs to %s...\n", pythonRoot)
+		os.MkdirAll(pythonRoot, 0755)
+		copyCmd := exec.Command("docker", "cp", "nanos-extract:/tmp/nanos-root/.", pythonRoot)
+		if err := copyCmd.Run(); err != nil {
+			exec.Command("docker", "rm", "-f", "nanos-extract").Run()
+			return fmt.Errorf("failed to extract rootfs: %v", err)
+		}
+	}
+
+	// Extract kernel if needed
+	if kernelErr != nil {
+		fmt.Printf("   Extracting kernel to %s...\n", kernelCache)
+		os.MkdirAll(kernelCache, 0755)
+
+		// Extract kernel.img
+		copyKernel := exec.Command("docker", "cp", "nanos-extract:/nanos/output/platform/pc/bin/kernel.img", kernelImg)
+		if err := copyKernel.Run(); err != nil {
+			exec.Command("docker", "rm", "-f", "nanos-extract").Run()
+			return fmt.Errorf("failed to extract kernel: %v", err)
+		}
+
+		// Extract bootloader
+		copyBoot := exec.Command("docker", "cp", "nanos-extract:/nanos/output/platform/pc/boot/boot.img", filepath.Join(kernelCache, "boot.img"))
+		copyBoot.Run() // Ignore error - bootloader is optional
+
+		// Extract mkfs (Linux version for reference, though we use native)
+		copyMkfs := exec.Command("docker", "cp", "nanos-extract:/nanos/output/tools/bin/mkfs", filepath.Join(kernelCache, "mkfs-linux"))
+		copyMkfs.Run() // Ignore error
+	}
+
+	// Cleanup container
+	exec.Command("docker", "rm", "-f", "nanos-extract").Run()
+
+	fmt.Printf("   ✅ Environment ready\n\n")
+	return nil
+}
+
+// runWithDocker runs the app using Docker (for macOS) - kept for fallback
 func runWithDocker(appFile, configFile string, memory int, verbose bool) {
 	// Get absolute path of app file
 	absAppFile, err := filepath.Abs(appFile)

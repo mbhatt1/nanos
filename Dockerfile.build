@@ -38,9 +38,17 @@ RUN cd /nanos/tools/minops && go build -o minops main.go && echo "✅ minops com
 # ============================================================================
 FROM --platform=linux/amd64 alpine:3.19 AS alpine-rootfs
 
-# Install Python
-RUN apk add --no-cache python3 && \
-    echo "✅ Alpine Linux with Python 3.11 ready"
+# Install Python and build tools for libak
+RUN apk add --no-cache python3 build-base && \
+    echo "✅ Alpine Linux with Python 3.11 and build tools ready"
+
+# Copy libak source from builder and compile with musl
+COPY --from=builder /nanos/src/agentic/libak.c /tmp/libak.c
+COPY --from=builder /nanos/src/agentic/libak.h /tmp/libak.h
+RUN cd /tmp && \
+    gcc -shared -fPIC -o libak.so libak.c -DLIBAK_STANDALONE && \
+    echo "✅ libak.so built with musl" && \
+    ls -lh /tmp/libak.so
 
 # Copy Alpine filesystem and restructure for Nanos
 RUN mkdir -p /rootfs && \
@@ -50,8 +58,11 @@ RUN mkdir -p /rootfs && \
       fi; \
     done && \
     mkdir -p /rootfs/proc /rootfs/sys /rootfs/dev && \
-    echo "✅ Rootfs prepared" && \
+    # Copy musl-built libak.so to rootfs
+    cp /tmp/libak.so /rootfs/lib/ && \
+    echo "✅ Rootfs prepared with musl libak.so" && \
     ls -lah /rootfs/usr/bin/python* && \
+    ls -lah /rootfs/lib/libak.so && \
     # Copy Python to both /bin and /usr/bin for compatibility
     cp /rootfs/usr/bin/python3.11 /rootfs/bin/python3.11 && \
     ln -sf python3.11 /rootfs/bin/python3 && \
@@ -62,13 +73,20 @@ RUN mkdir -p /rootfs && \
 # ============================================================================
 FROM builder
 
-# Copy Alpine rootfs from Alpine image
+# Copy Alpine rootfs from Alpine image (already includes musl-built libak.so)
 COPY --from=alpine-rootfs /rootfs /tmp/nanos-root
 
-# Verify Python is there
+# Copy Authority Python SDK to rootfs
+RUN mkdir -p /tmp/nanos-root/usr/lib/python3.11/site-packages && \
+    cp -r /nanos/sdk/python/authority_nanos /tmp/nanos-root/usr/lib/python3.11/site-packages/ && \
+    echo "✅ Authority SDK copied to rootfs"
+
+# Verify Python and Authority components are there
 RUN echo "✅ Alpine rootfs bundled" && \
     ls -lh /tmp/nanos-root/usr/bin/python3.11 && \
     ls -lh /tmp/nanos-root/usr/lib/python3.11/encodings/__init__.py && \
+    ls -lh /tmp/nanos-root/lib/libak.so && \
+    ls -lh /tmp/nanos-root/usr/lib/python3.11/site-packages/authority_nanos/__init__.py && \
     du -sh /tmp/nanos-root
 
 # Verify we have kernel and Python
