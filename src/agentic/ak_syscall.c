@@ -2058,6 +2058,15 @@ static ak_agent_context_t *ak_get_current_context(void)
 }
 
 /*
+ * Public wrapper for ak_get_current_context.
+ * Used by ak_net_enforce.c for network capability checks.
+ */
+ak_agent_context_t *ak_get_root_context(void)
+{
+    return ak_get_current_context();
+}
+
+/*
  * Cleanup the root context (called during ak_shutdown).
  *
  * THREAD SAFETY: Protected by ak_context_lock spinlock

@@ -14,14 +14,21 @@ import (
 	"strings"
 )
 
+// NetworkConfig holds network policy settings
+type NetworkConfig struct {
+	AllowedHosts []string `json:"allowed_hosts"` // host:port patterns allowed
+	DenyAll      bool     `json:"deny_all"`      // default deny if true
+}
+
 // Config represents the nanofile configuration
 type Config struct {
-	Args                   []string               `json:"Args"`
-	Program                string                 `json:"Program"`
-	ManifestPassthrough    map[string]interface{} `json:"ManifestPassthrough"`
-	Env                    map[string]string      `json:"Env"`
-	Files                  map[string]string      `json:"Files"`
-	Policy                 string                 `json:"Policy"` // Path to policy JSON file
+	Args                []string               `json:"Args"`
+	Program             string                 `json:"Program"`
+	ManifestPassthrough map[string]interface{} `json:"ManifestPassthrough"`
+	Env                 map[string]string      `json:"Env"`
+	Files               map[string]string      `json:"Files"`
+	Policy              string                 `json:"Policy"`  // Path to policy JSON file
+	Network             *NetworkConfig         `json:"Network"` // Network access policy
 }
 
 func main() {
@@ -72,6 +79,8 @@ Run Options:
   -p policy.json    Authority Kernel policy file
   -m memory         Memory in MB (default: 512)
   -v, -verbose      Verbose output
+  --allow-host h    Allow network access to host:port (can repeat)
+  --allow-llm       Allow common LLM API endpoints (OpenAI, Anthropic, etc.)
 
 Deploy Options:
   -p policy.json    Tool capability policy
@@ -89,6 +98,8 @@ Proxy Options:
 
 Examples:
   minops run main.py -c config.json
+  minops run main.py --allow-llm                 # Allow OpenAI, Anthropic, etc.
+  minops run main.py --allow-host api.custom.com:443
   minops run examples/01_heap_operations.py -p examples/policies/01_heap_policy.json
   minops deploy mytool.wasm -p tool_policy.json -n my_tool
   minops tools --list
@@ -97,13 +108,30 @@ Examples:
 `)
 }
 
+// Common LLM API endpoints for --allow-llm flag
+var llmEndpoints = []string{
+	"api.openai.com:443",
+	"api.anthropic.com:443",
+	"generativelanguage.googleapis.com:443",
+	"api.cohere.ai:443",
+	"api.mistral.ai:443",
+	"api.groq.com:443",
+	"api.together.xyz:443",
+	"api.replicate.com:443",
+	"api.fireworks.ai:443",
+	"huggingface.co:443",
+	"api-inference.huggingface.co:443",
+}
+
 func runApp(args []string) {
 	var (
-		appFile    string
-		configFile = "config.json"
-		policyFile = ""
-		memory     = 512
-		verbose    bool
+		appFile      string
+		configFile   = "config.json"
+		policyFile   = ""
+		memory       = 512
+		verbose      bool
+		allowedHosts []string
+		allowLLM     bool
 	)
 
 	// Parse command line arguments manually to handle flags after positional args
@@ -130,6 +158,13 @@ func runApp(args []string) {
 					i++
 				}
 			}
+		case "--allow-host":
+			if i+1 < len(args) {
+				allowedHosts = append(allowedHosts, args[i+1])
+				i++
+			}
+		case "--allow-llm":
+			allowLLM = true
 		default:
 			remaining = append(remaining, arg)
 		}
@@ -183,6 +218,19 @@ func runApp(args []string) {
 		}
 	}
 
+	// Merge --allow-llm endpoints with explicit --allow-host entries
+	if allowLLM {
+		allowedHosts = append(allowedHosts, llmEndpoints...)
+	}
+
+	// Store allowed hosts in config for manifest generation
+	if len(allowedHosts) > 0 {
+		if config.Network == nil {
+			config.Network = &NetworkConfig{}
+		}
+		config.Network.AllowedHosts = allowedHosts
+	}
+
 	if verbose {
 		fmt.Printf("🔧 Configuration:\n")
 		fmt.Printf("   App: %s\n", appFile)
@@ -191,6 +239,12 @@ func runApp(args []string) {
 		fmt.Printf("   Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 		if config.Policy != "" {
 			fmt.Printf("   Policy: %s\n", config.Policy)
+		}
+		if len(allowedHosts) > 0 {
+			fmt.Printf("   Allowed hosts: %d endpoints\n", len(allowedHosts))
+			for _, h := range allowedHosts {
+				fmt.Printf("     - %s\n", h)
+			}
 		}
 		fmt.Printf("\n")
 	}
@@ -465,6 +519,76 @@ func findPolicyFile(appFile string) string {
 	return ""
 }
 
+// generateNetworkPolicy creates a policy JSON file with network rules from allowed hosts.
+// If an existing policy file is provided, it merges the network rules into it.
+func generateNetworkPolicy(allowedHosts []string, existingPolicy string) (string, error) {
+	// Build the policy structure
+	policy := make(map[string]interface{})
+
+	// If there's an existing policy, load and merge
+	if existingPolicy != "" {
+		data, err := ioutil.ReadFile(existingPolicy)
+		if err == nil {
+			json.Unmarshal(data, &policy)
+		}
+	}
+
+	// Build network rules
+	networkRules := make(map[string]interface{})
+
+	// DNS rules - allow resolution for all allowed hosts
+	dnsRules := []map[string]interface{}{}
+	for _, host := range allowedHosts {
+		// Extract hostname (strip port if present)
+		hostname := host
+		if idx := strings.LastIndex(host, ":"); idx > 0 {
+			hostname = host[:idx]
+		}
+		dnsRules = append(dnsRules, map[string]interface{}{
+			"pattern": hostname,
+			"allow":   true,
+		})
+	}
+	networkRules["dns"] = dnsRules
+
+	// Connect rules - allow connection to all allowed host:port
+	connectRules := []map[string]interface{}{}
+	for _, host := range allowedHosts {
+		connectRules = append(connectRules, map[string]interface{}{
+			"pattern": host,
+			"allow":   true,
+		})
+	}
+	networkRules["connect"] = connectRules
+
+	// Default deny for everything else
+	networkRules["default_deny"] = true
+
+	policy["network"] = networkRules
+
+	// Write to temp file
+	tmpFile, err := ioutil.TempFile("", "ak-policy-*.json")
+	if err != nil {
+		return "", err
+	}
+
+	data, err := json.MarshalIndent(policy, "", "  ")
+	if err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", err
+	}
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", err
+	}
+
+	tmpFile.Close()
+	return tmpFile.Name(), nil
+}
+
 // bundleTree recursively bundles a directory tree, skipping problematic entries
 func bundleTree(rootPath, dir, indent string, manifest *bytes.Buffer) error {
 	entries, err := ioutil.ReadDir(filepath.Join(rootPath, dir))
@@ -567,15 +691,29 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 	manifest.WriteString("        ))\n")
 
 	// Include Authority Kernel policy file at /ak/policy.json
+	// Either use explicit policy file or generate from --allow-host flags
+	policyPath := ""
 	if config.Policy != "" {
 		absPolicyPath, err := filepath.Abs(config.Policy)
 		if err == nil {
 			if _, err := os.Stat(absPolicyPath); err == nil {
-				manifest.WriteString("        ak:(children:(\n")
-				manifest.WriteString("            policy.json:(contents:(host:" + absPolicyPath + "))\n")
-				manifest.WriteString("        ))\n")
+				policyPath = absPolicyPath
 			}
 		}
+	}
+
+	// Generate network policy from --allow-host / --allow-llm flags
+	if config.Network != nil && len(config.Network.AllowedHosts) > 0 {
+		generatedPolicy, err := generateNetworkPolicy(config.Network.AllowedHosts, policyPath)
+		if err == nil {
+			policyPath = generatedPolicy
+		}
+	}
+
+	if policyPath != "" {
+		manifest.WriteString("        ak:(children:(\n")
+		manifest.WriteString("            policy.json:(contents:(host:" + policyPath + "))\n")
+		manifest.WriteString("        ))\n")
 	}
 
 	// Bundle Python stdlib via /usr/lib directory
@@ -642,6 +780,16 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 		// Add LIBAK_PATH for Authority Kernel SDK
 		if _, ok := config.Env["LIBAK_PATH"]; !ok {
 			manifest.WriteString("LIBAK_PATH:/lib/libak.so ")
+		}
+		// SSL/TLS certificate paths for HTTPS support (LangChain, CrewAI, etc.)
+		if _, ok := config.Env["SSL_CERT_FILE"]; !ok {
+			manifest.WriteString("SSL_CERT_FILE:/etc/ssl/cert.pem ")
+		}
+		if _, ok := config.Env["SSL_CERT_DIR"]; !ok {
+			manifest.WriteString("SSL_CERT_DIR:/etc/ssl/certs ")
+		}
+		if _, ok := config.Env["REQUESTS_CA_BUNDLE"]; !ok {
+			manifest.WriteString("REQUESTS_CA_BUNDLE:/etc/ssl/cert.pem ")
 		}
 	}
 	// Add user-specified environment variables

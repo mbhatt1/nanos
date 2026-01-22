@@ -12,6 +12,11 @@
 #include <net_system_structs.h>
 #include <socket.h>
 
+/* Authority Kernel network enforcement */
+#ifdef CONFIG_AGENTIC
+#include <agentic/ak_net_enforce.h>
+#endif
+
 //#define NETSYSCALL_DEBUG
 #ifdef NETSYSCALL_DEBUG
 #define net_debug(x, ...) do {log_printf(ss(" NET"), ss("%s: " x), func_ss, ##__VA_ARGS__);} while(0)
@@ -1699,6 +1704,24 @@ static sysreturn netsock_connect(struct sock *sock, struct sockaddr *addr,
     }
     if (ret)
         goto out;
+
+#ifdef CONFIG_AGENTIC
+    /* Authority Kernel: Check if connection is allowed by capabilities */
+    {
+        char host_str[64];
+        boolean is_ipv6 = IP_IS_V6(&ipaddr);
+        if (is_ipv6) {
+            ak_net_format_ipv6((const u8 *)&ipaddr.u_addr.ip6, host_str);
+        } else {
+            ak_net_format_ipv4(ipaddr.u_addr.ip4.addr, host_str);
+        }
+        ret = ak_net_check_connect(host_str, port, is_ipv6);
+        if (ret != 0) {
+            goto out;
+        }
+    }
+#endif
+
     netsock_lock(s);
     if (s->sock.type == SOCK_STREAM) {
         if (s->info.tcp.state == TCP_SOCK_IN_CONNECTION) {
@@ -1785,6 +1808,20 @@ sysreturn sendto(int sockfd, void *buf, u64 len, int flags,
         socket_release(sock);
         return -EOPNOTSUPP;
     }
+
+#ifdef CONFIG_AGENTIC
+    /* Authority Kernel: Apply DLP filtering to outbound data */
+    {
+        /* For connected sockets without dest_addr, we don't have peer info here.
+         * The filtering still happens based on the buffer content. */
+        s64 dlp_ret = ak_net_filter_send((u8 *)buf, len, "outbound", 0);
+        if (dlp_ret != 0) {
+            socket_release(sock);
+            return dlp_ret;
+        }
+    }
+#endif
+
     context ctx = get_current_context(current_cpu());
     io_completion completion = (io_completion)&sock->f.io_complete;
     return sock->sendto(sock, buf, len, flags, dest_addr, addrlen, ctx, false, completion);
@@ -1797,6 +1834,17 @@ sysreturn socket_send(fdesc f, void *buf, u64 len, context ctx, boolean in_bh,
         return io_complete(completion, -ENOTSOCK);
     if (!validate_user_memory(buf, len, false))
         return io_complete(completion, -EFAULT);
+
+#ifdef CONFIG_AGENTIC
+    /* Authority Kernel: Apply DLP filtering to outbound data */
+    {
+        s64 dlp_ret = ak_net_filter_send((u8 *)buf, len, "outbound", 0);
+        if (dlp_ret != 0) {
+            return io_complete(completion, dlp_ret);
+        }
+    }
+#endif
+
     struct sock *sock = struct_from_field(f, struct sock *, f);
     return sock->sendto(sock, buf, len, 0, 0, 0, ctx, in_bh, completion);
 }
@@ -1947,6 +1995,14 @@ sysreturn socket_recv(fdesc f, void *buf, u64 len, context ctx, boolean in_bh,
         return io_complete(completion, -ENOTSOCK);
     if (!validate_user_memory(buf, len, true))
         return io_complete(completion, -EFAULT);
+
+#ifdef CONFIG_AGENTIC
+    /* Authority Kernel: Track inbound data for budget accounting.
+     * Note: This tracks the requested length, not actual bytes received.
+     * More precise tracking would require hooking the completion path. */
+    ak_net_track_recv(len, "inbound", 0);
+#endif
+
     struct sock *sock = struct_from_field(f, struct sock *, f);
     return sock->recvfrom(sock, buf, len, 0, 0, 0, ctx, in_bh, completion);
 }

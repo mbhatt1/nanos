@@ -92,6 +92,16 @@ void ak_context_new_run(ak_agent_context_t *ctx, u8 *run_id_out);
  */
 void ak_context_get_run_id(ak_agent_context_t *ctx, u8 *run_id_out);
 
+/*
+ * Get root agent context (for network enforcement).
+ *
+ * Returns the singleton root context for the Nanos process.
+ * Used by ak_net_enforce.c to check capabilities.
+ *
+ * Returns NULL if AK not initialized.
+ */
+ak_agent_context_t *ak_get_root_context(void);
+
 /* ============================================================
  * MAIN SYSCALL DISPATCH
  * ============================================================

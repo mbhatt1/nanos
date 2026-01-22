@@ -1,0 +1,6 @@
+{
+  "Args": ["test-langchain.py"],
+  "Env": {
+    "OPENAI_API_KEY": "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"
+  }
+}

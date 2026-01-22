@@ -38,9 +38,26 @@ RUN cd /nanos/tools/minops && go build -o minops main.go && echo "✅ minops com
 # ============================================================================
 FROM --platform=linux/amd64 alpine:3.19 AS alpine-rootfs
 
-# Install Python and build tools for libak
-RUN apk add --no-cache python3 build-base && \
-    echo "✅ Alpine Linux with Python 3.11 and build tools ready"
+# Install Python, build tools, CA certs, and pip packages for LangChain/CrewAI support
+RUN apk add --no-cache python3 py3-pip build-base ca-certificates && \
+    echo "✅ Alpine Linux with Python 3.11, pip, and CA certificates ready"
+
+# Install LangChain, CrewAI, and dependencies via pip
+# Using --target to install to a specific directory for easy copying
+RUN pip3 install --no-cache-dir --target=/pip-packages \
+    requests \
+    httpx \
+    pydantic \
+    openai \
+    anthropic \
+    langchain-core \
+    langchain-openai \
+    langchain-anthropic \
+    langchain-community \
+    crewai \
+    2>&1 | tail -20 || echo "⚠️ Some packages may have failed - continuing with available packages" && \
+    echo "✅ Pip packages installed" && \
+    ls /pip-packages/ | head -20
 
 # Copy libak source from builder and compile with musl
 COPY --from=builder /nanos/src/agentic/libak.c /tmp/libak.c
@@ -66,7 +83,17 @@ RUN mkdir -p /rootfs && \
     # Copy Python to both /bin and /usr/bin for compatibility
     cp /rootfs/usr/bin/python3.11 /rootfs/bin/python3.11 && \
     ln -sf python3.11 /rootfs/bin/python3 && \
-    echo "✅ Python symlinked to /bin/python3"
+    echo "✅ Python symlinked to /bin/python3" && \
+    # Ensure CA certificates are in the rootfs
+    mkdir -p /rootfs/etc/ssl/certs && \
+    cp -r /etc/ssl/certs/* /rootfs/etc/ssl/certs/ 2>/dev/null || true && \
+    cp /etc/ssl/cert.pem /rootfs/etc/ssl/cert.pem 2>/dev/null || true && \
+    echo "✅ CA certificates bundled" && \
+    ls -la /rootfs/etc/ssl/certs/ | head -5 && \
+    # Copy pip-installed packages to site-packages
+    cp -r /pip-packages/* /rootfs/usr/lib/python3.11/site-packages/ 2>/dev/null || true && \
+    echo "✅ Pip packages copied to site-packages" && \
+    ls /rootfs/usr/lib/python3.11/site-packages/ | head -20
 
 # ============================================================================
 # Final stage: bundle everything
@@ -87,6 +114,10 @@ RUN echo "✅ Alpine rootfs bundled" && \
     ls -lh /tmp/nanos-root/usr/lib/python3.11/encodings/__init__.py && \
     ls -lh /tmp/nanos-root/lib/libak.so && \
     ls -lh /tmp/nanos-root/usr/lib/python3.11/site-packages/authority_nanos/__init__.py && \
+    echo "📦 Checking pip packages:" && \
+    ls /tmp/nanos-root/usr/lib/python3.11/site-packages/ | grep -E "^(requests|httpx|openai|anthropic|langchain|crewai)" | head -10 || echo "⚠️ Some packages may be missing" && \
+    echo "🔐 Checking CA certificates:" && \
+    ls /tmp/nanos-root/etc/ssl/certs/ 2>/dev/null | wc -l | xargs -I{} echo "   {} certificate files found" && \
     du -sh /tmp/nanos-root
 
 # Verify we have kernel and Python
