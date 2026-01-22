@@ -279,6 +279,8 @@ static sysreturn ak_do_authorize(ak_ctx_t *ctx, ak_effect_req_t *req)
         route_stats.fs_denials++;
     } else if (category == 0x02) {
         route_stats.net_denials++;
+    } else if (category == 0x03) {
+        route_stats.proc_denials++;
     }
 
     /* Return the errno from decision, or the result */
@@ -744,6 +746,43 @@ sysreturn ak_route_dns_resolve(const char *hostname)
     /* Build effect request */
     ak_effect_req_t req;
     int err = ak_effect_from_dns_resolve(&req, ctx, hostname);
+    if (err < 0)
+        return err;
+
+    return ak_do_authorize(ctx, &req);
+}
+
+/* ============================================================
+ * PROCESS ROUTING HOOKS
+ * ============================================================ */
+
+sysreturn ak_route_spawn(const char *program, const char **argv, u32 flags)
+{
+    (void)argv;   /* Reserved for future arg filtering */
+    (void)flags;  /* Reserved for future use */
+
+    if (!program)
+        return -EFAULT;
+
+    /* HARD MODE CHECK: Block raw syscalls not through AK API */
+    sysreturn hard_check = ak_check_hard_mode_block();
+    if (hard_check < 0)
+        return hard_check;
+
+    route_stats.total_routed++;
+    route_stats.spawn_calls++;
+
+    ak_ctx_t *ctx = ak_ctx_current();
+
+    /* MODE_OFF: bypass routing */
+    if (!ctx || ak_ctx_get_mode(ctx) == AK_MODE_OFF) {
+        route_stats.total_bypassed++;
+        return 0;  /* Proceed to real syscall */
+    }
+
+    /* Build effect request */
+    ak_effect_req_t req;
+    int err = ak_effect_from_spawn(&req, ctx, program, argv, flags);
     if (err < 0)
         return err;
 

@@ -65,6 +65,63 @@ static void json_escape_string(buffer out, const char *str, u64 len)
     buffer_write(out, "\"", 1);
 }
 
+/* JSON string unescape - inverse of json_escape_string */
+static u64 json_unescape_string(buffer out, const u8 *str, u64 len)
+{
+    u64 written = 0;
+    for (u64 i = 0; i < len; i++) {
+        if (str[i] == '\\' && i + 1 < len) {
+            switch (str[i + 1]) {
+            case '"':  buffer_write(out, "\"", 1); written++; i++; break;
+            case '\\': buffer_write(out, "\\", 1); written++; i++; break;
+            case 'n':  buffer_write(out, "\n", 1); written++; i++; break;
+            case 'r':  buffer_write(out, "\r", 1); written++; i++; break;
+            case 't':  buffer_write(out, "\t", 1); written++; i++; break;
+            case '/':  buffer_write(out, "/", 1); written++; i++; break;
+            case 'b':  buffer_write(out, "\b", 1); written++; i++; break;
+            case 'f':  buffer_write(out, "\f", 1); written++; i++; break;
+            case 'u':
+                /* \uXXXX - handle basic ASCII range */
+                if (i + 5 < len) {
+                    u32 code = 0;
+                    boolean valid = true;
+                    for (int j = 0; j < 4; j++) {
+                        char c = str[i + 2 + j];
+                        u32 digit;
+                        if (c >= '0' && c <= '9') digit = c - '0';
+                        else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+                        else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+                        else { valid = false; break; }
+                        code = (code << 4) | digit;
+                    }
+                    if (valid && code < 128) {
+                        char ch = (char)code;
+                        buffer_write(out, &ch, 1);
+                        written++;
+                        i += 5;
+                    } else {
+                        /* Pass through non-ASCII unicode or invalid */
+                        buffer_write(out, &str[i], 1);
+                        written++;
+                    }
+                } else {
+                    buffer_write(out, &str[i], 1);
+                    written++;
+                }
+                break;
+            default:
+                /* Unknown escape, pass through */
+                buffer_write(out, &str[i], 1);
+                written++;
+            }
+        } else {
+            buffer_write(out, &str[i], 1);
+            written++;
+        }
+    }
+    return written;
+}
+
 /* Generate unique request ID */
 static void gen_request_id(char *out, u64 size)
 {
@@ -501,9 +558,8 @@ s64 ak_proxy_http_request(
         u8 *bdata = buffer_ref(body_val, 0);
         u64 blen = buffer_length(body_val);
         if (blen >= 2 && bdata[0] == '"' && bdata[blen-1] == '"') {
-            response->body = allocate_buffer(ak_proxy_state.h, blen - 2);
-            /* TODO: unescape JSON string */
-            buffer_write(response->body, bdata + 1, blen - 2);
+            response->body = allocate_buffer(ak_proxy_state.h, blen);
+            json_unescape_string(response->body, bdata + 1, blen - 2);
             deallocate_buffer(body_val);
         } else {
             response->body = body_val;
@@ -774,11 +830,122 @@ s64 ak_proxy_fs_list(const char *path, ak_file_info_t **entries, u64 *count)
         return AK_PROXY_E_REMOTE;
     }
 
-    /* TODO: Parse entries array */
-    /* For now, return empty list */
+    /* Parse entries array from data */
+    buffer data = json_get_value(resp, "data");
+    if (!data) {
+        deallocate_buffer(resp);
+        return 0;  /* Empty result */
+    }
 
+    buffer entries_arr = json_get_value(data, "entries");
+    if (!entries_arr) {
+        deallocate_buffer(data);
+        deallocate_buffer(resp);
+        return 0;  /* Empty result */
+    }
+
+    /* Count entries in the array by counting objects */
+    u8 *arr_data = buffer_ref(entries_arr, 0);
+    u64 arr_len = buffer_length(entries_arr);
+
+    /* Skip opening bracket */
+    u64 pos = 0;
+    while (pos < arr_len && (arr_data[pos] == '[' || arr_data[pos] == ' ' || arr_data[pos] == '\t' || arr_data[pos] == '\n'))
+        pos++;
+
+    /* Count objects by counting '{' at depth 0 */
+    u64 entry_count = 0;
+    int depth = 0;
+    for (u64 i = pos; i < arr_len; i++) {
+        if (arr_data[i] == '"') {
+            /* Skip string content */
+            i++;
+            while (i < arr_len && arr_data[i] != '"') {
+                if (arr_data[i] == '\\' && i + 1 < arr_len)
+                    i++;
+                i++;
+            }
+        } else if (arr_data[i] == '{') {
+            if (depth == 0)
+                entry_count++;
+            depth++;
+        } else if (arr_data[i] == '}') {
+            depth--;
+        }
+    }
+
+    if (entry_count == 0) {
+        deallocate_buffer(entries_arr);
+        deallocate_buffer(data);
+        deallocate_buffer(resp);
+        return 0;
+    }
+
+    /* Allocate entries array */
+    ak_file_info_t *result = allocate(ak_proxy_state.h, entry_count * sizeof(ak_file_info_t));
+    if (result == INVALID_ADDRESS) {
+        deallocate_buffer(entries_arr);
+        deallocate_buffer(data);
+        deallocate_buffer(resp);
+        return -ENOMEM;
+    }
+    runtime_memset((u8 *)result, 0, entry_count * sizeof(ak_file_info_t));
+
+    /* Parse each entry object */
+    u64 entry_idx = 0;
+    depth = 0;
+    u64 obj_start = 0;
+
+    for (u64 i = pos; i < arr_len && entry_idx < entry_count; i++) {
+        if (arr_data[i] == '"') {
+            /* Skip string content */
+            i++;
+            while (i < arr_len && arr_data[i] != '"') {
+                if (arr_data[i] == '\\' && i + 1 < arr_len)
+                    i++;
+                i++;
+            }
+        } else if (arr_data[i] == '{') {
+            if (depth == 0)
+                obj_start = i;
+            depth++;
+        } else if (arr_data[i] == '}') {
+            depth--;
+            if (depth == 0) {
+                /* Found complete object from obj_start to i (inclusive) */
+                u64 obj_len = i - obj_start + 1;
+                buffer obj = allocate_buffer(ak_proxy_state.h, obj_len);
+                if (obj) {
+                    buffer_write(obj, &arr_data[obj_start], obj_len);
+
+                    /* Parse fields from this object */
+                    json_get_string(obj, "name", result[entry_idx].name, sizeof(result[entry_idx].name));
+
+                    s64 size = 0;
+                    json_get_number(obj, "size", &size);
+                    result[entry_idx].size = size;
+
+                    json_get_string(obj, "mode", result[entry_idx].mode, sizeof(result[entry_idx].mode));
+                    json_get_bool(obj, "is_dir", &result[entry_idx].is_dir);
+
+                    s64 mod_time = 0;
+                    json_get_number(obj, "mod_time", &mod_time);
+                    result[entry_idx].mod_time_ms = mod_time;
+
+                    deallocate_buffer(obj);
+                }
+                entry_idx++;
+            }
+        }
+    }
+
+    *entries = result;
+    *count = entry_idx;
+
+    deallocate_buffer(entries_arr);
+    deallocate_buffer(data);
     deallocate_buffer(resp);
-    return 0;
+    return entry_idx;
 }
 
 /* ============================================================
@@ -1018,4 +1185,561 @@ void ak_proxy_free_llm_response(ak_llm_response_t *response)
     if (response->content)
         deallocate_buffer(response->content);
     response->content = 0;
+}
+
+/* ============================================================
+ * LLM STREAMING OPERATIONS
+ * ============================================================ */
+
+s64 ak_proxy_llm_stream(
+    const char *model,
+    const char *prompt,
+    u64 max_tokens,
+    ak_llm_stream_cb callback,
+    void *ctx)
+{
+    if (!ak_proxy_state.initialized || !ak_proxy_state.connected)
+        return AK_PROXY_E_NOT_CONNECTED;
+
+    if (!prompt || !callback)
+        return -EINVAL;
+
+    /* Build request with stream flag */
+    buffer req = allocate_buffer(ak_proxy_state.h, runtime_strlen(prompt) + 512);
+    if (!req)
+        return -ENOMEM;
+
+    char req_id[32];
+    gen_request_id(req_id, sizeof(req_id));
+
+    buffer_write(req, "{\"id\":\"", 7);
+    buffer_write(req, req_id, runtime_strlen(req_id));
+    buffer_write(req, "\",\"op\":\"llm_stream\"", 19);
+
+    if (model && model[0]) {
+        buffer_write(req, ",\"model\":", 9);
+        json_escape_string(req, model, runtime_strlen(model));
+    }
+
+    buffer_write(req, ",\"prompt\":", 10);
+    json_escape_string(req, prompt, runtime_strlen(prompt));
+
+    if (max_tokens > 0) {
+        char num[32];
+        int nlen = 0;
+        u64 t = max_tokens;
+        char tmp[32];
+        while (t > 0) {
+            tmp[nlen++] = '0' + (t % 10);
+            t /= 10;
+        }
+        for (int i = 0; i < nlen; i++)
+            num[i] = tmp[nlen - 1 - i];
+        num[nlen] = 0;
+
+        buffer_write(req, ",\"max_tokens\":", 14);
+        buffer_write(req, num, nlen);
+    }
+
+    buffer_write(req, ",\"stream\":true}", 15);
+
+    s64 err = virtio_write(ak_proxy_state.virtio_handle, req);
+    deallocate_buffer(req);
+
+    if (err < 0)
+        return err;
+
+    /* Read streaming responses until done */
+    buffer chunk_buf = allocate_buffer(ak_proxy_state.h, 4096);
+    if (!chunk_buf)
+        return -ENOMEM;
+
+    boolean done = false;
+    while (!done) {
+        buffer_clear(chunk_buf);
+        err = virtio_read_line(ak_proxy_state.virtio_handle, chunk_buf, AK_PROXY_TIMEOUT_MS);
+        if (err < 0) {
+            deallocate_buffer(chunk_buf);
+            return err;
+        }
+
+        /* Parse chunk response */
+        boolean ok = false;
+        if (json_get_bool(chunk_buf, "ok", &ok) < 0 || !ok) {
+            deallocate_buffer(chunk_buf);
+            return AK_PROXY_E_REMOTE;
+        }
+
+        /* Check if this is the final chunk */
+        json_get_bool(chunk_buf, "done", &done);
+
+        /* Extract and deliver the chunk content */
+        buffer data = json_get_value(chunk_buf, "data");
+        if (data) {
+            buffer content = json_get_value(data, "chunk");
+            if (content) {
+                u8 *cdata = buffer_ref(content, 0);
+                u64 clen = buffer_length(content);
+                /* Remove quotes if present */
+                if (clen >= 2 && cdata[0] == '"' && cdata[clen-1] == '"') {
+                    cdata++;
+                    clen -= 2;
+                }
+
+                /* Unescape the chunk and deliver to callback */
+                buffer unescaped = allocate_buffer(ak_proxy_state.h, clen);
+                if (unescaped) {
+                    json_unescape_string(unescaped, cdata, clen);
+                    boolean cont = callback((const char *)buffer_ref(unescaped, 0),
+                                           buffer_length(unescaped), ctx);
+                    deallocate_buffer(unescaped);
+                    if (!cont) {
+                        deallocate_buffer(content);
+                        deallocate_buffer(data);
+                        break;  /* Callback requested abort */
+                    }
+                }
+                deallocate_buffer(content);
+            }
+            deallocate_buffer(data);
+        }
+    }
+
+    deallocate_buffer(chunk_buf);
+    return 0;
+}
+
+s64 ak_proxy_llm_stream_chat(
+    const char *model,
+    buffer messages_json,
+    u64 max_tokens,
+    ak_llm_stream_cb callback,
+    void *ctx)
+{
+    if (!ak_proxy_state.initialized || !ak_proxy_state.connected)
+        return AK_PROXY_E_NOT_CONNECTED;
+
+    if (!messages_json || !callback)
+        return -EINVAL;
+
+    /* Build request with stream flag */
+    buffer req = allocate_buffer(ak_proxy_state.h, buffer_length(messages_json) + 512);
+    if (!req)
+        return -ENOMEM;
+
+    char req_id[32];
+    gen_request_id(req_id, sizeof(req_id));
+
+    buffer_write(req, "{\"id\":\"", 7);
+    buffer_write(req, req_id, runtime_strlen(req_id));
+    buffer_write(req, "\",\"op\":\"llm_stream_chat\"", 24);
+
+    if (model && model[0]) {
+        buffer_write(req, ",\"model\":", 9);
+        json_escape_string(req, model, runtime_strlen(model));
+    }
+
+    buffer_write(req, ",\"messages\":", 12);
+    buffer_write(req, buffer_ref(messages_json, 0), buffer_length(messages_json));
+
+    if (max_tokens > 0) {
+        char num[32];
+        int nlen = 0;
+        u64 t = max_tokens;
+        char tmp[32];
+        while (t > 0) {
+            tmp[nlen++] = '0' + (t % 10);
+            t /= 10;
+        }
+        for (int i = 0; i < nlen; i++)
+            num[i] = tmp[nlen - 1 - i];
+        num[nlen] = 0;
+
+        buffer_write(req, ",\"max_tokens\":", 14);
+        buffer_write(req, num, nlen);
+    }
+
+    buffer_write(req, ",\"stream\":true}", 15);
+
+    s64 err = virtio_write(ak_proxy_state.virtio_handle, req);
+    deallocate_buffer(req);
+
+    if (err < 0)
+        return err;
+
+    /* Read streaming responses until done */
+    buffer chunk_buf = allocate_buffer(ak_proxy_state.h, 4096);
+    if (!chunk_buf)
+        return -ENOMEM;
+
+    boolean done = false;
+    while (!done) {
+        buffer_clear(chunk_buf);
+        err = virtio_read_line(ak_proxy_state.virtio_handle, chunk_buf, AK_PROXY_TIMEOUT_MS);
+        if (err < 0) {
+            deallocate_buffer(chunk_buf);
+            return err;
+        }
+
+        /* Parse chunk response */
+        boolean ok = false;
+        if (json_get_bool(chunk_buf, "ok", &ok) < 0 || !ok) {
+            deallocate_buffer(chunk_buf);
+            return AK_PROXY_E_REMOTE;
+        }
+
+        /* Check if this is the final chunk */
+        json_get_bool(chunk_buf, "done", &done);
+
+        /* Extract and deliver the chunk content */
+        buffer data = json_get_value(chunk_buf, "data");
+        if (data) {
+            buffer content = json_get_value(data, "chunk");
+            if (content) {
+                u8 *cdata = buffer_ref(content, 0);
+                u64 clen = buffer_length(content);
+                /* Remove quotes if present */
+                if (clen >= 2 && cdata[0] == '"' && cdata[clen-1] == '"') {
+                    cdata++;
+                    clen -= 2;
+                }
+
+                /* Unescape the chunk and deliver to callback */
+                buffer unescaped = allocate_buffer(ak_proxy_state.h, clen);
+                if (unescaped) {
+                    json_unescape_string(unescaped, cdata, clen);
+                    boolean cont = callback((const char *)buffer_ref(unescaped, 0),
+                                           buffer_length(unescaped), ctx);
+                    deallocate_buffer(unescaped);
+                    if (!cont) {
+                        deallocate_buffer(content);
+                        deallocate_buffer(data);
+                        break;  /* Callback requested abort */
+                    }
+                }
+                deallocate_buffer(content);
+            }
+            deallocate_buffer(data);
+        }
+    }
+
+    deallocate_buffer(chunk_buf);
+    return 0;
+}
+
+/* ============================================================
+ * TCP OPERATIONS
+ * ============================================================ */
+
+/* Helper to write a u64 as decimal string */
+static int u64_to_decimal(char *buf, u64 val)
+{
+    if (val == 0) {
+        buf[0] = '0';
+        return 1;
+    }
+    char tmp[24];
+    int len = 0;
+    while (val > 0) {
+        tmp[len++] = '0' + (val % 10);
+        val /= 10;
+    }
+    for (int i = 0; i < len; i++)
+        buf[i] = tmp[len - 1 - i];
+    return len;
+}
+
+s64 ak_proxy_tcp_connect(const char *host, u16 port, ak_tcp_connection_t *conn)
+{
+    if (!ak_proxy_state.initialized || !ak_proxy_state.connected)
+        return AK_PROXY_E_NOT_CONNECTED;
+
+    if (!host || !conn)
+        return -EINVAL;
+
+    /* Build request */
+    buffer req = allocate_buffer(ak_proxy_state.h, 512);
+    if (!req)
+        return -ENOMEM;
+
+    char req_id[32];
+    gen_request_id(req_id, sizeof(req_id));
+
+    buffer_write(req, "{\"id\":\"", 7);
+    buffer_write(req, req_id, runtime_strlen(req_id));
+    buffer_write(req, "\",\"op\":\"tcp_connect\",\"host\":", 28);
+    json_escape_string(req, host, runtime_strlen(host));
+    buffer_write(req, ",\"port\":", 8);
+
+    char port_buf[16];
+    int port_len = u64_to_decimal(port_buf, port);
+    buffer_write(req, port_buf, port_len);
+    buffer_write(req, "}", 1);
+
+    s64 err = virtio_write(ak_proxy_state.virtio_handle, req);
+    deallocate_buffer(req);
+
+    if (err < 0)
+        return err;
+
+    /* Read response */
+    buffer resp = allocate_buffer(ak_proxy_state.h, 1024);
+    if (!resp)
+        return -ENOMEM;
+
+    err = virtio_read_line(ak_proxy_state.virtio_handle, resp, AK_PROXY_TIMEOUT_MS);
+    if (err < 0) {
+        deallocate_buffer(resp);
+        return err;
+    }
+
+    boolean ok = false;
+    if (json_get_bool(resp, "ok", &ok) < 0 || !ok) {
+        deallocate_buffer(resp);
+        return AK_PROXY_E_REMOTE;
+    }
+
+    /* Extract connection info from data */
+    buffer data = json_get_value(resp, "data");
+    if (data) {
+        s64 conn_id = 0;
+        json_get_number(data, "conn_id", &conn_id);
+        conn->conn_id = (u64)conn_id;
+        json_get_string(data, "local_addr", conn->local_addr, sizeof(conn->local_addr));
+        json_get_string(data, "remote_addr", conn->remote_addr, sizeof(conn->remote_addr));
+        deallocate_buffer(data);
+    }
+
+    deallocate_buffer(resp);
+    return 0;
+}
+
+s64 ak_proxy_tcp_send(u64 conn_id, const void *data, u64 len)
+{
+    if (!ak_proxy_state.initialized || !ak_proxy_state.connected)
+        return AK_PROXY_E_NOT_CONNECTED;
+
+    if (!data || len == 0)
+        return 0;
+
+    /* Build request */
+    buffer req = allocate_buffer(ak_proxy_state.h, len * 2 + 256);  /* Base64 overhead */
+    if (!req)
+        return -ENOMEM;
+
+    char req_id[32];
+    gen_request_id(req_id, sizeof(req_id));
+
+    buffer_write(req, "{\"id\":\"", 7);
+    buffer_write(req, req_id, runtime_strlen(req_id));
+    buffer_write(req, "\",\"op\":\"tcp_send\",\"conn_id\":", 28);
+
+    char id_buf[24];
+    int id_len = u64_to_decimal(id_buf, conn_id);
+    buffer_write(req, id_buf, id_len);
+
+    /* Encode data as base64 */
+    buffer_write(req, ",\"data\":\"", 9);
+    static const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const u8 *src = data;
+    for (u64 i = 0; i < len; i += 3) {
+        u32 n = ((u32)src[i]) << 16;
+        if (i + 1 < len) n |= ((u32)src[i + 1]) << 8;
+        if (i + 2 < len) n |= src[i + 2];
+
+        char out[4];
+        out[0] = base64_chars[(n >> 18) & 0x3f];
+        out[1] = base64_chars[(n >> 12) & 0x3f];
+        out[2] = (i + 1 < len) ? base64_chars[(n >> 6) & 0x3f] : '=';
+        out[3] = (i + 2 < len) ? base64_chars[n & 0x3f] : '=';
+        buffer_write(req, out, 4);
+    }
+    buffer_write(req, "\"}", 2);
+
+    s64 err = virtio_write(ak_proxy_state.virtio_handle, req);
+    deallocate_buffer(req);
+
+    if (err < 0)
+        return err;
+
+    /* Read response */
+    buffer resp = allocate_buffer(ak_proxy_state.h, 256);
+    if (!resp)
+        return -ENOMEM;
+
+    err = virtio_read_line(ak_proxy_state.virtio_handle, resp, AK_PROXY_TIMEOUT_MS);
+    if (err < 0) {
+        deallocate_buffer(resp);
+        return err;
+    }
+
+    boolean ok = false;
+    if (json_get_bool(resp, "ok", &ok) < 0 || !ok) {
+        deallocate_buffer(resp);
+        return AK_PROXY_E_REMOTE;
+    }
+
+    /* Get bytes sent */
+    buffer rdata = json_get_value(resp, "data");
+    s64 sent = len;  /* Assume all sent if not specified */
+    if (rdata) {
+        json_get_number(rdata, "bytes_sent", &sent);
+        deallocate_buffer(rdata);
+    }
+
+    deallocate_buffer(resp);
+    return sent;
+}
+
+s64 ak_proxy_tcp_recv(u64 conn_id, void *buf, u64 maxlen)
+{
+    if (!ak_proxy_state.initialized || !ak_proxy_state.connected)
+        return AK_PROXY_E_NOT_CONNECTED;
+
+    if (!buf || maxlen == 0)
+        return 0;
+
+    /* Build request */
+    buffer req = allocate_buffer(ak_proxy_state.h, 256);
+    if (!req)
+        return -ENOMEM;
+
+    char req_id[32];
+    gen_request_id(req_id, sizeof(req_id));
+
+    buffer_write(req, "{\"id\":\"", 7);
+    buffer_write(req, req_id, runtime_strlen(req_id));
+    buffer_write(req, "\",\"op\":\"tcp_recv\",\"conn_id\":", 28);
+
+    char id_buf[24];
+    int id_len = u64_to_decimal(id_buf, conn_id);
+    buffer_write(req, id_buf, id_len);
+
+    buffer_write(req, ",\"maxlen\":", 10);
+    char len_buf[24];
+    int len_len = u64_to_decimal(len_buf, maxlen);
+    buffer_write(req, len_buf, len_len);
+    buffer_write(req, "}", 1);
+
+    s64 err = virtio_write(ak_proxy_state.virtio_handle, req);
+    deallocate_buffer(req);
+
+    if (err < 0)
+        return err;
+
+    /* Read response */
+    buffer resp = allocate_buffer(ak_proxy_state.h, maxlen * 2 + 256);
+    if (!resp)
+        return -ENOMEM;
+
+    err = virtio_read_line(ak_proxy_state.virtio_handle, resp, AK_PROXY_TIMEOUT_MS);
+    if (err < 0) {
+        deallocate_buffer(resp);
+        return err;
+    }
+
+    boolean ok = false;
+    if (json_get_bool(resp, "ok", &ok) < 0 || !ok) {
+        deallocate_buffer(resp);
+        return AK_PROXY_E_REMOTE;
+    }
+
+    /* Decode base64 data */
+    buffer rdata = json_get_value(resp, "data");
+    if (!rdata) {
+        deallocate_buffer(resp);
+        return 0;  /* No data available */
+    }
+
+    buffer b64 = json_get_value(rdata, "data");
+    deallocate_buffer(rdata);
+    if (!b64) {
+        deallocate_buffer(resp);
+        return 0;
+    }
+
+    /* Base64 decode */
+    u8 *src = buffer_ref(b64, 0);
+    u64 src_len = buffer_length(b64);
+    /* Skip quotes if present */
+    if (src_len >= 2 && src[0] == '"') {
+        src++;
+        src_len -= 2;
+    }
+
+    u8 *dst = buf;
+    u64 dst_idx = 0;
+    u32 accum = 0;
+    int bits = 0;
+
+    for (u64 i = 0; i < src_len && dst_idx < maxlen; i++) {
+        int val = -1;
+        if (src[i] >= 'A' && src[i] <= 'Z') val = src[i] - 'A';
+        else if (src[i] >= 'a' && src[i] <= 'z') val = src[i] - 'a' + 26;
+        else if (src[i] >= '0' && src[i] <= '9') val = src[i] - '0' + 52;
+        else if (src[i] == '+') val = 62;
+        else if (src[i] == '/') val = 63;
+        else if (src[i] == '=') break;
+        else continue;  /* Skip whitespace etc */
+
+        accum = (accum << 6) | val;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            dst[dst_idx++] = (accum >> bits) & 0xff;
+        }
+    }
+
+    deallocate_buffer(b64);
+    deallocate_buffer(resp);
+    return dst_idx;
+}
+
+s64 ak_proxy_tcp_close(u64 conn_id)
+{
+    if (!ak_proxy_state.initialized || !ak_proxy_state.connected)
+        return AK_PROXY_E_NOT_CONNECTED;
+
+    /* Build request */
+    buffer req = allocate_buffer(ak_proxy_state.h, 128);
+    if (!req)
+        return -ENOMEM;
+
+    char req_id[32];
+    gen_request_id(req_id, sizeof(req_id));
+
+    buffer_write(req, "{\"id\":\"", 7);
+    buffer_write(req, req_id, runtime_strlen(req_id));
+    buffer_write(req, "\",\"op\":\"tcp_close\",\"conn_id\":", 29);
+
+    char id_buf[24];
+    int id_len = u64_to_decimal(id_buf, conn_id);
+    buffer_write(req, id_buf, id_len);
+    buffer_write(req, "}", 1);
+
+    s64 err = virtio_write(ak_proxy_state.virtio_handle, req);
+    deallocate_buffer(req);
+
+    if (err < 0)
+        return err;
+
+    /* Read response */
+    buffer resp = allocate_buffer(ak_proxy_state.h, 256);
+    if (!resp)
+        return -ENOMEM;
+
+    err = virtio_read_line(ak_proxy_state.virtio_handle, resp, AK_PROXY_TIMEOUT_MS);
+    if (err < 0) {
+        deallocate_buffer(resp);
+        return err;
+    }
+
+    boolean ok = false;
+    if (json_get_bool(resp, "ok", &ok) < 0 || !ok) {
+        deallocate_buffer(resp);
+        return AK_PROXY_E_REMOTE;
+    }
+
+    deallocate_buffer(resp);
+    return 0;
 }

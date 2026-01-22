@@ -277,4 +277,94 @@ s64 ak_audit_log_lifecycle(
     ak_lifecycle_event_t event
 );
 
+/* ============================================================
+ * RING BUFFER - High-frequency data-plane audit events
+ * ============================================================
+ *
+ * Lock-free ring buffer for non-blocking audit of high-frequency
+ * events. Uses atomic operations for producer/consumer synchronization.
+ * Ring overwrites oldest entries when full (bounded memory).
+ */
+
+#define AK_RING_BUFFER_SIZE     4096    /* Must be power of 2 */
+#define AK_RING_BUFFER_MASK     (AK_RING_BUFFER_SIZE - 1)
+
+/* Compact ring buffer entry for data-plane events */
+typedef struct ak_ring_entry {
+    u64 seq;                            /* Sequence number */
+    u64 ts_ns;                          /* Timestamp (nanoseconds) */
+    u8 pid[AK_TOKEN_ID_SIZE];           /* Process/Agent ID */
+    u8 run_id[AK_TOKEN_ID_SIZE];        /* Run ID */
+    u16 op;                             /* Operation code */
+    u8 req_hash[AK_HASH_SIZE];          /* Request hash */
+    u8 res_hash[AK_HASH_SIZE];          /* Response hash */
+    s64 result_code;                    /* Result/errno */
+    u32 latency_us;                     /* Latency in microseconds */
+    u8 flags;                           /* Event flags */
+} __attribute__((packed)) ak_ring_entry_t;
+
+/* Ring buffer flags */
+#define AK_RING_FLAG_DENIED     0x01    /* Operation was denied */
+#define AK_RING_FLAG_TIMEOUT    0x02    /* Operation timed out */
+#define AK_RING_FLAG_ERROR      0x04    /* Error occurred */
+#define AK_RING_FLAG_OVERFLOW   0x80    /* Ring buffer overflowed */
+
+/*
+ * Initialize ring buffer (called from ak_audit_init).
+ */
+void ak_ring_init(void);
+
+/*
+ * Push entry to ring buffer (non-blocking, may overwrite oldest).
+ *
+ * Returns: sequence number of entry, or 0 if ring not initialized.
+ */
+u64 ak_ring_push(
+    u8 *pid,
+    u8 *run_id,
+    u16 op,
+    u8 *req_hash,
+    u8 *res_hash,
+    s64 result_code,
+    u32 latency_us,
+    u8 flags
+);
+
+/*
+ * Pop entry from ring buffer (non-blocking).
+ *
+ * Returns: true if entry was returned, false if ring empty.
+ */
+boolean ak_ring_pop(ak_ring_entry_t *entry_out);
+
+/*
+ * Peek at entry without removing (for batch reads).
+ *
+ * Returns: true if entry exists at offset from tail.
+ */
+boolean ak_ring_peek(u64 offset, ak_ring_entry_t *entry_out);
+
+/*
+ * Get ring buffer statistics.
+ */
+typedef struct ak_ring_stats {
+    u64 total_pushed;           /* Total entries ever pushed */
+    u64 total_popped;           /* Total entries ever popped */
+    u64 current_count;          /* Current entries in buffer */
+    u64 overflow_count;         /* Number of overwrites */
+    u64 head_seq;               /* Current head sequence */
+    u64 tail_seq;               /* Current tail sequence */
+} ak_ring_stats_t;
+
+void ak_ring_get_stats(ak_ring_stats_t *stats);
+
+/*
+ * Drain ring buffer to callback (batch processing).
+ *
+ * Calls callback for each entry, stops if callback returns false.
+ * Returns: number of entries processed.
+ */
+typedef boolean (*ak_ring_drain_cb)(ak_ring_entry_t *entry, void *ctx);
+u64 ak_ring_drain(ak_ring_drain_cb cb, void *ctx, u64 max_entries);
+
 #endif /* AK_AUDIT_H */

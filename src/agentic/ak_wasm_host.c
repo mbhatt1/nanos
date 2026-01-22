@@ -429,34 +429,11 @@ s64 ak_host_http_post(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 /*
  * ak_host_tcp_connect - Establish TCP connection from WASM sandbox
  *
- * STUB IMPLEMENTATION - Returns fake fd, does not create real connection
- *
- * CURRENT STATUS:
- *   This function validates capabilities and returns a placeholder response
- *   but does NOT establish a real TCP connection. The returned fd is not
- *   usable for actual network I/O.
- *
- * WHY STUB:
- *   TCP socket operations in Nanos require integration with the kernel's
- *   network stack (lwIP). Current challenges:
- *     - Socket descriptors must be tracked per-agent for capability enforcement
- *     - Connections need timeout handling to prevent resource exhaustion
- *     - DNS resolution for hostnames requires async operation
- *
- * ALTERNATIVES FOR AGENTS:
- *   1. VIRTIO-SERIAL PROXY: Request TCP operations through host hypervisor
- *      ak_host_ipc_send({"type":"tcp_connect","host":"...","port":8080})
- *
- *   2. Use ak_host_http_* alternatives (which also use IPC proxy pattern)
- *
- * FUTURE IMPLEMENTATION:
- *   Will be fully implemented when:
- *     - Per-agent socket descriptor tables are added
- *     - Capability-aware socket wrappers are created for lwIP
- *     - Connection pooling with timeout enforcement is implemented
+ * Establishes a TCP connection via the virtio proxy to the specified host:port.
+ * The akproxy daemon on the host handles the actual TCP connection.
  *
  * Args: {"host": "example.com", "port": 8080}
- * Returns: {"fd": "1"} (stub - not a real file descriptor)
+ * Returns: {"conn_id": "12345", "local_addr": "...", "remote_addr": "..."}
  */
 s64 ak_host_tcp_connect(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
@@ -475,28 +452,68 @@ s64 ak_host_tcp_connect(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     runtime_memcpy(host_buf, host, host_len);
     host_buf[host_len] = 0;
 
+    /* Parse port */
+    s64 port = parse_json_integer(args, "port");
+    if (port <= 0 || port > 65535)
+        return AK_E_SCHEMA_INVALID;
+
     s64 cap_result = validate_host_cap(ctx, AK_CAP_NET, host_buf, "connect");
     if (cap_result != 0)
         return cap_result;
 
-    /* STUB: Returns placeholder fd - see function header for implementation status */
-    *result = create_json_result(ctx->agent->heap, "fd", "1", 1);
-    return (*result) ? 0 : AK_E_WASM_OOM;
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected())
+        return AK_E_NOT_IMPLEMENTED;
+
+    /* Perform TCP connect via virtio proxy */
+    ak_tcp_connection_t conn;
+    runtime_memset((u8 *)&conn, 0, sizeof(conn));
+    s64 err = ak_proxy_tcp_connect(host_buf, (u16)port, &conn);
+    if (err < 0)
+        return err;
+
+    /* Build result JSON with connection info */
+    buffer res = allocate_buffer(ctx->agent->heap, 256);
+    if (res == INVALID_ADDRESS)
+        return AK_E_WASM_OOM;
+
+    buffer_write(res, "{\"conn_id\":\"", 12);
+
+    /* Write conn_id as string */
+    char id_buf[24];
+    int id_len = 0;
+    u64 cid = conn.conn_id;
+    if (cid == 0) {
+        id_buf[id_len++] = '0';
+    } else {
+        char tmp[24];
+        int tmp_len = 0;
+        while (cid > 0) {
+            tmp[tmp_len++] = '0' + (cid % 10);
+            cid /= 10;
+        }
+        for (int i = tmp_len - 1; i >= 0; i--)
+            id_buf[id_len++] = tmp[i];
+    }
+    buffer_write(res, id_buf, id_len);
+
+    buffer_write(res, "\",\"local_addr\":\"", 16);
+    buffer_write(res, conn.local_addr, runtime_strlen(conn.local_addr));
+    buffer_write(res, "\",\"remote_addr\":\"", 17);
+    buffer_write(res, conn.remote_addr, runtime_strlen(conn.remote_addr));
+    buffer_write(res, "\"}", 2);
+
+    *result = res;
+    return 0;
 }
 
 /*
  * ak_host_tcp_send - Send data over TCP connection from WASM sandbox
  *
- * STUB IMPLEMENTATION - Returns bytes_sent=0, does not send data
+ * Sends data over an established TCP connection via the virtio proxy.
  *
- * CURRENT STATUS:
- *   Validates capability but does not perform actual network I/O.
- *   Depends on ak_host_tcp_connect() being fully implemented first.
- *
- * See ak_host_tcp_connect() for implementation rationale and alternatives.
- *
- * Args: {"fd": "1", "data": "base64-encoded-data"}
- * Returns: {"bytes_sent": "0"} (stub)
+ * Args: {"conn_id": "12345", "data": "base64-encoded-data"}
+ * Returns: {"bytes_sent": "123"}
  */
 s64 ak_host_tcp_send(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
@@ -508,24 +525,85 @@ s64 ak_host_tcp_send(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* STUB: Returns 0 bytes sent - see ak_host_tcp_connect() for status */
-    *result = create_json_result(ctx->agent->heap, "bytes_sent", "0", 1);
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected())
+        return AK_E_NOT_IMPLEMENTED;
+
+    /* Parse conn_id */
+    s64 conn_id = parse_json_integer(args, "conn_id");
+    if (conn_id < 0)
+        return AK_E_SCHEMA_INVALID;
+
+    /* Parse base64 data */
+    u64 data_len;
+    const char *data_b64 = parse_json_string(args, "data", &data_len);
+    if (!data_b64 || data_len == 0) {
+        *result = create_json_result(ctx->agent->heap, "bytes_sent", "0", 1);
+        return (*result) ? 0 : AK_E_WASM_OOM;
+    }
+
+    /* Decode base64 */
+    u64 max_decoded = (data_len * 3) / 4 + 4;
+    u8 *decoded = allocate(ctx->agent->heap, max_decoded);
+    if (decoded == INVALID_ADDRESS)
+        return AK_E_WASM_OOM;
+
+    u64 decoded_len = 0;
+    u32 accum = 0;
+    int bits = 0;
+    for (u64 i = 0; i < data_len; i++) {
+        int val = -1;
+        if (data_b64[i] >= 'A' && data_b64[i] <= 'Z') val = data_b64[i] - 'A';
+        else if (data_b64[i] >= 'a' && data_b64[i] <= 'z') val = data_b64[i] - 'a' + 26;
+        else if (data_b64[i] >= '0' && data_b64[i] <= '9') val = data_b64[i] - '0' + 52;
+        else if (data_b64[i] == '+') val = 62;
+        else if (data_b64[i] == '/') val = 63;
+        else if (data_b64[i] == '=') break;
+        else continue;
+
+        accum = (accum << 6) | val;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            decoded[decoded_len++] = (accum >> bits) & 0xff;
+        }
+    }
+
+    /* Send via proxy */
+    s64 sent = ak_proxy_tcp_send((u64)conn_id, decoded, decoded_len);
+    deallocate(ctx->agent->heap, decoded, max_decoded);
+
+    if (sent < 0)
+        return sent;
+
+    /* Build result */
+    char sent_buf[24];
+    int sent_len = 0;
+    u64 s = (u64)sent;
+    if (s == 0) {
+        sent_buf[sent_len++] = '0';
+    } else {
+        char tmp[24];
+        int tmp_len = 0;
+        while (s > 0) {
+            tmp[tmp_len++] = '0' + (s % 10);
+            s /= 10;
+        }
+        for (int i = tmp_len - 1; i >= 0; i--)
+            sent_buf[sent_len++] = tmp[i];
+    }
+
+    *result = create_json_result(ctx->agent->heap, "bytes_sent", sent_buf, sent_len);
     return (*result) ? 0 : AK_E_WASM_OOM;
 }
 
 /*
  * ak_host_tcp_recv - Receive data from TCP connection in WASM sandbox
  *
- * STUB IMPLEMENTATION - Returns empty data, does not receive
+ * Receives data from an established TCP connection via the virtio proxy.
  *
- * CURRENT STATUS:
- *   Validates capability but does not perform actual network I/O.
- *   Depends on ak_host_tcp_connect() being fully implemented first.
- *
- * See ak_host_tcp_connect() for implementation rationale and alternatives.
- *
- * Args: {"fd": "1", "max_bytes": 4096}
- * Returns: {"data": ""} (stub - always empty)
+ * Args: {"conn_id": "12345", "max_bytes": 4096}
+ * Returns: {"data": "base64-encoded-data"}
  */
 s64 ak_host_tcp_recv(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
@@ -536,9 +614,63 @@ s64 ak_host_tcp_recv(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* STUB: Returns empty data - see ak_host_tcp_connect() for status */
-    *result = create_json_result(ctx->agent->heap, "data", "", 0);
-    return (*result) ? 0 : AK_E_WASM_OOM;
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected())
+        return AK_E_NOT_IMPLEMENTED;
+
+    /* Parse conn_id */
+    s64 conn_id = parse_json_integer(args, "conn_id");
+    if (conn_id < 0)
+        return AK_E_SCHEMA_INVALID;
+
+    /* Parse max_bytes */
+    s64 max_bytes = parse_json_integer(args, "max_bytes");
+    if (max_bytes <= 0)
+        max_bytes = 4096;  /* Default */
+    if (max_bytes > 1024 * 1024)
+        max_bytes = 1024 * 1024;  /* Cap at 1MB */
+
+    /* Allocate receive buffer */
+    u8 *recv_buf = allocate(ctx->agent->heap, max_bytes);
+    if (recv_buf == INVALID_ADDRESS)
+        return AK_E_WASM_OOM;
+
+    /* Receive via proxy */
+    s64 received = ak_proxy_tcp_recv((u64)conn_id, recv_buf, max_bytes);
+    if (received < 0) {
+        deallocate(ctx->agent->heap, recv_buf, max_bytes);
+        return received;
+    }
+
+    /* Encode as base64 */
+    u64 b64_len = ((received + 2) / 3) * 4;
+    buffer res = allocate_buffer(ctx->agent->heap, b64_len + 32);
+    if (res == INVALID_ADDRESS) {
+        deallocate(ctx->agent->heap, recv_buf, max_bytes);
+        return AK_E_WASM_OOM;
+    }
+
+    buffer_write(res, "{\"data\":\"", 9);
+
+    static const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for (s64 i = 0; i < received; i += 3) {
+        u32 n = ((u32)recv_buf[i]) << 16;
+        if (i + 1 < received) n |= ((u32)recv_buf[i + 1]) << 8;
+        if (i + 2 < received) n |= recv_buf[i + 2];
+
+        char out[4];
+        out[0] = base64_chars[(n >> 18) & 0x3f];
+        out[1] = base64_chars[(n >> 12) & 0x3f];
+        out[2] = (i + 1 < received) ? base64_chars[(n >> 6) & 0x3f] : '=';
+        out[3] = (i + 2 < received) ? base64_chars[n & 0x3f] : '=';
+        buffer_write(res, out, 4);
+    }
+
+    buffer_write(res, "\"}", 2);
+
+    deallocate(ctx->agent->heap, recv_buf, max_bytes);
+    *result = res;
+    return 0;
 }
 
 /* ============================================================
@@ -1030,7 +1162,7 @@ s64 ak_host_llm_complete(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 
     /* Call LLM via virtio proxy */
     ak_llm_response_t llm_response;
-    runtime_memset(&llm_response, 0, sizeof(llm_response));
+    runtime_memset((u8 *)&llm_response, 0, sizeof(llm_response));
     s64 err = ak_proxy_llm_complete(model_buf[0] ? model_buf : 0, prompt_buf, (u64)max_tokens, &llm_response);
 
     deallocate(ctx->agent->heap, prompt_buf, prompt_len + 1);

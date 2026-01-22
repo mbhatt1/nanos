@@ -279,6 +279,31 @@ sysreturn ak_route_listen(int fd, int backlog);
 sysreturn ak_route_dns_resolve(const char *hostname);
 
 /* ============================================================
+ * PROCESS ROUTING HOOKS
+ * ============================================================
+ *
+ * Process creation and signal routing for policy enforcement.
+ */
+
+/*
+ * Route process spawn (fork/exec) through AK.
+ *
+ * Builds AK_E_PROC_SPAWN effect with the program path.
+ * Target format: "spawn:<program>"
+ *
+ * Parameters:
+ *   program - Path to the program to execute
+ *   argv    - Argument vector (NULL-terminated)
+ *   flags   - Spawn flags (reserved for future use)
+ *
+ * Returns:
+ *   0 if allowed, negative errno if denied
+ *
+ * Denial errno: -EACCES (permission denied)
+ */
+sysreturn ak_route_spawn(const char *program, const char **argv, u32 flags);
+
+/* ============================================================
  * MODE CHECKING HELPERS
  * ============================================================ */
 
@@ -464,10 +489,12 @@ typedef struct ak_posix_route_stats {
     u64 bind_calls;
     u64 listen_calls;
     u64 dns_calls;
+    u64 spawn_calls;        /* Process spawn calls */
 
     /* Denial breakdown */
     u64 fs_denials;
     u64 net_denials;
+    u64 proc_denials;       /* Process operation denials */
 
     /* HARD mode enforcement */
     u64 hard_mode_blocks;   /* Raw syscalls blocked in HARD mode */
@@ -518,6 +545,19 @@ void ak_posix_route_get_stats(ak_posix_route_stats_t *stats);
     } while(0)
 
 /*
+ * Macro for routing a process syscall.
+ * Usage in syscall handler:
+ *   AK_ROUTE_PROC(spawn, program, argv, flags);
+ */
+#define AK_ROUTE_PROC(syscall, ...) \
+    do { \
+        if (ak_routing_active()) { \
+            sysreturn rv = ak_route_##syscall(__VA_ARGS__); \
+            if (rv < 0) return rv; \
+        } \
+    } while(0)
+
+/*
  * Conditional execution based on AK authorization.
  * Returns denial error if not authorized, otherwise continues.
  */
@@ -534,6 +574,7 @@ void ak_posix_route_get_stats(ak_posix_route_stats_t *stats);
 /* No-op when AK is disabled */
 #define AK_ROUTE_FS(syscall, ...)           ((void)0)
 #define AK_ROUTE_NET(syscall, ...)          ((void)0)
+#define AK_ROUTE_PROC(syscall, ...)         ((void)0)
 #define AK_REQUIRE_AUTHORIZED(func, ...)    ((void)0)
 
 #endif /* CONFIG_AK_ENABLED */

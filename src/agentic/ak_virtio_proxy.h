@@ -51,6 +51,13 @@ typedef struct ak_llm_response {
     u64 total_tokens;
 } ak_llm_response_t;
 
+/* TCP connection info */
+typedef struct ak_tcp_connection {
+    u64 conn_id;            /* Connection ID for subsequent send/recv */
+    char local_addr[64];    /* Local address (IP:port) */
+    char remote_addr[64];   /* Remote address (IP:port) */
+} ak_tcp_connection_t;
+
 /*
  * Initialize the virtio proxy client.
  * Called during AK initialization.
@@ -168,5 +175,78 @@ void ak_proxy_free_http_response(ak_http_response_t *response);
  * Free LLM response buffers.
  */
 void ak_proxy_free_llm_response(ak_llm_response_t *response);
+
+/* ============================================================
+ * LLM STREAMING OPERATIONS
+ * ============================================================ */
+
+/* Streaming callback - called for each chunk of LLM response */
+typedef boolean (*ak_llm_stream_cb)(const char *chunk, u64 len, void *ctx);
+
+/*
+ * LLM streaming completion.
+ *
+ * Calls callback for each chunk of response as it arrives.
+ * Returns 0 on success, negative error code on failure.
+ *
+ * The callback should return true to continue, false to abort.
+ */
+s64 ak_proxy_llm_stream(
+    const char *model,
+    const char *prompt,
+    u64 max_tokens,
+    ak_llm_stream_cb callback,
+    void *ctx
+);
+
+/*
+ * LLM streaming chat.
+ *
+ * Calls callback for each chunk of response as it arrives.
+ * Returns 0 on success, negative error code on failure.
+ */
+s64 ak_proxy_llm_stream_chat(
+    const char *model,
+    buffer messages_json,
+    u64 max_tokens,
+    ak_llm_stream_cb callback,
+    void *ctx
+);
+
+/*
+ * TCP connect via proxy.
+ * Returns 0 on success, negative error code on failure.
+ */
+s64 ak_proxy_tcp_connect(
+    const char *host,
+    u16 port,
+    ak_tcp_connection_t *conn
+);
+
+/*
+ * TCP send data via proxy.
+ * Returns bytes sent on success, negative error code on failure.
+ */
+s64 ak_proxy_tcp_send(
+    u64 conn_id,
+    const void *data,
+    u64 len
+);
+
+/*
+ * TCP receive data via proxy.
+ * Returns bytes received on success, 0 if no data, negative error code on failure.
+ */
+s64 ak_proxy_tcp_recv(
+    u64 conn_id,
+    void *buf,
+    u64 maxlen
+);
+
+/*
+ * TCP close connection via proxy.
+ * Returns 0 on success, negative error code on failure.
+ */
+s64 ak_proxy_tcp_close(u64 conn_id);
 
 #endif /* AK_VIRTIO_PROXY_H */

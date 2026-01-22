@@ -179,6 +179,9 @@ void ak_audit_init(heap h)
      * initialization to actually open the file.
      */
 
+    /* Initialize ring buffer for data-plane audit events */
+    ak_ring_init();
+
     ak_log.initialized = true;
 }
 
@@ -1397,4 +1400,159 @@ void ak_audit_destroy_bundle(heap h, ak_replay_bundle_t *bundle)
         deallocate_buffer(bundle->heap_snapshot);
     }
     deallocate(h, bundle, sizeof(*bundle));
+}
+
+/* ============================================================
+ * RING BUFFER - Lock-free data-plane audit
+ * ============================================================
+ *
+ * Single-producer multi-consumer ring buffer using atomic operations.
+ * Overwrites oldest entries when full (bounded memory usage).
+ */
+
+static struct {
+    ak_ring_entry_t entries[AK_RING_BUFFER_SIZE];
+    word head;                  /* Next write position (producer) - use word for atomics */
+    word tail;                  /* Next read position (consumer) */
+    word total_pushed;
+    word total_popped;
+    word overflow_count;
+    boolean initialized;
+} ak_ring;
+
+void ak_ring_init(void)
+{
+    runtime_memset((u8 *)&ak_ring, 0, sizeof(ak_ring));
+    ak_ring.head = 0;
+    ak_ring.tail = 0;
+    ak_ring.initialized = true;
+}
+
+u64 ak_ring_push(
+    u8 *pid,
+    u8 *run_id,
+    u16 op,
+    u8 *req_hash,
+    u8 *res_hash,
+    s64 result_code,
+    u32 latency_us,
+    u8 flags)
+{
+    if (!ak_ring.initialized)
+        return 0;
+
+    /* Atomically claim a slot */
+    u64 slot = fetch_and_add(&ak_ring.head, 1);
+    u64 seq = slot + 1;
+    u64 idx = slot & AK_RING_BUFFER_MASK;
+
+    /* Check for overflow (tail catching up) */
+    word tail = ak_ring.tail;
+    if (slot - tail >= AK_RING_BUFFER_SIZE) {
+        fetch_and_add(&ak_ring.overflow_count, 1);
+        /* Move tail forward to make room */
+        __sync_bool_compare_and_swap(&ak_ring.tail, tail, slot - AK_RING_BUFFER_SIZE + 1);
+        flags |= AK_RING_FLAG_OVERFLOW;
+    }
+
+    /* Fill entry */
+    ak_ring_entry_t *entry = &ak_ring.entries[idx];
+    entry->seq = seq;
+    entry->ts_ns = now(CLOCK_ID_MONOTONIC_RAW);
+    if (pid)
+        runtime_memcpy(entry->pid, pid, AK_TOKEN_ID_SIZE);
+    else
+        runtime_memset(entry->pid, 0, AK_TOKEN_ID_SIZE);
+    if (run_id)
+        runtime_memcpy(entry->run_id, run_id, AK_TOKEN_ID_SIZE);
+    else
+        runtime_memset(entry->run_id, 0, AK_TOKEN_ID_SIZE);
+    entry->op = op;
+    if (req_hash)
+        runtime_memcpy(entry->req_hash, req_hash, AK_HASH_SIZE);
+    else
+        runtime_memset(entry->req_hash, 0, AK_HASH_SIZE);
+    if (res_hash)
+        runtime_memcpy(entry->res_hash, res_hash, AK_HASH_SIZE);
+    else
+        runtime_memset(entry->res_hash, 0, AK_HASH_SIZE);
+    entry->result_code = result_code;
+    entry->latency_us = latency_us;
+    entry->flags = flags;
+
+    fetch_and_add(&ak_ring.total_pushed, 1);
+    return seq;
+}
+
+boolean ak_ring_pop(ak_ring_entry_t *entry_out)
+{
+    if (!ak_ring.initialized || !entry_out)
+        return false;
+
+    word tail = ak_ring.tail;
+    word head = ak_ring.head;
+
+    /* Empty check */
+    if (tail >= head)
+        return false;
+
+    /* Try to claim this slot */
+    if (!__sync_bool_compare_and_swap(&ak_ring.tail, tail, tail + 1))
+        return false;  /* Lost race, try again */
+
+    u64 idx = tail & AK_RING_BUFFER_MASK;
+    runtime_memcpy(entry_out, &ak_ring.entries[idx], sizeof(ak_ring_entry_t));
+
+    fetch_and_add(&ak_ring.total_popped, 1);
+    return true;
+}
+
+boolean ak_ring_peek(u64 offset, ak_ring_entry_t *entry_out)
+{
+    if (!ak_ring.initialized || !entry_out)
+        return false;
+
+    word tail = ak_ring.tail;
+    word head = ak_ring.head;
+    word pos = tail + offset;
+
+    if (pos >= head)
+        return false;
+
+    u64 idx = pos & AK_RING_BUFFER_MASK;
+    runtime_memcpy(entry_out, &ak_ring.entries[idx], sizeof(ak_ring_entry_t));
+    return true;
+}
+
+void ak_ring_get_stats(ak_ring_stats_t *stats)
+{
+    if (!stats)
+        return;
+
+    stats->total_pushed = ak_ring.total_pushed;
+    stats->total_popped = ak_ring.total_popped;
+    stats->head_seq = ak_ring.head;
+    stats->tail_seq = ak_ring.tail;
+    stats->overflow_count = ak_ring.overflow_count;
+
+    u64 head = ak_ring.head;
+    u64 tail = ak_ring.tail;
+    stats->current_count = (head > tail) ? (head - tail) : 0;
+}
+
+u64 ak_ring_drain(ak_ring_drain_cb cb, void *ctx, u64 max_entries)
+{
+    if (!ak_ring.initialized || !cb)
+        return 0;
+
+    u64 processed = 0;
+    ak_ring_entry_t entry;
+
+    while (processed < max_entries && ak_ring_pop(&entry)) {
+        if (!cb(&entry, ctx))
+            break;
+        processed++;
+    }
+
+    return processed;
 }
