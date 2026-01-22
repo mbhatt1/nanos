@@ -125,7 +125,9 @@ static inline void console_sstring(sstring s)
 
 #define ABS(x) (((x) >= 0) ? (x) : -(x))
 
+#ifndef offsetof
 #define offsetof(__t, __e) u64_from_pointer(&((__t)0)->__e)
+#endif
 
 #define check_flags_and_clear(x, f) ({boolean match = ((x) & (f)) != 0; (x) &= ~(f); match;})
 
