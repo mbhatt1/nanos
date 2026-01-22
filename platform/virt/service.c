@@ -512,6 +512,7 @@ void detect_devices(kernel_heaps kh, storage_attach sa)
         init_virtio_rng(kh);
         init_virtio_9p(kh);
         init_virtio_socket(kh);
+        init_virtio_serial(kh);
     }
     if (!vm_halt) {
         vm_halt = closure_func(heap_locked(kh), halt_handler, psci_vm_halt);

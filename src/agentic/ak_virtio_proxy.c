@@ -9,6 +9,7 @@
  */
 
 #include "ak_virtio_proxy.h"
+#include "../virtio/virtio_serial.h"
 
 /* Global state */
 static struct {
@@ -285,68 +286,76 @@ static buffer json_get_value(buffer json, const char *key)
  * The minops tool can also wire this to a Unix socket for testing.
  */
 
-/* Virtio device file descriptor (set by platform init) */
-static int virtio_fd = -1;
+/*
+ * Virtio I/O implementation using virtio-serial driver.
+ * For minops/host testing, ak_proxy_set_fd() can set a different fd.
+ */
 
 /* Set the virtio fd (called from platform init or minops) */
 void ak_proxy_set_fd(int fd)
 {
-    virtio_fd = fd;
-    ak_proxy_state.connected = (fd >= 0);
+    (void)fd;
+    /* In kernel mode, we use virtio_serial_connected() to check connection */
+    /* The fd is ignored - virtio-serial is the transport */
 }
 
 static s64 virtio_write(void *handle, buffer data)
 {
     (void)handle;
 
-    if (virtio_fd < 0)
+    if (!virtio_serial_connected())
         return AK_PROXY_E_NOT_CONNECTED;
 
     u8 *buf = buffer_ref(data, 0);
     u64 len = buffer_length(data);
 
     /* Write data followed by newline */
-    s64 written = 0;
-    while (written < (s64)len) {
-        s64 n = write(virtio_fd, buf + written, len - written);
-        if (n < 0)
-            return -errno;
-        written += n;
-    }
+    s64 written = virtio_serial_write(buf, len);
+    if (written < 0)
+        return written;
 
-    /* Write newline delimiter */
+    /* Send newline delimiter */
     char nl = '\n';
-    if (write(virtio_fd, &nl, 1) != 1)
-        return -errno;
+    s64 nl_written = virtio_serial_write(&nl, 1);
+    if (nl_written < 0)
+        return nl_written;
 
-    return written + 1;
+    return written;
 }
 
 static s64 virtio_read_line(void *handle, buffer out, u64 timeout_ms)
 {
     (void)handle;
-    (void)timeout_ms; /* TODO: implement timeout */
 
-    if (virtio_fd < 0)
+    if (!virtio_serial_connected())
         return AK_PROXY_E_NOT_CONNECTED;
 
-    /* Read until newline */
-    char c;
-    while (1) {
-        s64 n = read(virtio_fd, &c, 1);
-        if (n < 0)
-            return -errno;
-        if (n == 0)
-            return AK_PROXY_E_TIMEOUT;
-        if (c == '\n')
-            break;
-        buffer_write(out, &c, 1);
+    /* Ensure buffer has space */
+    u64 max_len = 64 * 1024; /* 64KB max response */
+    u8 *buf = allocate(ak_proxy_state.h, max_len);
+    if (buf == INVALID_ADDRESS)
+        return -ENOMEM;
 
-        if (buffer_length(out) > AK_PROXY_MAX_RESPONSE)
-            return AK_PROXY_E_OVERFLOW;
+    s64 len = virtio_serial_read_line(buf, max_len, timeout_ms);
+    if (len < 0) {
+        deallocate(ak_proxy_state.h, buf, max_len);
+        return len;
     }
 
-    return buffer_length(out);
+    if (len == 0) {
+        deallocate(ak_proxy_state.h, buf, max_len);
+        return AK_PROXY_E_TIMEOUT;
+    }
+
+    /* Remove trailing newline if present */
+    if (len > 0 && buf[len - 1] == '\n')
+        len--;
+
+    /* Copy to output buffer */
+    buffer_write(out, buf, len);
+    deallocate(ak_proxy_state.h, buf, max_len);
+
+    return len;
 }
 
 /* ============================================================
@@ -360,7 +369,6 @@ void ak_proxy_init(heap h)
 
     ak_proxy_state.h = h;
     ak_proxy_state.request_id = 1;
-    ak_proxy_state.connected = false;
     ak_proxy_state.virtio_handle = 0;
 
     /* Allocate reusable buffers */
@@ -368,11 +376,17 @@ void ak_proxy_init(heap h)
     ak_proxy_state.response_buf = allocate_buffer(h, 4096);
 
     ak_proxy_state.initialized = true;
+
+    /* Connection state is determined by virtio-serial driver */
+    ak_proxy_state.connected = virtio_serial_connected() ? true : false;
 }
 
 boolean ak_proxy_connected(void)
 {
-    return ak_proxy_state.connected;
+    /* Check live connection status from virtio-serial driver */
+    if (!ak_proxy_state.initialized)
+        return false;
+    return virtio_serial_connected() ? true : false;
 }
 
 /* ============================================================

@@ -95,6 +95,7 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/virtio/virtio_rng.c \
 	$(SRCDIR)/virtio/virtio_storage.c \
 	$(SRCDIR)/virtio/virtio_scsi.c \
+	$(SRCDIR)/virtio/virtio_serial.c \
 	$(SRCDIR)/virtio/virtio_socket.c \
 	$(SRCDIR)/virtio/virtqueue.c \
 	$(SRCDIR)/virtio/scsi.c \
@@ -159,7 +160,8 @@ SRCS-agentic= \
 	$(SRCDIR)/agentic/ak_sanitize.c \
 	$(SRCDIR)/agentic/ak_approval.c \
 	$(SRCDIR)/agentic/ak_lz4.c \
-	$(SRCDIR)/agentic/ak_pattern.c
+	$(SRCDIR)/agentic/ak_pattern.c \
+	$(SRCDIR)/agentic/ak_virtio_proxy.c
 
 SRCS-lwip= \
 	$(LWIPDIR)/src/core/def.c \

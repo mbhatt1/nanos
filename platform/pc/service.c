@@ -525,6 +525,7 @@ void detect_devices(kernel_heaps kh, storage_attach sa)
 
         init_virtio_9p(kh);
         init_virtio_socket(kh);
+        init_virtio_serial(kh);
     }
 
     /* misc / platform */
