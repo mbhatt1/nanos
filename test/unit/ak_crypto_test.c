@@ -175,7 +175,8 @@ static void mock_hmac_sha256(
         return;
     }
     memcpy(inner_buf, k_ipad, 64);
-    memcpy(inner_buf + 64, data, data_len);
+    if (data && data_len > 0)
+        memcpy(inner_buf + 64, data, data_len);
     mock_sha256(inner_buf, 64 + data_len, inner_hash);
     free(inner_buf);
 

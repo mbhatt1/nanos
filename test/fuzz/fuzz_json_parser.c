@@ -40,21 +40,25 @@ typedef int boolean;
 /* Minimal heap stub for standalone fuzzing */
 typedef void *heap;
 
+__attribute__((unused))
 static void *fuzz_alloc(size_t size) {
     return calloc(1, size);
 }
 
+__attribute__((unused))
 static void fuzz_free(void *p, size_t size) {
     (void)size;
     free(p);
 }
 
 /* Stub for runtime_memset */
+__attribute__((unused))
 static void runtime_memset(u8 *dest, u8 val, u64 len) {
     memset(dest, val, len);
 }
 
 /* Stub for runtime_memcpy */
+__attribute__((unused))
 static void runtime_memcpy(void *dest, const void *src, u64 len) {
     memcpy(dest, src, len);
 }
@@ -72,6 +76,7 @@ static const u8 *skip_ws(const u8 *p, const u8 *end) {
 }
 
 /* Local strlen */
+__attribute__((unused))
 static u64 local_strlen(const char *s) {
     if (!s) return 0;
     u64 len = 0;
@@ -80,6 +85,7 @@ static u64 local_strlen(const char *s) {
 }
 
 /* Local strncpy */
+__attribute__((unused))
 static void local_strncpy(char *dest, const char *src, u64 n) {
     if (!dest || !src || n == 0) return;
     u64 i;
