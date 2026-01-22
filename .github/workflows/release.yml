@@ -171,7 +171,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm build-essential gcc-aarch64-linux-gnu qemu-system-arm wget
+          sudo apt-get install -y nasm build-essential gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-arm wget
 
       - name: Extract version
         id: version
@@ -187,7 +187,7 @@ jobs:
       - name: Build kernel, libak, and tools
         run: |
           make clean
-          make -j$(nproc) PLATFORM=virt all-binaries
+          make -j$(nproc) PLATFORM=virt CROSS_COMPILE=aarch64-linux-gnu- all-binaries
 
           # Build mkfs for host (x86_64) to create images
           make -j$(nproc) -C tools mkfs

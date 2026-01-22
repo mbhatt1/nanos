@@ -102,12 +102,12 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm build-essential gcc-aarch64-linux-gnu qemu-system-arm wget
+          sudo apt-get install -y nasm build-essential gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-arm wget
 
       - name: Build kernel and libak
         run: |
           make clean
-          make -j$(nproc) PLATFORM=virt all-binaries
+          make -j$(nproc) PLATFORM=virt CROSS_COMPILE=aarch64-linux-gnu- all-binaries
           ls -lh output/platform/virt/bin/kernel.img
           ls -lh output/platform/virt/lib/libak.so
 
