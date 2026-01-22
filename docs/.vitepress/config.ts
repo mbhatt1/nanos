@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
-export default defineConfig({
+export default withMermaid(defineConfig({
   title: 'Authority Nanos',
   titleTemplate: ':title | Authority Nanos',
   description: 'Security kernel for autonomous agents - capability-based access control, audit logging, and resource budgets',
@@ -204,5 +205,11 @@ export default defineConfig({
       pattern: 'https://github.com/nanovms/authority-nanos/edit/master/docs/:path',
       text: 'Edit on GitHub'
     }
+  },
+  mermaid: {
+    theme: 'default'
+  },
+  mermaidPlugin: {
+    class: 'mermaid'
   }
-})
+}))
