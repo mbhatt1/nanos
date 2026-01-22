@@ -71,4 +71,4 @@ This file can be used to reproduce and debug the issue:
 - Related: JSON parsing in Authority Kernel policy handling
 
 ## Status
-**Open** - Fix required in fuzz harness and potentially in core JSON parser.
+**Fixed** - Null checks added to skip_ws and all pointer comparisons in fuzz_json_parser.c (commit 1e968a23).
