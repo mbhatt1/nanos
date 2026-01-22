@@ -73,8 +73,10 @@ static boolean pattern_match_internal(const char *pattern, u64 plen,
     return (pi == plen);
 }
 
-/* Local strlen */
+/* Local strlen with null check */
 static u64 local_strlen(const char *s) {
+    if (!s)
+        return 0;
     u64 len = 0;
     while (s[len] != '\0')
         len++;
@@ -256,11 +258,20 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     memcpy(string, data + 1 + sep, size - 1 - sep);
     string[size - 1 - sep] = '\0';
 
+    /*
+     * Calculate actual string lengths (stops at first null byte).
+     * This is important because the fuzzer may generate embedded nulls,
+     * and we want consistent behavior between the APIs.
+     */
+    size_t actual_pattern_len = strlen(pattern);
+    size_t actual_string_len = strlen(string);
+
     /* Test basic pattern matching */
     boolean result1 = ak_pattern_match(pattern, string);
 
-    /* Test with explicit lengths */
-    boolean result2 = ak_pattern_match_n(pattern, sep, string, size - 1 - sep);
+    /* Test with explicit lengths - use actual lengths to match behavior */
+    boolean result2 = ak_pattern_match_n(pattern, actual_pattern_len,
+                                          string, actual_string_len);
 
     /* Test path matching with ** support */
     boolean result3 = ak_pattern_match_path(pattern, string);
@@ -272,9 +283,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     (void)result3;
     (void)result4;
 
-    /* Results should be consistent (basic match should equal explicit length match) */
+    /*
+     * Results should be consistent when using the same effective lengths.
+     * Note: We only check result1 vs result2 since they use the same lengths now.
+     */
     if (result1 != result2) {
-        /* This would be a bug - different results for same input */
+        /* This indicates a real bug in the pattern matching logic */
         __builtin_trap();
     }
 
