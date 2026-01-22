@@ -70,6 +70,8 @@ static void runtime_memcpy(void *dest, const void *src, u64 len) {
 
 /* Skip whitespace */
 static const u8 *skip_ws(const u8 *p, const u8 *end) {
+    if (!p || !end || p >= end)
+        return p;
     while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
         p++;
     return p;
