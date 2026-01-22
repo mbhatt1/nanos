@@ -19,19 +19,19 @@
 #ifndef AK_STATE_MGMT_H
 #define AK_STATE_MGMT_H
 
-#include "ak_types.h"
 #include "ak_heap.h"
+#include "ak_types.h"
 
 /* ============================================================
  * CONSTANTS
  * ============================================================ */
 
-#define AK_CHECKPOINT_MAGIC         0x414B4350  /* "AKCP" */
-#define AK_MAX_CHECKPOINTS          256
-#define AK_MAX_STATE_KEYS           4096
-#define AK_MAX_KEY_LEN              256
-#define AK_MAX_DESCRIPTION_LEN      128
-#define AK_STATE_HASH_SIZE          32          /* SHA-256 */
+#define AK_CHECKPOINT_MAGIC 0x414B4350 /* "AKCP" */
+#define AK_MAX_CHECKPOINTS 256
+#define AK_MAX_STATE_KEYS 4096
+#define AK_MAX_KEY_LEN 256
+#define AK_MAX_DESCRIPTION_LEN 128
+#define AK_STATE_HASH_SIZE 32 /* SHA-256 */
 
 /* ============================================================
  * STATE CHECKPOINT
@@ -40,21 +40,21 @@
  */
 
 typedef struct ak_checkpoint {
-    u64 checkpoint_id;              /* Unique checkpoint identifier */
-    u64 agent_pid;                  /* Owning agent's PID */
-    u8 run_id[AK_TOKEN_ID_SIZE];    /* Run ID when checkpoint was created */
-    u64 created_ns;                 /* Creation timestamp (nanoseconds) */
-    u64 seq_number;                 /* Monotonic sequence number */
-    buffer state_data;              /* Serialized state */
-    u8 state_hash[AK_STATE_HASH_SIZE]; /* SHA-256 of state */
-    char description[AK_MAX_DESCRIPTION_LEN]; /* Human-readable description */
-    struct ak_checkpoint *prev;     /* Previous checkpoint in version chain */
-    struct ak_checkpoint *next;     /* Next checkpoint in version chain */
+  u64 checkpoint_id;                 /* Unique checkpoint identifier */
+  u64 agent_pid;                     /* Owning agent's PID */
+  u8 run_id[AK_TOKEN_ID_SIZE];       /* Run ID when checkpoint was created */
+  u64 created_ns;                    /* Creation timestamp (nanoseconds) */
+  u64 seq_number;                    /* Monotonic sequence number */
+  buffer state_data;                 /* Serialized state */
+  u8 state_hash[AK_STATE_HASH_SIZE]; /* SHA-256 of state */
+  char description[AK_MAX_DESCRIPTION_LEN]; /* Human-readable description */
+  struct ak_checkpoint *prev; /* Previous checkpoint in version chain */
+  struct ak_checkpoint *next; /* Next checkpoint in version chain */
 
-    /* Metadata for restore */
-    u64 heap_object_count;          /* Number of heap objects at checkpoint */
-    u64 total_state_bytes;          /* Total bytes in state_data */
-    u8 policy_hash[AK_STATE_HASH_SIZE]; /* Policy hash at checkpoint */
+  /* Metadata for restore */
+  u64 heap_object_count;              /* Number of heap objects at checkpoint */
+  u64 total_state_bytes;              /* Total bytes in state_data */
+  u8 policy_hash[AK_STATE_HASH_SIZE]; /* Policy hash at checkpoint */
 } ak_checkpoint_t;
 
 /* ============================================================
@@ -64,15 +64,15 @@ typedef struct ak_checkpoint {
  */
 
 typedef struct ak_state_diff {
-    u64 from_seq;                   /* Source sequence number */
-    u64 to_seq;                     /* Target sequence number */
-    buffer additions;               /* New/changed key-value pairs (JSON) */
-    buffer deletions;               /* Removed keys (JSON array) */
-    u64 bytes_changed;              /* Total bytes modified */
-    u64 keys_added;                 /* Count of new keys */
-    u64 keys_modified;              /* Count of modified keys */
-    u64 keys_deleted;               /* Count of deleted keys */
-    u64 computed_ns;                /* When diff was computed */
+  u64 from_seq;      /* Source sequence number */
+  u64 to_seq;        /* Target sequence number */
+  buffer additions;  /* New/changed key-value pairs (JSON) */
+  buffer deletions;  /* Removed keys (JSON array) */
+  u64 bytes_changed; /* Total bytes modified */
+  u64 keys_added;    /* Count of new keys */
+  u64 keys_modified; /* Count of modified keys */
+  u64 keys_deleted;  /* Count of deleted keys */
+  u64 computed_ns;   /* When diff was computed */
 } ak_state_diff_t;
 
 /* ============================================================
@@ -82,15 +82,15 @@ typedef struct ak_state_diff {
  */
 
 typedef struct ak_state_entry {
-    char key[AK_MAX_KEY_LEN];       /* Key name */
-    buffer value;                   /* Current value (JSON) */
-    u64 version;                    /* Entry version */
-    u64 created_ns;                 /* When entry was created */
-    u64 modified_ns;                /* When entry was last modified */
-    u64 seq_number;                 /* Sequence when last modified */
-    ak_taint_t taint;               /* Taint level of value */
-    boolean deleted;                /* Soft-delete flag */
-    struct ak_state_entry *next;    /* Hash chain */
+  char key[AK_MAX_KEY_LEN];    /* Key name */
+  buffer value;                /* Current value (JSON) */
+  u64 version;                 /* Entry version */
+  u64 created_ns;              /* When entry was created */
+  u64 modified_ns;             /* When entry was last modified */
+  u64 seq_number;              /* Sequence when last modified */
+  ak_taint_t taint;            /* Taint level of value */
+  boolean deleted;             /* Soft-delete flag */
+  struct ak_state_entry *next; /* Hash chain */
 } ak_state_entry_t;
 
 /* ============================================================
@@ -100,16 +100,16 @@ typedef struct ak_state_entry {
  */
 
 typedef struct ak_state_change {
-    u64 seq_number;                 /* Sequence number of change */
-    u64 timestamp_ns;               /* When change occurred */
-    char key[AK_MAX_KEY_LEN];       /* Affected key */
-    enum {
-        AK_CHANGE_SET,              /* Key was set/updated */
-        AK_CHANGE_DELETE            /* Key was deleted */
-    } change_type;
-    buffer old_value;               /* Previous value (NULL for new keys) */
-    buffer new_value;               /* New value (NULL for deletes) */
-    struct ak_state_change *next;   /* Next change in history */
+  u64 seq_number;           /* Sequence number of change */
+  u64 timestamp_ns;         /* When change occurred */
+  char key[AK_MAX_KEY_LEN]; /* Affected key */
+  enum {
+    AK_CHANGE_SET,   /* Key was set/updated */
+    AK_CHANGE_DELETE /* Key was deleted */
+  } change_type;
+  buffer old_value;             /* Previous value (NULL for new keys) */
+  buffer new_value;             /* New value (NULL for deletes) */
+  struct ak_state_change *next; /* Next change in history */
 } ak_state_change_t;
 
 /* ============================================================
@@ -118,11 +118,11 @@ typedef struct ak_state_change {
  */
 
 typedef struct ak_state_version {
-    u64 seq_number;                 /* Current sequence number */
-    u64 timestamp_ns;               /* Timestamp of last change */
-    u64 entry_count;                /* Total state entries */
-    u64 total_bytes;                /* Total state size */
-    u8 state_hash[AK_STATE_HASH_SIZE]; /* Current state hash */
+  u64 seq_number;                    /* Current sequence number */
+  u64 timestamp_ns;                  /* Timestamp of last change */
+  u64 entry_count;                   /* Total state entries */
+  u64 total_bytes;                   /* Total state size */
+  u8 state_hash[AK_STATE_HASH_SIZE]; /* Current state hash */
 } ak_state_version_t;
 
 /* ============================================================
@@ -131,12 +131,12 @@ typedef struct ak_state_version {
  */
 
 typedef struct ak_version_history_entry {
-    u64 seq_number;
-    u64 timestamp_ns;
-    char description[AK_MAX_DESCRIPTION_LEN];
-    u8 state_hash[AK_STATE_HASH_SIZE];
-    u64 bytes_changed;
-    struct ak_version_history_entry *next;
+  u64 seq_number;
+  u64 timestamp_ns;
+  char description[AK_MAX_DESCRIPTION_LEN];
+  u8 state_hash[AK_STATE_HASH_SIZE];
+  u64 bytes_changed;
+  struct ak_version_history_entry *next;
 } ak_version_history_entry_t;
 
 /* ============================================================
@@ -145,21 +145,21 @@ typedef struct ak_version_history_entry {
  */
 
 typedef enum ak_migration_state {
-    AK_MIGRATION_NONE = 0,          /* No migration in progress */
-    AK_MIGRATION_PREPARING = 1,     /* Preparing for migration */
-    AK_MIGRATION_FROZEN = 2,        /* State frozen for transfer */
-    AK_MIGRATION_TRANSFERRING = 3,  /* State being transferred */
-    AK_MIGRATION_COMPLETING = 4,    /* Completing migration */
+  AK_MIGRATION_NONE = 0,         /* No migration in progress */
+  AK_MIGRATION_PREPARING = 1,    /* Preparing for migration */
+  AK_MIGRATION_FROZEN = 2,       /* State frozen for transfer */
+  AK_MIGRATION_TRANSFERRING = 3, /* State being transferred */
+  AK_MIGRATION_COMPLETING = 4,   /* Completing migration */
 } ak_migration_state_t;
 
 typedef struct ak_migration_info {
-    ak_migration_state_t state;
-    u64 started_ns;                 /* When migration started */
-    u64 checkpoint_id;              /* Checkpoint for migration */
-    u8 source_run_id[AK_TOKEN_ID_SIZE];
-    u8 target_run_id[AK_TOKEN_ID_SIZE];
-    u64 bytes_transferred;
-    u64 objects_transferred;
+  ak_migration_state_t state;
+  u64 started_ns;    /* When migration started */
+  u64 checkpoint_id; /* Checkpoint for migration */
+  u8 source_run_id[AK_TOKEN_ID_SIZE];
+  u8 target_run_id[AK_TOKEN_ID_SIZE];
+  u64 bytes_transferred;
+  u64 objects_transferred;
 } ak_migration_info_t;
 
 /* ============================================================
@@ -232,7 +232,7 @@ s64 ak_checkpoint_restore(ak_agent_context_t *ctx, u64 checkpoint_id);
  *   Array of checkpoint pointers, or NULL if none
  */
 ak_checkpoint_t **ak_checkpoint_list(heap h, ak_agent_context_t *ctx,
-                                      u64 *count_out);
+                                     u64 *count_out);
 
 /*
  * Delete a checkpoint.
@@ -303,7 +303,8 @@ ak_checkpoint_t *ak_checkpoint_get(u64 checkpoint_id);
  * Returns:
  *   0 on success, negative errno on failure
  */
-s64 ak_state_get_version(ak_agent_context_t *ctx, ak_state_version_t *version_out);
+s64 ak_state_get_version(ak_agent_context_t *ctx,
+                         ak_state_version_t *version_out);
 
 /*
  * Compute diff between two state versions.
@@ -320,7 +321,7 @@ s64 ak_state_get_version(ak_agent_context_t *ctx, ak_state_version_t *version_ou
  *   State diff structure, or NULL on failure
  */
 ak_state_diff_t *ak_state_diff(heap h, ak_agent_context_t *ctx,
-                                u64 from_version, u64 to_version);
+                               u64 from_version, u64 to_version);
 
 /*
  * Free a state diff structure.
@@ -361,7 +362,7 @@ s64 ak_state_rollback(ak_agent_context_t *ctx, u64 version);
  *   Array of history entries, or NULL if none
  */
 ak_version_history_entry_t **ak_state_history(heap h, ak_agent_context_t *ctx,
-                                               u64 limit, u64 *count_out);
+                                              u64 limit, u64 *count_out);
 
 /*
  * Free version history array.
@@ -439,7 +440,7 @@ u64 ak_state_delete(ak_agent_context_t *ctx, const char *key);
  *   Array of change records, or NULL if none
  */
 ak_state_change_t **ak_state_get_changes_since(heap h, ak_agent_context_t *ctx,
-                                                u64 seq, u64 *count_out);
+                                               u64 seq, u64 *count_out);
 
 /*
  * Free state changes array.
@@ -518,7 +519,7 @@ s64 ak_state_complete_migration(ak_agent_context_t *ctx, boolean success);
  *   0 on success, negative errno on failure
  */
 s64 ak_state_get_migration_info(ak_agent_context_t *ctx,
-                                 ak_migration_info_t *info_out);
+                                ak_migration_info_t *info_out);
 
 /*
  * Check if state is frozen for migration.
@@ -568,19 +569,19 @@ s64 ak_state_restore_heap_objects(ak_agent_context_t *ctx, buffer buf);
  * ============================================================ */
 
 typedef struct ak_state_mgmt_stats {
-    u64 checkpoints_created;
-    u64 checkpoints_restored;
-    u64 checkpoints_deleted;
-    u64 state_sets;
-    u64 state_gets;
-    u64 state_deletes;
-    u64 rollbacks;
-    u64 diffs_computed;
-    u64 migrations_started;
-    u64 migrations_completed;
-    u64 migrations_failed;
-    u64 total_state_bytes;
-    u64 total_checkpoint_bytes;
+  u64 checkpoints_created;
+  u64 checkpoints_restored;
+  u64 checkpoints_deleted;
+  u64 state_sets;
+  u64 state_gets;
+  u64 state_deletes;
+  u64 rollbacks;
+  u64 diffs_computed;
+  u64 migrations_started;
+  u64 migrations_completed;
+  u64 migrations_failed;
+  u64 total_state_bytes;
+  u64 total_checkpoint_bytes;
 } ak_state_mgmt_stats_t;
 
 /*
@@ -595,15 +596,15 @@ void ak_state_mgmt_get_stats(ak_state_mgmt_stats_t *stats);
  * ERROR CODES
  * ============================================================ */
 
-#define AK_E_STATE_MGMT_NOT_INIT    (-4800)
-#define AK_E_CHECKPOINT_NOT_FOUND   (-4801)
-#define AK_E_CHECKPOINT_CORRUPT     (-4802)
-#define AK_E_STATE_FROZEN           (-4803)
-#define AK_E_VERSION_NOT_FOUND      (-4804)
-#define AK_E_KEY_TOO_LONG           (-4805)
-#define AK_E_TOO_MANY_CHECKPOINTS   (-4806)
-#define AK_E_TOO_MANY_STATE_KEYS    (-4807)
-#define AK_E_MIGRATION_IN_PROGRESS  (-4808)
-#define AK_E_NO_MIGRATION           (-4809)
+#define AK_E_STATE_MGMT_NOT_INIT (-4800)
+#define AK_E_CHECKPOINT_NOT_FOUND (-4801)
+#define AK_E_CHECKPOINT_CORRUPT (-4802)
+#define AK_E_STATE_FROZEN (-4803)
+#define AK_E_VERSION_NOT_FOUND (-4804)
+#define AK_E_KEY_TOO_LONG (-4805)
+#define AK_E_TOO_MANY_CHECKPOINTS (-4806)
+#define AK_E_TOO_MANY_STATE_KEYS (-4807)
+#define AK_E_MIGRATION_IN_PROGRESS (-4808)
+#define AK_E_NO_MIGRATION (-4809)
 
 #endif /* AK_STATE_MGMT_H */

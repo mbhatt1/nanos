@@ -11,7 +11,8 @@
 #ifndef AK_COMPAT_H
 #define AK_COMPAT_H
 
-/* Include ak_types.h for AK-specific types - but guard against circular includes */
+/* Include ak_types.h for AK-specific types - but guard against circular
+ * includes */
 #ifndef AK_TYPES_H
 /* ak_types.h will include this file, so we need forward declarations here */
 #include <runtime.h>
@@ -23,17 +24,17 @@
 
 /* Clock ID for monotonic time - define if not already available */
 #ifndef CLOCK_ID_MONOTONIC
-#define CLOCK_ID_MONOTONIC      1
+#define CLOCK_ID_MONOTONIC 1
 #endif
 
 /* Convenience macro for getting current monotonic time in milliseconds */
 #ifndef ak_now_ms
-#define ak_now_ms()             msec_from_timestamp(now(CLOCK_ID_MONOTONIC))
+#define ak_now_ms() msec_from_timestamp(now(CLOCK_ID_MONOTONIC))
 #endif
 
 /* Get current timestamp (fixed-point format) */
 #ifndef ak_now
-#define ak_now()                now(CLOCK_ID_MONOTONIC)
+#define ak_now() now(CLOCK_ID_MONOTONIC)
 #endif
 
 /* ============================================================
@@ -41,15 +42,15 @@
  * ============================================================ */
 
 #ifndef MILLION
-#define MILLION                 (1000000ull)
+#define MILLION (1000000ull)
 #endif
 
 #ifndef BILLION
-#define BILLION                 (1000000000ull)
+#define BILLION (1000000000ull)
 #endif
 
 #ifndef THOUSAND
-#define THOUSAND                (1000ull)
+#define THOUSAND (1000ull)
 #endif
 
 /* ============================================================
@@ -79,7 +80,7 @@
 
 /* Check for valid address */
 #ifndef ak_is_valid_address
-#define ak_is_valid_address(p)   ((p) != INVALID_ADDRESS && (p) != 0)
+#define ak_is_valid_address(p) ((p) != INVALID_ADDRESS && (p) != 0)
 #endif
 
 /* ============================================================
@@ -88,53 +89,55 @@
  * AK uses const char * strings, Nanos uses sstring.
  */
 
-static inline u64 runtime_strlen(const char *s)
-{
-    if (!s) return 0;
-    u64 len = 0;
-    while (s[len]) len++;
-    return len;
+static inline u64 runtime_strlen(const char *s) {
+  if (!s)
+    return 0;
+  u64 len = 0;
+  while (s[len])
+    len++;
+  return len;
 }
 
-static inline int runtime_strncmp(const char *s1, const char *s2, u64 n)
-{
-    if (!s1 || !s2) return s1 ? 1 : (s2 ? -1 : 0);
-    for (u64 i = 0; i < n; i++) {
-        if (s1[i] != s2[i])
-            return (unsigned char)s1[i] - (unsigned char)s2[i];
-        if (s1[i] == '\0')
-            return 0;
-    }
-    return 0;
+static inline int runtime_strncmp(const char *s1, const char *s2, u64 n) {
+  if (!s1 || !s2)
+    return s1 ? 1 : (s2 ? -1 : 0);
+  for (u64 i = 0; i < n; i++) {
+    if (s1[i] != s2[i])
+      return (unsigned char)s1[i] - (unsigned char)s2[i];
+    if (s1[i] == '\0')
+      return 0;
+  }
+  return 0;
 }
 
 /* String comparison using const char* - wraps runtime_strcmp */
-static inline int ak_strcmp(const char *s1, const char *s2)
-{
-    if (!s1 || !s2) return s1 ? 1 : (s2 ? -1 : 0);
-    while (*s1 && (*s1 == *s2)) {
-        s1++;
-        s2++;
-    }
-    return (unsigned char)*s1 - (unsigned char)*s2;
+static inline int ak_strcmp(const char *s1, const char *s2) {
+  if (!s1 || !s2)
+    return s1 ? 1 : (s2 ? -1 : 0);
+  while (*s1 && (*s1 == *s2)) {
+    s1++;
+    s2++;
+  }
+  return (unsigned char)*s1 - (unsigned char)*s2;
 }
 
 /* String copy with length limit */
-static inline char *runtime_strncpy(char *dest, const char *src, u64 n)
-{
-    if (!dest) return 0;
-    if (!src) {
-        if (n > 0) dest[0] = '\0';
-        return dest;
-    }
-    u64 i;
-    for (i = 0; i < n && src[i] != '\0'; i++) {
-        dest[i] = src[i];
-    }
-    for (; i < n; i++) {
-        dest[i] = '\0';
-    }
+static inline char *runtime_strncpy(char *dest, const char *src, u64 n) {
+  if (!dest)
+    return 0;
+  if (!src) {
+    if (n > 0)
+      dest[0] = '\0';
     return dest;
+  }
+  u64 i;
+  for (i = 0; i < n && src[i] != '\0'; i++) {
+    dest[i] = src[i];
+  }
+  for (; i < n; i++) {
+    dest[i] = '\0';
+  }
+  return dest;
 }
 
 /* ============================================================
@@ -151,10 +154,9 @@ static inline char *runtime_strncpy(char *dest, const char *src, u64 n)
 
 /* Set buffer end position explicitly */
 #ifndef buffer_set_end
-static inline void buffer_set_end(buffer b, bytes end)
-{
-    assert(end <= b->length);
-    b->end = end;
+static inline void buffer_set_end(buffer b, bytes end) {
+  assert(end <= b->length);
+  b->end = end;
 }
 #endif
 
@@ -179,10 +181,7 @@ static inline void buffer_set_end(buffer b, bytes end)
 
 /* Key from pointer - treats pointer address as key */
 #ifndef key_from_pointer
-static inline key key_from_pointer(void *p)
-{
-    return (key)u64_from_pointer(p);
-}
+static inline key key_from_pointer(void *p) { return (key)u64_from_pointer(p); }
 #endif
 
 /* ============================================================
@@ -206,22 +205,22 @@ static inline key key_from_pointer(void *p)
 
 /* Nanos already provides these, but ensure they're available */
 #ifndef allocate_zero
-static inline void *allocate_zero(heap h, bytes len)
-{
-    void *p = allocate(h, len);
-    if (p && p != INVALID_ADDRESS)
-        runtime_memset(p, 0, len);
-    return p;
+static inline void *allocate_zero(heap h, bytes len) {
+  void *p = allocate(h, len);
+  if (p && p != INVALID_ADDRESS)
+    runtime_memset(p, 0, len);
+  return p;
 }
 #endif
 
 /* Typed allocation helper */
-#define ak_alloc(h, type)       ((type *)allocate(h, sizeof(type)))
-#define ak_alloc_zero(h, type)  ((type *)allocate_zero(h, sizeof(type)))
+#define ak_alloc(h, type) ((type *)allocate(h, sizeof(type)))
+#define ak_alloc_zero(h, type) ((type *)allocate_zero(h, sizeof(type)))
 
 /* Array allocation helper */
-#define ak_alloc_array(h, type, n)      ((type *)allocate(h, sizeof(type) * (n)))
-#define ak_alloc_array_zero(h, type, n) ((type *)allocate_zero(h, sizeof(type) * (n)))
+#define ak_alloc_array(h, type, n) ((type *)allocate(h, sizeof(type) * (n)))
+#define ak_alloc_array_zero(h, type, n)                                        \
+  ((type *)allocate_zero(h, sizeof(type) * (n)))
 
 /* ============================================================
  * ERROR CODE COMPATIBILITY
@@ -230,63 +229,63 @@ static inline void *allocate_zero(heap h, bytes len)
  */
 
 #ifndef EINVAL
-#define EINVAL      22
+#define EINVAL 22
 #endif
 
 #ifndef ENOENT
-#define ENOENT      2
+#define ENOENT 2
 #endif
 
 #ifndef ENOMEM
-#define ENOMEM      12
+#define ENOMEM 12
 #endif
 
 #ifndef EPERM
-#define EPERM       1
+#define EPERM 1
 #endif
 
 #ifndef EFAULT
-#define EFAULT      14
+#define EFAULT 14
 #endif
 
 #ifndef ENOSYS
-#define ENOSYS      38
+#define ENOSYS 38
 #endif
 
 #ifndef ESRCH
-#define ESRCH       3
+#define ESRCH 3
 #endif
 
 #ifndef EINTR
-#define EINTR       4
+#define EINTR 4
 #endif
 
 #ifndef EAGAIN
-#define EAGAIN      11
+#define EAGAIN 11
 #endif
 
 #ifndef EBUSY
-#define EBUSY       16
+#define EBUSY 16
 #endif
 
 #ifndef EAGAIN
-#define EAGAIN      11
+#define EAGAIN 11
 #endif
 
 #ifndef ETIMEDOUT
-#define ETIMEDOUT   110
+#define ETIMEDOUT 110
 #endif
 
 #ifndef EEXIST
-#define EEXIST      17
+#define EEXIST 17
 #endif
 
 #ifndef ERANGE
-#define ERANGE      34
+#define ERANGE 34
 #endif
 
 #ifndef EACCES
-#define EACCES      13
+#define EACCES 13
 #endif
 
 #ifndef ECONNREFUSED
@@ -298,11 +297,11 @@ static inline void *allocate_zero(heap h, bytes len)
 #endif
 
 #ifndef ENOSPC
-#define ENOSPC      28
+#define ENOSPC 28
 #endif
 
 #ifndef EIO
-#define EIO         5
+#define EIO 5
 #endif
 
 #ifndef EAFNOSUPPORT
@@ -310,11 +309,11 @@ static inline void *allocate_zero(heap h, bytes len)
 #endif
 
 #ifndef EBADF
-#define EBADF       9
+#define EBADF 9
 #endif
 
 #ifndef ENOTDIR
-#define ENOTDIR     20
+#define ENOTDIR 20
 #endif
 
 /* ============================================================
@@ -342,25 +341,23 @@ typedef s64 sysreturn;
 
 /* Convenience wrappers with void* for memset */
 #ifndef ak_memset
-static inline void ak_memset(void *dest, u8 val, bytes len)
-{
-    runtime_memset((u8 *)dest, val, len);
+static inline void ak_memset(void *dest, u8 val, bytes len) {
+  runtime_memset((u8 *)dest, val, len);
 }
 #endif
 
 #ifndef ak_memzero
-static inline void ak_memzero(void *dest, bytes len)
-{
-    runtime_memset((u8 *)dest, 0, len);
+static inline void ak_memzero(void *dest, bytes len) {
+  runtime_memset((u8 *)dest, 0, len);
 }
 #endif
 
 #ifndef ak_memcpy
-#define ak_memcpy(d, s, n)      runtime_memcpy((d), (s), (n))
+#define ak_memcpy(d, s, n) runtime_memcpy((d), (s), (n))
 #endif
 
 #ifndef ak_memcmp
-#define ak_memcmp(a, b, n)      runtime_memcmp((a), (b), (n))
+#define ak_memcmp(a, b, n) runtime_memcmp((a), (b), (n))
 #endif
 
 /* ============================================================
@@ -379,19 +376,17 @@ static inline void ak_memzero(void *dest, bytes len)
 
 /* Check if buffer is valid and non-empty */
 #ifndef ak_buffer_valid
-static inline boolean ak_buffer_valid(buffer b)
-{
-    return b && b != INVALID_ADDRESS && buffer_length(b) > 0;
+static inline boolean ak_buffer_valid(buffer b) {
+  return b && b != INVALID_ADDRESS && buffer_length(b) > 0;
 }
 #endif
 
 /* Safe buffer byte access with bounds checking */
 #ifndef ak_buffer_byte
-static inline int ak_buffer_byte(buffer b, bytes i)
-{
-    if (!b || i >= buffer_length(b))
-        return -1;
-    return byte(b, i);
+static inline int ak_buffer_byte(buffer b, bytes i) {
+  if (!b || i >= buffer_length(b))
+    return -1;
+  return byte(b, i);
 }
 #endif
 
@@ -400,16 +395,16 @@ static inline int ak_buffer_byte(buffer b, bytes i)
  * ============================================================ */
 
 #if AK_DEBUG
-#define ak_debug(fmt, ...)      rprintf("[AK DEBUG] " fmt "\n", ##__VA_ARGS__)
-#define ak_trace(fmt, ...)      rprintf("[AK TRACE %s:%d] " fmt "\n", \
-                                        __func__, __LINE__, ##__VA_ARGS__)
+#define ak_debug(fmt, ...) rprintf("[AK DEBUG] " fmt "\n", ##__VA_ARGS__)
+#define ak_trace(fmt, ...)                                                     \
+  rprintf("[AK TRACE %s:%d] " fmt "\n", __func__, __LINE__, ##__VA_ARGS__)
 #else
-#define ak_debug(fmt, ...)      ((void)0)
-#define ak_trace(fmt, ...)      ((void)0)
+#define ak_debug(fmt, ...) ((void)0)
+#define ak_trace(fmt, ...) ((void)0)
 #endif
 
-#define ak_warn(fmt, ...)       rprintf("[AK WARN] " fmt "\n", ##__VA_ARGS__)
-#define ak_error(fmt, ...)      rprintf("[AK ERROR] " fmt "\n", ##__VA_ARGS__)
+#define ak_warn(fmt, ...) rprintf("[AK WARN] " fmt "\n", ##__VA_ARGS__)
+#define ak_error(fmt, ...) rprintf("[AK ERROR] " fmt "\n", ##__VA_ARGS__)
 
 /* ============================================================
  * ASSERTION HELPERS
@@ -417,22 +412,24 @@ static inline int ak_buffer_byte(buffer b, bytes i)
 
 /* AK-specific assertion with error code return */
 #ifndef ak_assert
-#define ak_assert(cond, err_code) do { \
-    if (!(cond)) { \
-        ak_error("assertion failed: %s at %s:%d", #cond, __func__, __LINE__); \
-        return (err_code); \
-    } \
-} while(0)
+#define ak_assert(cond, err_code)                                              \
+  do {                                                                         \
+    if (!(cond)) {                                                             \
+      ak_error("assertion failed: %s at %s:%d", #cond, __func__, __LINE__);    \
+      return (err_code);                                                       \
+    }                                                                          \
+  } while (0)
 #endif
 
 /* AK assertion that returns NULL on failure */
 #ifndef ak_assert_null
-#define ak_assert_null(cond) do { \
-    if (!(cond)) { \
-        ak_error("assertion failed: %s at %s:%d", #cond, __func__, __LINE__); \
-        return NULL; \
-    } \
-} while(0)
+#define ak_assert_null(cond)                                                   \
+  do {                                                                         \
+    if (!(cond)) {                                                             \
+      ak_error("assertion failed: %s at %s:%d", #cond, __func__, __LINE__);    \
+      return NULL;                                                             \
+    }                                                                          \
+  } while (0)
 #endif
 
 /* ============================================================
@@ -448,7 +445,7 @@ static inline int ak_buffer_byte(buffer b, bytes i)
 #endif
 
 #ifndef CLAMP
-#define CLAMP(val, lo, hi)      MIN(MAX((val), (lo)), (hi))
+#define CLAMP(val, lo, hi) MIN(MAX((val), (lo)), (hi))
 #endif
 
 /* ============================================================
@@ -456,15 +453,15 @@ static inline int ak_buffer_byte(buffer b, bytes i)
  * ============================================================ */
 
 #ifndef BIT
-#define BIT(n)                  (1ULL << (n))
+#define BIT(n) (1ULL << (n))
 #endif
 
 #ifndef BITS_PER_BYTE
-#define BITS_PER_BYTE           8
+#define BITS_PER_BYTE 8
 #endif
 
 #ifndef ARRAY_SIZE
-#define ARRAY_SIZE(arr)         (sizeof(arr) / sizeof((arr)[0]))
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #endif
 
 /* ============================================================
@@ -475,8 +472,7 @@ static inline int ak_buffer_byte(buffer b, bytes i)
  */
 
 #ifndef container_of
-#define container_of(ptr, type, member) \
-    struct_from_field(ptr, type *, member)
+#define container_of(ptr, type, member) struct_from_field(ptr, type *, member)
 #endif
 
 /* ============================================================
@@ -484,11 +480,11 @@ static inline int ak_buffer_byte(buffer b, bytes i)
  * ============================================================ */
 
 #ifndef likely
-#define likely(x)               __builtin_expect(!!(x), 1)
+#define likely(x) __builtin_expect(!!(x), 1)
 #endif
 
 #ifndef unlikely
-#define unlikely(x)             __builtin_expect(!!(x), 0)
+#define unlikely(x) __builtin_expect(!!(x), 0)
 #endif
 
 /* ============================================================
@@ -499,47 +495,44 @@ static inline int ak_buffer_byte(buffer b, bytes i)
 
 /* Check if multiplication would overflow (for unsigned types) */
 #ifndef AK_MUL_WOULD_OVERFLOW
-#define AK_MUL_WOULD_OVERFLOW(a, b) \
-    ((b) != 0 && (a) > UINT64_MAX / (b))
+#define AK_MUL_WOULD_OVERFLOW(a, b) ((b) != 0 && (a) > UINT64_MAX / (b))
 #endif
 
 /* Check if addition would overflow (for unsigned types) */
 #ifndef AK_ADD_WOULD_OVERFLOW
-#define AK_ADD_WOULD_OVERFLOW(a, b) \
-    ((a) > UINT64_MAX - (b))
+#define AK_ADD_WOULD_OVERFLOW(a, b) ((a) > UINT64_MAX - (b))
 #endif
 
 /* Safe multiplication - returns 0 on overflow, 1 on success */
 #ifndef AK_SAFE_MUL
-#define AK_SAFE_MUL(a, b, result) \
-    (AK_MUL_WOULD_OVERFLOW((a), (b)) ? 0 : ((result) = (a) * (b), 1))
+#define AK_SAFE_MUL(a, b, result)                                              \
+  (AK_MUL_WOULD_OVERFLOW((a), (b)) ? 0 : ((result) = (a) * (b), 1))
 #endif
 
 /* Safe addition - returns 0 on overflow, 1 on success */
 #ifndef AK_SAFE_ADD
-#define AK_SAFE_ADD(a, b, result) \
-    (AK_ADD_WOULD_OVERFLOW((a), (b)) ? 0 : ((result) = (a) + (b), 1))
+#define AK_SAFE_ADD(a, b, result)                                              \
+  (AK_ADD_WOULD_OVERFLOW((a), (b)) ? 0 : ((result) = (a) + (b), 1))
 #endif
 
 /* Safe multiplication check for allocation sizes */
 #ifndef ak_safe_alloc_size
-static inline boolean ak_safe_alloc_size(u64 count, u64 elem_size, u64 *result)
-{
-    if (elem_size != 0 && count > UINT64_MAX / elem_size)
-        return false;
-    *result = count * elem_size;
-    return true;
+static inline boolean ak_safe_alloc_size(u64 count, u64 elem_size,
+                                         u64 *result) {
+  if (elem_size != 0 && count > UINT64_MAX / elem_size)
+    return false;
+  *result = count * elem_size;
+  return true;
 }
 #endif
 
 /* Safe add for buffer sizes */
 #ifndef ak_safe_add_size
-static inline boolean ak_safe_add_size(u64 a, u64 b, u64 *result)
-{
-    if (a > UINT64_MAX - b)
-        return false;
-    *result = a + b;
-    return true;
+static inline boolean ak_safe_add_size(u64 a, u64 b, u64 *result) {
+  if (a > UINT64_MAX - b)
+    return false;
+  *result = a + b;
+  return true;
 }
 #endif
 

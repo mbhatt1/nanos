@@ -64,81 +64,81 @@
  */
 
 /* Policy version */
-#define AK_POLICY_VERSION       "1.0"
+#define AK_POLICY_VERSION "1.0"
 
 /* Budget types */
 typedef struct ak_budget_limits {
-    u64 tokens;                     /* Max LLM tokens */
-    u64 calls;                      /* Max tool/API calls */
-    u64 inference_ms;               /* Max inference time */
-    u64 file_bytes;                 /* Max file I/O bytes */
-    u64 network_bytes;              /* Max network I/O */
-    u64 spawn_count;                /* Max child agents */
-    u64 heap_objects;               /* Max heap objects */
-    u64 heap_bytes;                 /* Max heap size */
+  u64 tokens;        /* Max LLM tokens */
+  u64 calls;         /* Max tool/API calls */
+  u64 inference_ms;  /* Max inference time */
+  u64 file_bytes;    /* Max file I/O bytes */
+  u64 network_bytes; /* Max network I/O */
+  u64 spawn_count;   /* Max child agents */
+  u64 heap_objects;  /* Max heap objects */
+  u64 heap_bytes;    /* Max heap size */
 } ak_budget_limits_t;
 
 /* Tool rule */
 typedef struct ak_tool_rule {
-    char *name;                     /* Tool name/pattern */
-    boolean allow;                  /* true = allow, false = deny */
-    struct ak_tool_rule *next;
+  char *name;    /* Tool name/pattern */
+  boolean allow; /* true = allow, false = deny */
+  struct ak_tool_rule *next;
 } ak_tool_rule_t;
 
 /* Domain rule */
 typedef struct ak_domain_rule {
-    char *pattern;                  /* Domain pattern */
-    boolean allow;
-    struct ak_domain_rule *next;
+  char *pattern; /* Domain pattern */
+  boolean allow;
+  struct ak_domain_rule *next;
 } ak_domain_rule_t;
 
 /* Taint source/sink/sanitizer */
 typedef struct ak_taint_rule {
-    char *name;
-    enum {
-        AK_TAINT_RULE_SOURCE,
-        AK_TAINT_RULE_SINK,
-        AK_TAINT_RULE_SANITIZER
-    } type;
-    struct ak_taint_rule *next;
+  char *name;
+  enum {
+    AK_TAINT_RULE_SOURCE,
+    AK_TAINT_RULE_SINK,
+    AK_TAINT_RULE_SANITIZER
+  } type;
+  struct ak_taint_rule *next;
 } ak_taint_rule_t;
 
 /* Policy version record (for versioning/rollback) */
 typedef struct ak_policy_version {
-    u32 version_number;             /* Monotonic version number */
-    u64 activated_ms;               /* When this version became active */
-    u8 hash[AK_HASH_SIZE];          /* Hash of policy content */
-    buffer rules_json;              /* Serialized rules for this version */
-    struct ak_policy_version *prev; /* Previous version (for rollback) */
+  u32 version_number;             /* Monotonic version number */
+  u64 activated_ms;               /* When this version became active */
+  u8 hash[AK_HASH_SIZE];          /* Hash of policy content */
+  buffer rules_json;              /* Serialized rules for this version */
+  struct ak_policy_version *prev; /* Previous version (for rollback) */
 } ak_policy_version_t;
 
 /* Complete policy */
 typedef struct ak_policy {
-    /* Heap for allocations */
-    heap h;
+  /* Heap for allocations */
+  heap h;
 
-    /* Metadata */
-    char version[16];
-    u8 signature[AK_SIG_SIZE];
-    u8 policy_hash[AK_HASH_SIZE];   /* SHA-256 of policy content */
-    u64 created_ms;
-    u64 expires_ms;
+  /* Metadata */
+  char version[16];
+  u8 signature[AK_SIG_SIZE];
+  u8 policy_hash[AK_HASH_SIZE]; /* SHA-256 of policy content */
+  u64 created_ms;
+  u64 expires_ms;
 
-    /* Budget limits */
-    ak_budget_limits_t budgets;
+  /* Budget limits */
+  ak_budget_limits_t budgets;
 
-    /* Rules (linked lists) */
-    ak_tool_rule_t *tool_rules;
-    ak_domain_rule_t *domain_rules;
-    ak_taint_rule_t *taint_rules;
+  /* Rules (linked lists) */
+  ak_tool_rule_t *tool_rules;
+  ak_domain_rule_t *domain_rules;
+  ak_taint_rule_t *taint_rules;
 
-    /* Default behaviors */
-    boolean default_tool_allow;     /* Default if no rule matches */
-    boolean default_domain_allow;
+  /* Default behaviors */
+  boolean default_tool_allow; /* Default if no rule matches */
+  boolean default_domain_allow;
 
-    /* Versioning support */
-    ak_policy_version_t *current_version;
-    u32 version_count;              /* Number of versions in history */
+  /* Versioning support */
+  ak_policy_version_t *current_version;
+  u32 version_count; /* Number of versions in history */
 
 } ak_policy_t;
 
@@ -227,11 +227,11 @@ boolean ak_policy_expired(ak_policy_t *policy);
 
 /* Policy result codes for versioning */
 typedef enum ak_policy_result {
-    AK_POLICY_OK = 0,
-    AK_POLICY_ERROR_VERSION,        /* Version number invalid */
-    AK_POLICY_ERROR_PARSE,          /* Failed to parse rules */
-    AK_POLICY_ERROR_NO_PREVIOUS,    /* No previous version for rollback */
-    AK_POLICY_ERROR_INCOMPATIBLE,   /* Versions incompatible */
+  AK_POLICY_OK = 0,
+  AK_POLICY_ERROR_VERSION,      /* Version number invalid */
+  AK_POLICY_ERROR_PARSE,        /* Failed to parse rules */
+  AK_POLICY_ERROR_NO_PREVIOUS,  /* No previous version for rollback */
+  AK_POLICY_ERROR_INCOMPATIBLE, /* Versions incompatible */
 } ak_policy_result_t;
 
 /*
@@ -245,11 +245,8 @@ typedef enum ak_policy_result {
  * @param new_version   New version number (must be > current)
  * @return              AK_POLICY_OK on success, error code on failure
  */
-ak_policy_result_t ak_policy_upgrade(
-    ak_policy_t *policy,
-    buffer new_rules,
-    u32 new_version
-);
+ak_policy_result_t ak_policy_upgrade(ak_policy_t *policy, buffer new_rules,
+                                     u32 new_version);
 
 /*
  * Rollback to previous version.
@@ -288,25 +285,25 @@ u32 ak_policy_version_count(ak_policy_t *policy);
 
 /* Runtime budget tracker (typedef in ak_types.h) */
 struct ak_budget_tracker {
-    u8 run_id[AK_TOKEN_ID_SIZE];
+  u8 run_id[AK_TOKEN_ID_SIZE];
 
-    /* Committed costs */
-    u64 tokens_used;
-    u64 calls_made;
-    u64 inference_ms_used;
-    u64 file_bytes_used;
-    u64 network_bytes_used;
-    u64 spawns_used;
-    u64 heap_objects_used;
-    u64 heap_bytes_used;
+  /* Committed costs */
+  u64 tokens_used;
+  u64 calls_made;
+  u64 inference_ms_used;
+  u64 file_bytes_used;
+  u64 network_bytes_used;
+  u64 spawns_used;
+  u64 heap_objects_used;
+  u64 heap_bytes_used;
 
-    /* In-flight costs (reserved but not committed) */
-    u64 tokens_reserved;
-    u64 calls_reserved;
-    u64 inference_ms_reserved;
+  /* In-flight costs (reserved but not committed) */
+  u64 tokens_reserved;
+  u64 calls_reserved;
+  u64 inference_ms_reserved;
 
-    /* Limits from policy */
-    ak_budget_limits_t limits;
+  /* Limits from policy */
+  ak_budget_limits_t limits;
 };
 
 /*
@@ -326,26 +323,30 @@ void ak_budget_destroy(heap h, ak_budget_tracker_t *tracker);
  *   0                   - Success, budget reserved
  *   AK_E_BUDGET_EXCEEDED - Would exceed limit
  */
-s64 ak_budget_reserve(ak_budget_tracker_t *tracker, ak_resource_type_t type, u64 amount);
+s64 ak_budget_reserve(ak_budget_tracker_t *tracker, ak_resource_type_t type,
+                      u64 amount);
 
 /*
  * Commit reserved budget (after successful operation).
  *
  * Moves from reserved to committed.
  */
-void ak_budget_commit(ak_budget_tracker_t *tracker, ak_resource_type_t type, u64 amount);
+void ak_budget_commit(ak_budget_tracker_t *tracker, ak_resource_type_t type,
+                      u64 amount);
 
 /*
  * Release reserved budget (operation failed/cancelled).
  *
  * Returns reserved amount to available.
  */
-void ak_budget_release(ak_budget_tracker_t *tracker, ak_resource_type_t type, u64 amount);
+void ak_budget_release(ak_budget_tracker_t *tracker, ak_resource_type_t type,
+                       u64 amount);
 
 /*
  * Check if budget allows operation (without reserving).
  */
-boolean ak_budget_check(ak_budget_tracker_t *tracker, ak_resource_type_t type, u64 amount);
+boolean ak_budget_check(ak_budget_tracker_t *tracker, ak_resource_type_t type,
+                        u64 amount);
 
 /*
  * Get remaining budget for resource type.
@@ -356,13 +357,14 @@ u64 ak_budget_remaining(ak_budget_tracker_t *tracker, ak_resource_type_t type);
  * Get budget statistics.
  */
 typedef struct ak_budget_stats {
-    ak_budget_limits_t limits;
-    ak_budget_limits_t used;
-    ak_budget_limits_t reserved;
-    ak_budget_limits_t remaining;
+  ak_budget_limits_t limits;
+  ak_budget_limits_t used;
+  ak_budget_limits_t reserved;
+  ak_budget_limits_t remaining;
 } ak_budget_stats_t;
 
-void ak_budget_get_stats(ak_budget_tracker_t *tracker, ak_budget_stats_t *stats);
+void ak_budget_get_stats(ak_budget_tracker_t *tracker,
+                         ak_budget_stats_t *stats);
 
 /* ============================================================
  * TOOL AUTHORIZATION
@@ -383,7 +385,8 @@ boolean ak_policy_check_tool(ak_policy_t *policy, const char *tool_name);
 /*
  * Get list of allowed tools (for CALL syscall).
  */
-const char **ak_policy_list_allowed_tools(heap h, ak_policy_t *policy, u64 *count_out);
+const char **ak_policy_list_allowed_tools(heap h, ak_policy_t *policy,
+                                          u64 *count_out);
 
 /* ============================================================
  * DOMAIN AUTHORIZATION
@@ -429,12 +432,8 @@ boolean ak_policy_is_sanitizer(ak_policy_t *policy, const char *name);
  *
  * Returns: true if flow allowed, false if blocked.
  */
-boolean ak_policy_check_flow(
-    ak_policy_t *policy,
-    ak_taint_t source_taint,
-    const char *sink_name,
-    boolean sanitized
-);
+boolean ak_policy_check_flow(ak_policy_t *policy, ak_taint_t source_taint,
+                             const char *sink_name, boolean sanitized);
 
 /* ============================================================
  * REQUEST EVALUATION
@@ -455,11 +454,8 @@ boolean ak_policy_check_flow(
  *   AK_E_BUDGET_EXCEEDED - Would exceed budget
  *   AK_E_TAINT          - Taint flow violation
  */
-s64 ak_policy_evaluate(
-    ak_policy_t *policy,
-    ak_budget_tracker_t *budget,
-    ak_request_t *req
-);
+s64 ak_policy_evaluate(ak_policy_t *policy, ak_budget_tracker_t *budget,
+                       ak_request_t *req);
 
 /* ============================================================
  * POLICY SERIALIZATION

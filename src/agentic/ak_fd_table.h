@@ -23,19 +23,19 @@
 #ifndef AK_FD_TABLE_H
 #define AK_FD_TABLE_H
 
-#include "ak_types.h"
 #include "ak_compat.h"
+#include "ak_types.h"
 
 /* ============================================================
  * CONSTANTS
  * ============================================================ */
 
 /* Maximum number of tracked file descriptors */
-#define AK_FD_TABLE_SIZE        1024
+#define AK_FD_TABLE_SIZE 1024
 
 /* Special file descriptor values */
 #ifndef AT_FDCWD
-#define AT_FDCWD                (-100)  /* Use current working directory */
+#define AT_FDCWD (-100) /* Use current working directory */
 #endif
 
 /* ============================================================
@@ -49,10 +49,10 @@
  * canonical path at the time of open.
  */
 typedef struct ak_fd_entry {
-    int fd;                         /* File descriptor number */
-    char path[AK_MAX_TARGET];       /* Canonical path */
-    boolean is_directory;           /* True if fd refers to a directory */
-    boolean valid;                  /* True if this entry is in use */
+  int fd;                   /* File descriptor number */
+  char path[AK_MAX_TARGET]; /* Canonical path */
+  boolean is_directory;     /* True if fd refers to a directory */
+  boolean valid;            /* True if this entry is in use */
 } ak_fd_entry_t;
 
 /* ============================================================
@@ -225,15 +225,15 @@ int ak_fd_table_get_cwd(char *out, u64 max_len);
  * FD table statistics.
  */
 typedef struct ak_fd_table_stats {
-    u64 registers;          /* Total register calls */
-    u64 unregisters;        /* Total unregister calls */
-    u64 lookups;            /* Total lookup calls */
-    u64 resolves;           /* Total resolve_at calls */
-    u64 lookup_hits;        /* Successful lookups */
-    u64 lookup_misses;      /* Failed lookups (fd not found) */
-    u64 resolve_errors;     /* Resolution errors (bad fd, not dir) */
-    u32 current_entries;    /* Currently registered entries */
-    u32 peak_entries;       /* Peak number of entries */
+  u64 registers;       /* Total register calls */
+  u64 unregisters;     /* Total unregister calls */
+  u64 lookups;         /* Total lookup calls */
+  u64 resolves;        /* Total resolve_at calls */
+  u64 lookup_hits;     /* Successful lookups */
+  u64 lookup_misses;   /* Failed lookups (fd not found) */
+  u64 resolve_errors;  /* Resolution errors (bad fd, not dir) */
+  u32 current_entries; /* Currently registered entries */
+  u32 peak_entries;    /* Peak number of entries */
 } ak_fd_table_stats_t;
 
 /*

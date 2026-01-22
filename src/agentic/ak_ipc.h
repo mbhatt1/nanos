@@ -41,26 +41,26 @@
  *  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  */
 
-#define AK_IPC_MAGIC            0x414B  /* "AK" */
-#define AK_IPC_VERSION          1
-#define AK_IPC_HEADER_SIZE      20
-#define AK_IPC_MAX_PAYLOAD      (1024 * 1024)  /* 1 MB max */
+#define AK_IPC_MAGIC 0x414B /* "AK" */
+#define AK_IPC_VERSION 1
+#define AK_IPC_HEADER_SIZE 20
+#define AK_IPC_MAX_PAYLOAD (1024 * 1024) /* 1 MB max */
 
 /* Frame flags */
-#define AK_IPC_FLAG_REQUEST     0x01
-#define AK_IPC_FLAG_RESPONSE    0x02
-#define AK_IPC_FLAG_ERROR       0x04
-#define AK_IPC_FLAG_COMPRESSED  0x08
-#define AK_IPC_FLAG_BATCH       0x10
+#define AK_IPC_FLAG_REQUEST 0x01
+#define AK_IPC_FLAG_RESPONSE 0x02
+#define AK_IPC_FLAG_ERROR 0x04
+#define AK_IPC_FLAG_COMPRESSED 0x08
+#define AK_IPC_FLAG_BATCH 0x10
 
 /* Frame header */
 typedef struct ak_ipc_header {
-    u16 magic;
-    u8 version;
-    u8 flags;
-    u32 payload_length;
-    u64 sequence;
-    u32 checksum;
+  u16 magic;
+  u8 version;
+  u8 flags;
+  u32 payload_length;
+  u64 sequence;
+  u32 checksum;
 } __attribute__((packed)) ak_ipc_header_t;
 
 /* ============================================================
@@ -71,20 +71,20 @@ typedef struct ak_ipc_channel ak_ipc_channel_t;
 
 /* Channel state */
 typedef enum ak_channel_state {
-    AK_CHANNEL_DISCONNECTED,
-    AK_CHANNEL_CONNECTING,
-    AK_CHANNEL_CONNECTED,
-    AK_CHANNEL_ERROR
+  AK_CHANNEL_DISCONNECTED,
+  AK_CHANNEL_CONNECTING,
+  AK_CHANNEL_CONNECTED,
+  AK_CHANNEL_ERROR
 } ak_channel_state_t;
 
 /* Channel statistics */
 typedef struct ak_ipc_stats {
-    u64 frames_sent;
-    u64 frames_received;
-    u64 bytes_sent;
-    u64 bytes_received;
-    u64 errors;
-    u64 checksum_failures;
+  u64 frames_sent;
+  u64 frames_received;
+  u64 bytes_sent;
+  u64 bytes_received;
+  u64 errors;
+  u64 checksum_failures;
 } ak_ipc_stats_t;
 
 /* Initialize IPC subsystem */
@@ -92,9 +92,7 @@ void ak_ipc_init(heap h);
 
 /* Create channel (connects to agent) */
 ak_ipc_channel_t *ak_ipc_channel_create(
-    heap h,
-    u8 *agent_id,
-    int fd                          /* Unix domain socket / pipe fd */
+    heap h, u8 *agent_id, int fd /* Unix domain socket / pipe fd */
 );
 
 /* Destroy channel */
@@ -116,10 +114,7 @@ void ak_ipc_channel_stats(ak_ipc_channel_t *ch, ak_ipc_stats_t *stats);
  * Serializes request to JSON and frames it.
  * Returns: 0 on success, negative error on failure.
  */
-s64 ak_ipc_send_request(
-    ak_ipc_channel_t *ch,
-    ak_request_t *req
-);
+s64 ak_ipc_send_request(ak_ipc_channel_t *ch, ak_request_t *req);
 
 /*
  * Send response frame.
@@ -127,10 +122,7 @@ s64 ak_ipc_send_request(
  * Serializes response to JSON and frames it.
  * Returns: 0 on success, negative error on failure.
  */
-s64 ak_ipc_send_response(
-    ak_ipc_channel_t *ch,
-    ak_response_t *res
-);
+s64 ak_ipc_send_response(ak_ipc_channel_t *ch, ak_response_t *res);
 
 /*
  * Receive frame (blocking).
@@ -142,23 +134,16 @@ s64 ak_ipc_send_response(
  *
  * Output: either req_out OR res_out is populated based on frame type.
  */
-s64 ak_ipc_recv(
-    ak_ipc_channel_t *ch,
-    ak_request_t **req_out,
-    ak_response_t **res_out
-);
+s64 ak_ipc_recv(ak_ipc_channel_t *ch, ak_request_t **req_out,
+                ak_response_t **res_out);
 
 /*
  * Receive with timeout.
  *
  * Returns AK_E_TIMEOUT if no frame within timeout_ms.
  */
-s64 ak_ipc_recv_timeout(
-    ak_ipc_channel_t *ch,
-    ak_request_t **req_out,
-    ak_response_t **res_out,
-    u32 timeout_ms
-);
+s64 ak_ipc_recv_timeout(ak_ipc_channel_t *ch, ak_request_t **req_out,
+                        ak_response_t **res_out, u32 timeout_ms);
 
 /* ============================================================
  * FRAME VALIDATION
@@ -316,11 +301,7 @@ u64 ak_seq_tracker_highest(ak_seq_tracker_t *tracker);
  *
  * Returns array of individual requests.
  */
-ak_request_t **ak_ipc_parse_batch(
-    heap h,
-    buffer json,
-    u64 *count_out
-);
+ak_request_t **ak_ipc_parse_batch(heap h, buffer json, u64 *count_out);
 
 /*
  * Serialize batch response.
@@ -333,25 +314,16 @@ ak_request_t **ak_ipc_parse_batch(
  *   ]
  * }
  */
-buffer ak_ipc_serialize_batch_response(
-    heap h,
-    ak_response_t **responses,
-    u64 count
-);
+buffer ak_ipc_serialize_batch_response(heap h, ak_response_t **responses,
+                                       u64 count);
 
 /* ============================================================
  * ERROR RESPONSES
  * ============================================================ */
 
 /* Create error response */
-ak_response_t *ak_ipc_error_response(
-    heap h,
-    u8 *pid,
-    u8 *run_id,
-    u64 seq,
-    s64 error_code,
-    const char *message
-);
+ak_response_t *ak_ipc_error_response(heap h, u8 *pid, u8 *run_id, u64 seq,
+                                     s64 error_code, const char *message);
 
 /* Standard error messages */
 const char *ak_ipc_error_message(s64 error_code);

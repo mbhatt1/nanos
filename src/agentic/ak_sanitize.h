@@ -144,7 +144,7 @@ ak_sanitizer_fn ak_get_sanitizer(ak_taint_t from_taint, ak_taint_t to_taint);
  * @return            Resulting taint level, or AK_TAINT_UNTRUSTED on failure
  */
 ak_taint_t ak_sanitize_apply(heap h, buffer input, ak_taint_t input_taint,
-                              ak_taint_t to_taint, buffer *output);
+                             ak_taint_t to_taint, buffer *output);
 
 /* ============================================================
  * DLP (DATA LOSS PREVENTION)
@@ -154,13 +154,13 @@ ak_taint_t ak_sanitize_apply(heap h, buffer input, ak_taint_t input_taint,
  * Secret patterns to detect and redact.
  * Used by ak_dlp_redact_secrets() for automatic redaction.
  */
-#define AK_DLP_PATTERN_API_KEY      (1 << 0)  /* API keys (sk-xxx, Bearer xxx) */
-#define AK_DLP_PATTERN_JWT          (1 << 1)  /* JWT tokens */
-#define AK_DLP_PATTERN_PASSWORD     (1 << 2)  /* password=xxx patterns */
-#define AK_DLP_PATTERN_PRIVATE_KEY  (1 << 3)  /* PEM private keys */
-#define AK_DLP_PATTERN_CREDIT_CARD  (1 << 4)  /* Credit card numbers */
-#define AK_DLP_PATTERN_SSN          (1 << 5)  /* Social security numbers */
-#define AK_DLP_PATTERN_ALL          0xFFFF    /* All patterns */
+#define AK_DLP_PATTERN_API_KEY (1 << 0)     /* API keys (sk-xxx, Bearer xxx) */
+#define AK_DLP_PATTERN_JWT (1 << 1)         /* JWT tokens */
+#define AK_DLP_PATTERN_PASSWORD (1 << 2)    /* password=xxx patterns */
+#define AK_DLP_PATTERN_PRIVATE_KEY (1 << 3) /* PEM private keys */
+#define AK_DLP_PATTERN_CREDIT_CARD (1 << 4) /* Credit card numbers */
+#define AK_DLP_PATTERN_SSN (1 << 5)         /* Social security numbers */
+#define AK_DLP_PATTERN_ALL 0xFFFF           /* All patterns */
 
 /*
  * Redact potential secrets from output.

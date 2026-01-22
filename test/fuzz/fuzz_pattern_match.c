@@ -268,6 +268,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     /* Test DNS matching */
     boolean result4 = ak_pattern_match_dns(pattern, string);
 
+    /* Use results to avoid unused variable warnings */
+    (void)result3;
+    (void)result4;
+
     /* Results should be consistent (basic match should equal explicit length match) */
     if (result1 != result2) {
         /* This would be a bug - different results for same input */

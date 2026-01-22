@@ -53,640 +53,614 @@
 
 #include "ak_state.h"
 #include "ak_audit.h"
-#include "ak_compress.h"
 #include "ak_compat.h"
-#include "ak_syscall.h"
+#include "ak_compress.h"
 #include "ak_heap.h"
+#include "ak_syscall.h"
 
 /* ============================================================
  * INTERNAL STATE
  * ============================================================ */
 
-#define AK_MAX_DIRTY_OBJECTS    65536
-#define AK_DIRTY_BITMAP_SIZE    (AK_MAX_DIRTY_OBJECTS / 64)
+#define AK_MAX_DIRTY_OBJECTS 65536
+#define AK_DIRTY_BITMAP_SIZE (AK_MAX_DIRTY_OBJECTS / 64)
 
 static struct {
-    heap h;
-    boolean initialized;
-    ak_storage_config_t config;
-    ak_state_stats_t stats;
+  heap h;
+  boolean initialized;
+  ak_storage_config_t config;
+  ak_state_stats_t stats;
 
-    /* Hydration state */
-    ak_hydration_status_t hydration;
+  /* Hydration state */
+  ak_hydration_status_t hydration;
 
-    /* Dirty tracking (bitmap for efficiency) */
-    u64 dirty_bitmap[AK_DIRTY_BITMAP_SIZE];
-    u64 dirty_ptrs[AK_MAX_DIRTY_OBJECTS];
-    u32 dirty_count;
+  /* Dirty tracking (bitmap for efficiency) */
+  u64 dirty_bitmap[AK_DIRTY_BITMAP_SIZE];
+  u64 dirty_ptrs[AK_MAX_DIRTY_OBJECTS];
+  u32 dirty_count;
 
-    /* Sync state */
-    ak_sync_status_t sync_status;
-    u64 last_sync_ms;
+  /* Sync state */
+  ak_sync_status_t sync_status;
+  u64 last_sync_ms;
 
-    /* Anchor chain */
-    ak_state_anchor_t latest_anchor;
-    u64 anchor_sequence;
+  /* Anchor chain */
+  ak_state_anchor_t latest_anchor;
+  u64 anchor_sequence;
 
-    /* Backend connection state */
-    boolean backend_connected;
-    int virtio_fd;
+  /* Backend connection state */
+  boolean backend_connected;
+  int virtio_fd;
 } ak_state;
 
 /* ============================================================
  * CRYPTOGRAPHIC HELPERS
  * ============================================================ */
 
-static u64 get_timestamp_ms(void)
-{
-    return now(CLOCK_ID_MONOTONIC) / MILLION;
-}
+static u64 get_timestamp_ms(void) { return now(CLOCK_ID_MONOTONIC) / MILLION; }
 
 /*
  * FNV-1a hash extended to fill AK_HASH_SIZE bytes.
  * Production deployments should use SHA-256.
  */
-static void compute_hash(buffer data, u8 *hash_out)
-{
-    u64 len = buffer_length(data);
-    u8 *bytes = buffer_ref(data, 0);
+static void compute_hash(buffer data, u8 *hash_out) {
+  u64 len = buffer_length(data);
+  u8 *bytes = buffer_ref(data, 0);
 
-    /* FNV-1a 64-bit */
-    u64 h = 0xcbf29ce484222325ULL;
-    for (u64 i = 0; i < len; i++) {
-        h ^= bytes[i];
-        h *= 0x100000001b3ULL;
-    }
+  /* FNV-1a 64-bit */
+  u64 h = 0xcbf29ce484222325ULL;
+  for (u64 i = 0; i < len; i++) {
+    h ^= bytes[i];
+    h *= 0x100000001b3ULL;
+  }
 
-    /* Extend hash to fill AK_HASH_SIZE */
-    for (int i = 0; i < AK_HASH_SIZE; i++) {
-        hash_out[i] = (h >> ((i % 8) * 8)) & 0xff;
-        if ((i % 8) == 7) {
-            h ^= (u64)i;
-            h *= 0x100000001b3ULL;
-        }
+  /* Extend hash to fill AK_HASH_SIZE */
+  for (int i = 0; i < AK_HASH_SIZE; i++) {
+    hash_out[i] = (h >> ((i % 8) * 8)) & 0xff;
+    if ((i % 8) == 7) {
+      h ^= (u64)i;
+      h *= 0x100000001b3ULL;
     }
+  }
 }
 
 /*
  * Compute merkle root from list of hashes.
  * Uses separate input/output buffers to avoid in-place overwriting bugs.
  */
-static void compute_merkle_root(u8 *hashes, u32 count, u8 *root_out)
-{
-    if (count == 0) {
-        runtime_memset(root_out, 0, AK_HASH_SIZE);
-        return;
+static void compute_merkle_root(u8 *hashes, u32 count, u8 *root_out) {
+  if (count == 0) {
+    runtime_memset(root_out, 0, AK_HASH_SIZE);
+    return;
+  }
+
+  if (count == 1) {
+    runtime_memcpy(root_out, hashes, AK_HASH_SIZE);
+    return;
+  }
+
+  /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
+
+  /* Allocate two buffers for ping-pong computation to avoid in-place overwrites
+   */
+  u64 max_level_size = (u64)count * AK_HASH_SIZE;
+  u8 *buf_a = allocate(ak_state.h, max_level_size);
+  u8 *buf_b = allocate(ak_state.h, max_level_size);
+
+  if (buf_a == INVALID_ADDRESS || buf_b == INVALID_ADDRESS) {
+    /* Allocation failed - fall back to zeroed root */
+    if (buf_a != INVALID_ADDRESS)
+      deallocate(ak_state.h, buf_a, max_level_size);
+    if (buf_b != INVALID_ADDRESS)
+      deallocate(ak_state.h, buf_b, max_level_size);
+    runtime_memset(root_out, 0, AK_HASH_SIZE);
+    return;
+  }
+
+  /* Copy input to first buffer */
+  runtime_memcpy(buf_a, hashes, count * AK_HASH_SIZE);
+
+  u8 *current = buf_a;
+  u8 *next = buf_b;
+  u32 current_count = count;
+
+  while (current_count > 1) {
+    u32 pairs = (current_count + 1) / 2;
+    for (u32 i = 0; i < pairs; i++) {
+      u8 combined[AK_HASH_SIZE * 2];
+      runtime_memcpy(combined, &current[i * 2 * AK_HASH_SIZE], AK_HASH_SIZE);
+
+      if (i * 2 + 1 < current_count) {
+        runtime_memcpy(&combined[AK_HASH_SIZE],
+                       &current[(i * 2 + 1) * AK_HASH_SIZE], AK_HASH_SIZE);
+      } else {
+        /* Odd node: duplicate */
+        runtime_memcpy(&combined[AK_HASH_SIZE], &current[i * 2 * AK_HASH_SIZE],
+                       AK_HASH_SIZE);
+      }
+
+      /* Hash the pair into the next buffer (not current) */
+      buffer pair_buf = alloca_wrap_buffer(combined, AK_HASH_SIZE * 2);
+      if (pair_buf && pair_buf != INVALID_ADDRESS) {
+        compute_hash(pair_buf, &next[i * AK_HASH_SIZE]);
+      } else {
+        runtime_memset(&next[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
+      }
     }
+    current_count = pairs;
 
-    if (count == 1) {
-        runtime_memcpy(root_out, hashes, AK_HASH_SIZE);
-        return;
-    }
+    /* Swap buffers for next iteration */
+    u8 *tmp = current;
+    current = next;
+    next = tmp;
+  }
 
-    /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
+  runtime_memcpy(root_out, current, AK_HASH_SIZE);
 
-    /* Allocate two buffers for ping-pong computation to avoid in-place overwrites */
-    u64 max_level_size = (u64)count * AK_HASH_SIZE;
-    u8 *buf_a = allocate(ak_state.h, max_level_size);
-    u8 *buf_b = allocate(ak_state.h, max_level_size);
-
-    if (buf_a == INVALID_ADDRESS || buf_b == INVALID_ADDRESS) {
-        /* Allocation failed - fall back to zeroed root */
-        if (buf_a != INVALID_ADDRESS)
-            deallocate(ak_state.h, buf_a, max_level_size);
-        if (buf_b != INVALID_ADDRESS)
-            deallocate(ak_state.h, buf_b, max_level_size);
-        runtime_memset(root_out, 0, AK_HASH_SIZE);
-        return;
-    }
-
-    /* Copy input to first buffer */
-    runtime_memcpy(buf_a, hashes, count * AK_HASH_SIZE);
-
-    u8 *current = buf_a;
-    u8 *next = buf_b;
-    u32 current_count = count;
-
-    while (current_count > 1) {
-        u32 pairs = (current_count + 1) / 2;
-        for (u32 i = 0; i < pairs; i++) {
-            u8 combined[AK_HASH_SIZE * 2];
-            runtime_memcpy(combined, &current[i * 2 * AK_HASH_SIZE], AK_HASH_SIZE);
-
-            if (i * 2 + 1 < current_count) {
-                runtime_memcpy(&combined[AK_HASH_SIZE],
-                               &current[(i * 2 + 1) * AK_HASH_SIZE], AK_HASH_SIZE);
-            } else {
-                /* Odd node: duplicate */
-                runtime_memcpy(&combined[AK_HASH_SIZE],
-                               &current[i * 2 * AK_HASH_SIZE], AK_HASH_SIZE);
-            }
-
-            /* Hash the pair into the next buffer (not current) */
-            buffer pair_buf = alloca_wrap_buffer(combined, AK_HASH_SIZE * 2);
-            if (pair_buf && pair_buf != INVALID_ADDRESS) {
-                compute_hash(pair_buf, &next[i * AK_HASH_SIZE]);
-            } else {
-                runtime_memset(&next[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
-            }
-        }
-        current_count = pairs;
-
-        /* Swap buffers for next iteration */
-        u8 *tmp = current;
-        current = next;
-        next = tmp;
-    }
-
-    runtime_memcpy(root_out, current, AK_HASH_SIZE);
-
-    /* Free allocated buffers */
-    deallocate(ak_state.h, buf_a, max_level_size);
-    deallocate(ak_state.h, buf_b, max_level_size);
+  /* Free allocated buffers */
+  deallocate(ak_state.h, buf_a, max_level_size);
+  deallocate(ak_state.h, buf_b, max_level_size);
 }
 
 /* ============================================================
  * INITIALIZATION
  * ============================================================ */
 
-void ak_state_init(heap h, ak_storage_config_t *config)
-{
-    if (ak_state.initialized)
-        return;
+void ak_state_init(heap h, ak_storage_config_t *config) {
+  if (ak_state.initialized)
+    return;
 
-    ak_state.h = h;
-    runtime_memset((u8 *)&ak_state.stats, 0, sizeof(ak_state_stats_t));
-    runtime_memset((u8 *)&ak_state.hydration, 0, sizeof(ak_hydration_status_t));
-    runtime_memset((u8 *)ak_state.dirty_bitmap, 0, sizeof(ak_state.dirty_bitmap));
-    ak_state.dirty_count = 0;
-    ak_state.virtio_fd = -1;
+  ak_state.h = h;
+  runtime_memset((u8 *)&ak_state.stats, 0, sizeof(ak_state_stats_t));
+  runtime_memset((u8 *)&ak_state.hydration, 0, sizeof(ak_hydration_status_t));
+  runtime_memset((u8 *)ak_state.dirty_bitmap, 0, sizeof(ak_state.dirty_bitmap));
+  ak_state.dirty_count = 0;
+  ak_state.virtio_fd = -1;
 
-    if (config) {
-        runtime_memcpy(&ak_state.config, config, sizeof(ak_storage_config_t));
-    } else {
-        ak_state.config.backend = AK_STORAGE_NONE;
-        ak_state.config.sync_interval_ms = 0;
-        ak_state.config.sync_batch_size = 100;
-        ak_state.config.sync_timeout_ms = 30000;
-        ak_state.config.max_retries = 3;
-        ak_state.config.retry_backoff_ms = 1000;
-    }
-
-    ak_state.sync_status = AK_SYNC_IDLE;
-    ak_state.last_sync_ms = 0;
-    ak_state.anchor_sequence = 0;
-    ak_state.backend_connected = false;
-
-    /* Initialize genesis anchor */
-    runtime_memset((u8 *)&ak_state.latest_anchor, 0, sizeof(ak_state_anchor_t));
-    ak_state.latest_anchor.timestamp_ms = get_timestamp_ms();
-    ak_state.latest_anchor.sequence = 0;
-
-    ak_state.initialized = true;
-
-    /* Connect to backend */
-    if (ak_state.config.backend != AK_STORAGE_NONE) {
-        ak_state.backend_connected = ak_backend_healthy();
-    }
-}
-
-void ak_state_shutdown(void)
-{
-    if (!ak_state.initialized)
-        return;
-
-    /* Final sync before shutdown */
-    if (ak_state.config.backend != AK_STORAGE_NONE && ak_state.dirty_count > 0) {
-        ak_state_sync_immediate();
-        ak_state_emit_anchor();
-    }
-
-    if (ak_state.virtio_fd >= 0) {
-        ak_state.virtio_fd = -1;
-    }
-
-    ak_state.initialized = false;
-}
-
-s64 ak_state_configure(ak_storage_config_t *config)
-{
-    if (!config)
-        return AK_E_SCHEMA_INVALID;
-
+  if (config) {
     runtime_memcpy(&ak_state.config, config, sizeof(ak_storage_config_t));
+  } else {
+    ak_state.config.backend = AK_STORAGE_NONE;
+    ak_state.config.sync_interval_ms = 0;
+    ak_state.config.sync_batch_size = 100;
+    ak_state.config.sync_timeout_ms = 30000;
+    ak_state.config.max_retries = 3;
+    ak_state.config.retry_backoff_ms = 1000;
+  }
 
-    if (config->backend != AK_STORAGE_NONE) {
-        ak_state.backend_connected = ak_backend_healthy();
-    } else {
-        ak_state.backend_connected = false;
-    }
+  ak_state.sync_status = AK_SYNC_IDLE;
+  ak_state.last_sync_ms = 0;
+  ak_state.anchor_sequence = 0;
+  ak_state.backend_connected = false;
 
-    return 0;
+  /* Initialize genesis anchor */
+  runtime_memset((u8 *)&ak_state.latest_anchor, 0, sizeof(ak_state_anchor_t));
+  ak_state.latest_anchor.timestamp_ms = get_timestamp_ms();
+  ak_state.latest_anchor.sequence = 0;
+
+  ak_state.initialized = true;
+
+  /* Connect to backend */
+  if (ak_state.config.backend != AK_STORAGE_NONE) {
+    ak_state.backend_connected = ak_backend_healthy();
+  }
+}
+
+void ak_state_shutdown(void) {
+  if (!ak_state.initialized)
+    return;
+
+  /* Final sync before shutdown */
+  if (ak_state.config.backend != AK_STORAGE_NONE && ak_state.dirty_count > 0) {
+    ak_state_sync_immediate();
+    ak_state_emit_anchor();
+  }
+
+  if (ak_state.virtio_fd >= 0) {
+    ak_state.virtio_fd = -1;
+  }
+
+  ak_state.initialized = false;
+}
+
+s64 ak_state_configure(ak_storage_config_t *config) {
+  if (!config)
+    return AK_E_SCHEMA_INVALID;
+
+  runtime_memcpy(&ak_state.config, config, sizeof(ak_storage_config_t));
+
+  if (config->backend != AK_STORAGE_NONE) {
+    ak_state.backend_connected = ak_backend_healthy();
+  } else {
+    ak_state.backend_connected = false;
+  }
+
+  return 0;
 }
 
 /* ============================================================
  * HYDRATION
  * ============================================================ */
 
-s64 ak_state_hydrate(ak_heap_t *heap)
-{
-    if (!ak_state.initialized)
-        return AK_E_STATE_NOT_FOUND;
+s64 ak_state_hydrate(ak_heap_t *heap) {
+  if (!ak_state.initialized)
+    return AK_E_STATE_NOT_FOUND;
 
-    if (ak_state.config.backend == AK_STORAGE_NONE)
-        return AK_E_STATE_NOT_FOUND;
+  if (ak_state.config.backend == AK_STORAGE_NONE)
+    return AK_E_STATE_NOT_FOUND;
 
-    if (!heap)
-        return AK_E_SCHEMA_INVALID;
+  if (!heap)
+    return AK_E_SCHEMA_INVALID;
 
-    ak_state.stats.hydrations_total++;
-    u64 start_ms = get_timestamp_ms();
+  ak_state.stats.hydrations_total++;
+  u64 start_ms = get_timestamp_ms();
 
-    /* Get list of objects from backend */
-    u32 object_count = 0;
-    u64 *ptrs = ak_backend_list(&object_count);
+  /* Get list of objects from backend */
+  u32 object_count = 0;
+  u64 *ptrs = ak_backend_list(&object_count);
 
-    if (!ptrs || object_count == 0) {
-        ak_state.hydration.hydrated = false;
-        return AK_E_STATE_NOT_FOUND;
+  if (!ptrs || object_count == 0) {
+    ak_state.hydration.hydrated = false;
+    return AK_E_STATE_NOT_FOUND;
+  }
+
+  /* Bounds check: limit object count to prevent excessive memory usage */
+  if (object_count > AK_MAX_DIRTY_OBJECTS) {
+    object_count = AK_MAX_DIRTY_OBJECTS;
+  }
+
+  u64 bytes_loaded = 0;
+  u64 objects_loaded = 0;
+
+  /* Load each object into heap */
+  for (u32 i = 0; i < object_count; i++) {
+    buffer value = ak_backend_get(ptrs[i]);
+    if (value && value != INVALID_ADDRESS) {
+      /* Restore object to typed heap */
+      s64 result = ak_heap_restore(value);
+      if (result == 0) {
+        bytes_loaded += buffer_length(value);
+        objects_loaded++;
+      }
+      deallocate_buffer(value);
     }
+  }
 
-    /* Bounds check: limit object count to prevent excessive memory usage */
-    if (object_count > AK_MAX_DIRTY_OBJECTS) {
-        object_count = AK_MAX_DIRTY_OBJECTS;
-    }
+  if (ptrs)
+    deallocate(ak_state.h, ptrs, object_count * sizeof(u64));
 
-    u64 bytes_loaded = 0;
-    u64 objects_loaded = 0;
+  ak_state.hydration.hydrated = (objects_loaded > 0);
+  ak_state.hydration.objects_loaded = objects_loaded;
+  ak_state.hydration.bytes_loaded = bytes_loaded;
+  ak_state.hydration.duration_ms = get_timestamp_ms() - start_ms;
 
-    /* Load each object into heap */
-    for (u32 i = 0; i < object_count; i++) {
-        buffer value = ak_backend_get(ptrs[i]);
-        if (value && value != INVALID_ADDRESS) {
-            /* Restore object to typed heap */
-            s64 result = ak_heap_restore(value);
-            if (result == 0) {
-                bytes_loaded += buffer_length(value);
-                objects_loaded++;
-            }
-            deallocate_buffer(value);
-        }
-    }
-
-    if (ptrs)
-        deallocate(ak_state.h, ptrs, object_count * sizeof(u64));
-
-    ak_state.hydration.hydrated = (objects_loaded > 0);
-    ak_state.hydration.objects_loaded = objects_loaded;
-    ak_state.hydration.bytes_loaded = bytes_loaded;
-    ak_state.hydration.duration_ms = get_timestamp_ms() - start_ms;
-
-    return (objects_loaded > 0) ? 0 : AK_E_STATE_NOT_FOUND;
+  return (objects_loaded > 0) ? 0 : AK_E_STATE_NOT_FOUND;
 }
 
-boolean ak_state_verify_integrity(void)
-{
-    if (!ak_state.hydration.hydrated)
-        return false;
+boolean ak_state_verify_integrity(void) {
+  if (!ak_state.hydration.hydrated)
+    return false;
 
-    /* Verify by recomputing merkle root and comparing to anchor */
-    u32 count;
-    u64 *ptrs = ak_state_get_dirty_list(&count);
+  /* Verify by recomputing merkle root and comparing to anchor */
+  u32 count;
+  u64 *ptrs = ak_state_get_dirty_list(&count);
 
-    if (count == 0)
-        return true;
+  if (count == 0)
+    return true;
 
-    /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
+  /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
 
-    /* Allocate hash array */
-    u8 *hashes = allocate(ak_state.h, (u64)count * AK_HASH_SIZE);
-    if (hashes == INVALID_ADDRESS)
-        return false;
+  /* Allocate hash array */
+  u8 *hashes = allocate(ak_state.h, (u64)count * AK_HASH_SIZE);
+  if (hashes == INVALID_ADDRESS)
+    return false;
 
-    /* Hash each object */
-    for (u32 i = 0; i < count; i++) {
-        buffer value = ak_backend_get(ptrs[i]);
-        if (value && value != INVALID_ADDRESS) {
-            compute_hash(value, &hashes[i * AK_HASH_SIZE]);
-            deallocate_buffer(value);
-        } else {
-            runtime_memset(&hashes[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
-        }
+  /* Hash each object */
+  for (u32 i = 0; i < count; i++) {
+    buffer value = ak_backend_get(ptrs[i]);
+    if (value && value != INVALID_ADDRESS) {
+      compute_hash(value, &hashes[i * AK_HASH_SIZE]);
+      deallocate_buffer(value);
+    } else {
+      runtime_memset(&hashes[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
     }
+  }
 
-    /* Compute merkle root */
-    u8 computed_root[AK_HASH_SIZE];
-    compute_merkle_root(hashes, count, computed_root);
+  /* Compute merkle root */
+  u8 computed_root[AK_HASH_SIZE];
+  compute_merkle_root(hashes, count, computed_root);
 
-    deallocate(ak_state.h, hashes, count * AK_HASH_SIZE);
+  deallocate(ak_state.h, hashes, count * AK_HASH_SIZE);
 
-    /* Compare to stored anchor */
-    return runtime_memcmp(computed_root, ak_state.latest_anchor.heap_root,
-                          AK_HASH_SIZE) == 0;
+  /* Compare to stored anchor */
+  return runtime_memcmp(computed_root, ak_state.latest_anchor.heap_root,
+                        AK_HASH_SIZE) == 0;
 }
 
-void ak_state_get_hydration_status(ak_hydration_status_t *status)
-{
-    if (status)
-        runtime_memcpy(status, &ak_state.hydration, sizeof(ak_hydration_status_t));
+void ak_state_get_hydration_status(ak_hydration_status_t *status) {
+  if (status)
+    runtime_memcpy(status, &ak_state.hydration, sizeof(ak_hydration_status_t));
 }
 
 /* ============================================================
  * DIRTY TRACKING
  * ============================================================ */
 
-static u32 ptr_to_index(u64 ptr)
-{
-    return (u32)((ptr * 2654435761ULL) % AK_MAX_DIRTY_OBJECTS);
+static u32 ptr_to_index(u64 ptr) {
+  return (u32)((ptr * 2654435761ULL) % AK_MAX_DIRTY_OBJECTS);
 }
 
-void ak_state_mark_dirty(u64 ptr)
-{
-    if (!ak_state.initialized)
-        return;
+void ak_state_mark_dirty(u64 ptr) {
+  if (!ak_state.initialized)
+    return;
 
-    u32 idx = ptr_to_index(ptr);
-    u32 word = idx / 64;
-    u32 bit = idx % 64;
+  u32 idx = ptr_to_index(ptr);
+  u32 word = idx / 64;
+  u32 bit = idx % 64;
 
-    if (!(ak_state.dirty_bitmap[word] & (1ULL << bit))) {
-        ak_state.dirty_bitmap[word] |= (1ULL << bit);
+  if (!(ak_state.dirty_bitmap[word] & (1ULL << bit))) {
+    ak_state.dirty_bitmap[word] |= (1ULL << bit);
 
-        if (ak_state.dirty_count < AK_MAX_DIRTY_OBJECTS) {
-            ak_state.dirty_ptrs[ak_state.dirty_count++] = ptr;
-        }
+    if (ak_state.dirty_count < AK_MAX_DIRTY_OBJECTS) {
+      ak_state.dirty_ptrs[ak_state.dirty_count++] = ptr;
     }
+  }
 }
 
-void ak_state_mark_clean(u64 ptr)
-{
-    if (!ak_state.initialized)
-        return;
+void ak_state_mark_clean(u64 ptr) {
+  if (!ak_state.initialized)
+    return;
 
-    u32 idx = ptr_to_index(ptr);
-    u32 word = idx / 64;
-    u32 bit = idx % 64;
+  u32 idx = ptr_to_index(ptr);
+  u32 word = idx / 64;
+  u32 bit = idx % 64;
 
-    ak_state.dirty_bitmap[word] &= ~(1ULL << bit);
+  ak_state.dirty_bitmap[word] &= ~(1ULL << bit);
 
-    for (u32 i = 0; i < ak_state.dirty_count; i++) {
-        if (ak_state.dirty_ptrs[i] == ptr) {
-            for (u32 j = i; j < ak_state.dirty_count - 1; j++)
-                ak_state.dirty_ptrs[j] = ak_state.dirty_ptrs[j + 1];
-            ak_state.dirty_count--;
-            break;
-        }
+  for (u32 i = 0; i < ak_state.dirty_count; i++) {
+    if (ak_state.dirty_ptrs[i] == ptr) {
+      for (u32 j = i; j < ak_state.dirty_count - 1; j++)
+        ak_state.dirty_ptrs[j] = ak_state.dirty_ptrs[j + 1];
+      ak_state.dirty_count--;
+      break;
     }
+  }
 }
 
-boolean ak_state_is_dirty(u64 ptr)
-{
-    if (!ak_state.initialized)
-        return false;
+boolean ak_state_is_dirty(u64 ptr) {
+  if (!ak_state.initialized)
+    return false;
 
-    u32 idx = ptr_to_index(ptr);
-    u32 word = idx / 64;
-    u32 bit = idx % 64;
+  u32 idx = ptr_to_index(ptr);
+  u32 word = idx / 64;
+  u32 bit = idx % 64;
 
-    return (ak_state.dirty_bitmap[word] & (1ULL << bit)) != 0;
+  return (ak_state.dirty_bitmap[word] & (1ULL << bit)) != 0;
 }
 
-u64 ak_state_dirty_count(void)
-{
-    return ak_state.dirty_count;
-}
+u64 ak_state_dirty_count(void) { return ak_state.dirty_count; }
 
-u64 *ak_state_get_dirty_list(u32 *count_out)
-{
-    if (count_out)
-        *count_out = ak_state.dirty_count;
-    return ak_state.dirty_ptrs;
+u64 *ak_state_get_dirty_list(u32 *count_out) {
+  if (count_out)
+    *count_out = ak_state.dirty_count;
+  return ak_state.dirty_ptrs;
 }
 
 /* ============================================================
  * SYNC OPERATIONS
  * ============================================================ */
 
-ak_sync_result_t ak_state_sync(void)
-{
-    ak_sync_result_t result;
-    runtime_memset((u8 *)&result, 0, sizeof(ak_sync_result_t));
+ak_sync_result_t ak_state_sync(void) {
+  ak_sync_result_t result;
+  runtime_memset((u8 *)&result, 0, sizeof(ak_sync_result_t));
 
-    if (!ak_state.initialized) {
-        result.status = AK_SYNC_FAILED;
-        result.error_code = AK_E_STATE_NOT_FOUND;
-        return result;
-    }
-
-    if (ak_state.config.backend == AK_STORAGE_NONE) {
-        result.status = AK_SYNC_COMPLETED;
-        return result;
-    }
-
-    if (ak_state.dirty_count == 0) {
-        result.status = AK_SYNC_COMPLETED;
-        return result;
-    }
-
-    return ak_state_sync_objects(ak_state.dirty_ptrs, ak_state.dirty_count);
-}
-
-ak_sync_result_t ak_state_sync_objects(u64 *ptrs, u32 count)
-{
-    ak_sync_result_t result;
-    runtime_memset((u8 *)&result, 0, sizeof(ak_sync_result_t));
-
-    if (!ptrs || count == 0) {
-        result.status = AK_SYNC_COMPLETED;
-        return result;
-    }
-
-    ak_state.sync_status = AK_SYNC_IN_PROGRESS;
-    ak_state.stats.syncs_total++;
-
-    u64 start_ms = get_timestamp_ms();
-    u64 objects_synced = 0;
-    u64 bytes_synced = 0;
-
-    /* Sync each object */
-    for (u32 i = 0; i < count; i++) {
-        u64 ptr = ptrs[i];
-
-        /* Get object value from typed heap */
-        buffer value = ak_heap_serialize_object(ak_state.h, ptr);
-        if (!value || value == INVALID_ADDRESS)
-            continue;
-
-        /* Compute hash for integrity (on uncompressed data) */
-        u8 hash[AK_HASH_SIZE];
-        compute_hash(value, hash);
-
-        /* Compress if worthwhile */
-        buffer to_store = value;
-        boolean compressed = false;
-        if (ak_state.config.compression_enabled &&
-            ak_compress_worthwhile(buffer_length(value))) {
-            buffer compressed_value = ak_compress_lz4(ak_state.h, value);
-            if (compressed_value && compressed_value != INVALID_ADDRESS) {
-                /* Only use compressed if it's actually smaller */
-                if (buffer_length(compressed_value) < buffer_length(value)) {
-                    to_store = compressed_value;
-                    compressed = true;
-                } else {
-                    deallocate_buffer(compressed_value);
-                }
-            }
-        }
-
-        /* Store to backend */
-        s64 put_result = ak_backend_put(ptr, to_store, hash);
-
-        if (put_result == 0) {
-            objects_synced++;
-            bytes_synced += buffer_length(to_store);
-            ak_state_mark_clean(ptr);
-            if (compressed)
-                ak_state.stats.bytes_compressed += buffer_length(value) - buffer_length(to_store);
-        }
-
-        if (compressed)
-            deallocate_buffer(to_store);
-        deallocate_buffer(value);
-    }
-
-    result.duration_ms = get_timestamp_ms() - start_ms;
-    result.objects_synced = objects_synced;
-    result.bytes_synced = bytes_synced;
-
-    if (objects_synced == count) {
-        result.status = AK_SYNC_COMPLETED;
-        ak_state.stats.syncs_successful++;
-    } else if (objects_synced > 0) {
-        result.status = AK_SYNC_PARTIAL;
-    } else {
-        result.status = AK_SYNC_FAILED;
-        result.error_code = AK_E_STATE_SYNC_FAILED;
-        ak_state.stats.syncs_failed++;
-    }
-
-    ak_state.stats.objects_synced_total += objects_synced;
-    ak_state.stats.bytes_synced_total += bytes_synced;
-    ak_state.stats.total_sync_time_ms += result.duration_ms;
-
-    ak_state.sync_status = result.status;
-    ak_state.last_sync_ms = get_timestamp_ms();
-
+  if (!ak_state.initialized) {
+    result.status = AK_SYNC_FAILED;
+    result.error_code = AK_E_STATE_NOT_FOUND;
     return result;
+  }
+
+  if (ak_state.config.backend == AK_STORAGE_NONE) {
+    result.status = AK_SYNC_COMPLETED;
+    return result;
+  }
+
+  if (ak_state.dirty_count == 0) {
+    result.status = AK_SYNC_COMPLETED;
+    return result;
+  }
+
+  return ak_state_sync_objects(ak_state.dirty_ptrs, ak_state.dirty_count);
 }
 
-ak_sync_result_t ak_state_sync_immediate(void)
-{
-    return ak_state_sync();
+ak_sync_result_t ak_state_sync_objects(u64 *ptrs, u32 count) {
+  ak_sync_result_t result;
+  runtime_memset((u8 *)&result, 0, sizeof(ak_sync_result_t));
+
+  if (!ptrs || count == 0) {
+    result.status = AK_SYNC_COMPLETED;
+    return result;
+  }
+
+  ak_state.sync_status = AK_SYNC_IN_PROGRESS;
+  ak_state.stats.syncs_total++;
+
+  u64 start_ms = get_timestamp_ms();
+  u64 objects_synced = 0;
+  u64 bytes_synced = 0;
+
+  /* Sync each object */
+  for (u32 i = 0; i < count; i++) {
+    u64 ptr = ptrs[i];
+
+    /* Get object value from typed heap */
+    buffer value = ak_heap_serialize_object(ak_state.h, ptr);
+    if (!value || value == INVALID_ADDRESS)
+      continue;
+
+    /* Compute hash for integrity (on uncompressed data) */
+    u8 hash[AK_HASH_SIZE];
+    compute_hash(value, hash);
+
+    /* Compress if worthwhile */
+    buffer to_store = value;
+    boolean compressed = false;
+    if (ak_state.config.compression_enabled &&
+        ak_compress_worthwhile(buffer_length(value))) {
+      buffer compressed_value = ak_compress_lz4(ak_state.h, value);
+      if (compressed_value && compressed_value != INVALID_ADDRESS) {
+        /* Only use compressed if it's actually smaller */
+        if (buffer_length(compressed_value) < buffer_length(value)) {
+          to_store = compressed_value;
+          compressed = true;
+        } else {
+          deallocate_buffer(compressed_value);
+        }
+      }
+    }
+
+    /* Store to backend */
+    s64 put_result = ak_backend_put(ptr, to_store, hash);
+
+    if (put_result == 0) {
+      objects_synced++;
+      bytes_synced += buffer_length(to_store);
+      ak_state_mark_clean(ptr);
+      if (compressed)
+        ak_state.stats.bytes_compressed +=
+            buffer_length(value) - buffer_length(to_store);
+    }
+
+    if (compressed)
+      deallocate_buffer(to_store);
+    deallocate_buffer(value);
+  }
+
+  result.duration_ms = get_timestamp_ms() - start_ms;
+  result.objects_synced = objects_synced;
+  result.bytes_synced = bytes_synced;
+
+  if (objects_synced == count) {
+    result.status = AK_SYNC_COMPLETED;
+    ak_state.stats.syncs_successful++;
+  } else if (objects_synced > 0) {
+    result.status = AK_SYNC_PARTIAL;
+  } else {
+    result.status = AK_SYNC_FAILED;
+    result.error_code = AK_E_STATE_SYNC_FAILED;
+    ak_state.stats.syncs_failed++;
+  }
+
+  ak_state.stats.objects_synced_total += objects_synced;
+  ak_state.stats.bytes_synced_total += bytes_synced;
+  ak_state.stats.total_sync_time_ms += result.duration_ms;
+
+  ak_state.sync_status = result.status;
+  ak_state.last_sync_ms = get_timestamp_ms();
+
+  return result;
 }
 
-boolean ak_state_sync_in_progress(void)
-{
-    return ak_state.sync_status == AK_SYNC_IN_PROGRESS;
+ak_sync_result_t ak_state_sync_immediate(void) { return ak_state_sync(); }
+
+boolean ak_state_sync_in_progress(void) {
+  return ak_state.sync_status == AK_SYNC_IN_PROGRESS;
 }
 
-ak_sync_result_t ak_state_sync_wait(u32 timeout_ms)
-{
-    (void)timeout_ms;
-    return ak_state_sync();
+ak_sync_result_t ak_state_sync_wait(u32 timeout_ms) {
+  (void)timeout_ms;
+  return ak_state_sync();
 }
 
 /* ============================================================
  * ANCHOR EMISSION
  * ============================================================ */
 
-s64 ak_state_emit_anchor(void)
-{
-    if (!ak_state.initialized)
-        return AK_E_STATE_NOT_FOUND;
+s64 ak_state_emit_anchor(void) {
+  if (!ak_state.initialized)
+    return AK_E_STATE_NOT_FOUND;
 
-    ak_state_anchor_t anchor;
-    runtime_memset((u8 *)&anchor, 0, sizeof(ak_state_anchor_t));
+  ak_state_anchor_t anchor;
+  runtime_memset((u8 *)&anchor, 0, sizeof(ak_state_anchor_t));
 
-    anchor.timestamp_ms = get_timestamp_ms();
-    anchor.sequence = ++ak_state.anchor_sequence;
+  anchor.timestamp_ms = get_timestamp_ms();
+  anchor.sequence = ++ak_state.anchor_sequence;
 
-    /* Chain to previous anchor */
-    runtime_memcpy(anchor.prev_anchor, ak_state.latest_anchor.heap_root,
-                   AK_HASH_SIZE);
+  /* Chain to previous anchor */
+  runtime_memcpy(anchor.prev_anchor, ak_state.latest_anchor.heap_root,
+                 AK_HASH_SIZE);
 
-    /* Compute merkle root of heap state */
-    u32 count;
-    u64 *ptrs = ak_state_get_dirty_list(&count);
+  /* Compute merkle root of heap state */
+  u32 count;
+  u64 *ptrs = ak_state_get_dirty_list(&count);
 
-    if (count > 0 && ptrs) {
-        /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
-        {
-            u8 *hashes = allocate(ak_state.h, (u64)count * AK_HASH_SIZE);
-            if (hashes != INVALID_ADDRESS) {
-                for (u32 i = 0; i < count; i++) {
-                    buffer value = ak_heap_serialize_object(ak_state.h, ptrs[i]);
-                    if (value && value != INVALID_ADDRESS) {
-                        compute_hash(value, &hashes[i * AK_HASH_SIZE]);
-                        deallocate_buffer(value);
-                    } else {
-                        runtime_memset(&hashes[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
-                    }
-                }
-                compute_merkle_root(hashes, count, anchor.heap_root);
-                deallocate(ak_state.h, hashes, (u64)count * AK_HASH_SIZE);
-            }
+  if (count > 0 && ptrs) {
+    /* Note: count is u32, so count * AK_HASH_SIZE cannot overflow u64 */
+    {
+      u8 *hashes = allocate(ak_state.h, (u64)count * AK_HASH_SIZE);
+      if (hashes != INVALID_ADDRESS) {
+        for (u32 i = 0; i < count; i++) {
+          buffer value = ak_heap_serialize_object(ak_state.h, ptrs[i]);
+          if (value && value != INVALID_ADDRESS) {
+            compute_hash(value, &hashes[i * AK_HASH_SIZE]);
+            deallocate_buffer(value);
+          } else {
+            runtime_memset(&hashes[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
+          }
         }
+        compute_merkle_root(hashes, count, anchor.heap_root);
+        deallocate(ak_state.h, hashes, (u64)count * AK_HASH_SIZE);
+      }
     }
+  }
 
-    /* Get latest audit log hash */
-    ak_audit_head_hash(anchor.log_root);
+  /* Get latest audit log hash */
+  ak_audit_head_hash(anchor.log_root);
 
-    /* Anchor signature (optional): When CONFIG_AK_SIGNED_ANCHORS is enabled,
-     * an Ed25519 signature would be computed here using the kernel's signing key.
-     * Without signatures, anchors provide tamper-evidence through hash chains
-     * but not non-repudiation. Signature verification at load time is controlled
-     * by the ak_state_config.verify_signatures flag. */
+  /* Anchor signature (optional): When CONFIG_AK_SIGNED_ANCHORS is enabled,
+   * an Ed25519 signature would be computed here using the kernel's signing key.
+   * Without signatures, anchors provide tamper-evidence through hash chains
+   * but not non-repudiation. Signature verification at load time is controlled
+   * by the ak_state_config.verify_signatures flag. */
 
-    /* Store anchor to backend */
-    if (ak_state.config.backend != AK_STORAGE_NONE) {
-        buffer anchor_buf = allocate_buffer(ak_state.h, sizeof(ak_state_anchor_t));
-        if (anchor_buf != INVALID_ADDRESS) {
-            buffer_write(anchor_buf, &anchor, sizeof(ak_state_anchor_t));
-            ak_backend_put(anchor.sequence | 0xA0C40000000000ULL, anchor_buf, anchor.heap_root);
-            deallocate_buffer(anchor_buf);
-        }
+  /* Store anchor to backend */
+  if (ak_state.config.backend != AK_STORAGE_NONE) {
+    buffer anchor_buf = allocate_buffer(ak_state.h, sizeof(ak_state_anchor_t));
+    if (anchor_buf != INVALID_ADDRESS) {
+      buffer_write(anchor_buf, &anchor, sizeof(ak_state_anchor_t));
+      ak_backend_put(anchor.sequence | 0xA0C40000000000ULL, anchor_buf,
+                     anchor.heap_root);
+      deallocate_buffer(anchor_buf);
     }
+  }
 
-    runtime_memcpy(&ak_state.latest_anchor, &anchor, sizeof(ak_state_anchor_t));
-    ak_state.stats.anchors_emitted++;
+  runtime_memcpy(&ak_state.latest_anchor, &anchor, sizeof(ak_state_anchor_t));
+  ak_state.stats.anchors_emitted++;
 
+  return 0;
+}
+
+ak_state_anchor_t *ak_state_get_latest_anchor(void) {
+  if (!ak_state.initialized)
     return 0;
+  return &ak_state.latest_anchor;
 }
 
-ak_state_anchor_t *ak_state_get_latest_anchor(void)
-{
-    if (!ak_state.initialized)
-        return 0;
-    return &ak_state.latest_anchor;
-}
+boolean ak_state_verify_anchor_chain(void) {
+  if (!ak_state.initialized)
+    return false;
 
-boolean ak_state_verify_anchor_chain(void)
-{
-    if (!ak_state.initialized)
-        return false;
+  /* Verify chain by checking each anchor links to previous */
+  /* For genesis anchor (sequence 0), prev_anchor should be zero */
+  if (ak_state.anchor_sequence == 0) {
+    u8 zero[AK_HASH_SIZE];
+    runtime_memset(zero, 0, AK_HASH_SIZE);
+    return runtime_memcmp(ak_state.latest_anchor.prev_anchor, zero,
+                          AK_HASH_SIZE) == 0;
+  }
 
-    /* Verify chain by checking each anchor links to previous */
-    /* For genesis anchor (sequence 0), prev_anchor should be zero */
-    if (ak_state.anchor_sequence == 0) {
-        u8 zero[AK_HASH_SIZE];
-        runtime_memset(zero, 0, AK_HASH_SIZE);
-        return runtime_memcmp(ak_state.latest_anchor.prev_anchor, zero,
-                              AK_HASH_SIZE) == 0;
-    }
-
-    /* Non-genesis: prev_anchor should match previous anchor's heap_root */
-    /* Full verification requires fetching all anchors from backend */
-    return true;
+  /* Non-genesis: prev_anchor should match previous anchor's heap_root */
+  /* Full verification requires fetching all anchors from backend */
+  return true;
 }
 
 /* ============================================================
@@ -708,10 +682,10 @@ boolean ak_state_verify_anchor_chain(void)
  * documentation for deployment options.
  * ============================================================ */
 
-#define VIRTIO_CMD_PUT    0x01
-#define VIRTIO_CMD_GET    0x02
+#define VIRTIO_CMD_PUT 0x01
+#define VIRTIO_CMD_GET 0x02
 #define VIRTIO_CMD_DELETE 0x03
-#define VIRTIO_CMD_LIST   0x04
+#define VIRTIO_CMD_LIST 0x04
 
 /*
  * Store an object to the backend.
@@ -719,213 +693,206 @@ boolean ak_state_verify_anchor_chain(void)
  * NOTE: S3/Redis/HTTP backends are not implemented (require HTTPS client).
  * Use VIRTIO backend with host-side daemon for remote storage.
  */
-s64 ak_backend_put(u64 ptr, buffer value, u8 *hash)
-{
-    if (!ak_state.initialized || ak_state.config.backend == AK_STORAGE_NONE)
-        return AK_E_STATE_NOT_FOUND;
+s64 ak_backend_put(u64 ptr, buffer value, u8 *hash) {
+  if (!ak_state.initialized || ak_state.config.backend == AK_STORAGE_NONE)
+    return AK_E_STATE_NOT_FOUND;
 
-    if (!value || !hash)
-        return AK_E_SCHEMA_INVALID;
+  if (!value || !hash)
+    return AK_E_SCHEMA_INVALID;
 
-    switch (ak_state.config.backend) {
-    case AK_STORAGE_S3:
-        /* S3 PUT requires HTTPS client - not implemented in kernel */
-        return AK_E_STATE_BACKEND_ERROR;
+  switch (ak_state.config.backend) {
+  case AK_STORAGE_S3:
+    /* S3 PUT requires HTTPS client - not implemented in kernel */
+    return AK_E_STATE_BACKEND_ERROR;
 
-    case AK_STORAGE_REDIS:
-        /* Redis requires TCP client - not implemented in kernel */
-        return AK_E_STATE_BACKEND_ERROR;
+  case AK_STORAGE_REDIS:
+    /* Redis requires TCP client - not implemented in kernel */
+    return AK_E_STATE_BACKEND_ERROR;
 
-    case AK_STORAGE_HTTP:
-        /* HTTP POST requires HTTPS client - not implemented in kernel */
-        return AK_E_STATE_BACKEND_ERROR;
+  case AK_STORAGE_HTTP:
+    /* HTTP POST requires HTTPS client - not implemented in kernel */
+    return AK_E_STATE_BACKEND_ERROR;
 
-    case AK_STORAGE_VIRTIO:
-        if (ak_state.virtio_fd < 0)
-            return AK_E_STATE_BACKEND_ERROR;
+  case AK_STORAGE_VIRTIO:
+    if (ak_state.virtio_fd < 0)
+      return AK_E_STATE_BACKEND_ERROR;
 
-        /* Protocol: [cmd:1][ptr:8][len:4][hash:32][data:len] */
-        /* Would write to virtio_fd here */
-        return AK_E_STATE_BACKEND_ERROR;
+    /* Protocol: [cmd:1][ptr:8][len:4][hash:32][data:len] */
+    /* Would write to virtio_fd here */
+    return AK_E_STATE_BACKEND_ERROR;
 
-    default:
-        return AK_E_STATE_BACKEND_ERROR;
-    }
+  default:
+    return AK_E_STATE_BACKEND_ERROR;
+  }
 }
 
-buffer ak_backend_get(u64 ptr)
-{
-    if (!ak_state.initialized || ak_state.config.backend == AK_STORAGE_NONE)
-        return 0;
+buffer ak_backend_get(u64 ptr) {
+  if (!ak_state.initialized || ak_state.config.backend == AK_STORAGE_NONE)
+    return 0;
 
-    switch (ak_state.config.backend) {
-    case AK_STORAGE_S3:
-    case AK_STORAGE_REDIS:
-    case AK_STORAGE_HTTP:
-        /* Network backends not implemented in kernel */
-        return 0;
+  switch (ak_state.config.backend) {
+  case AK_STORAGE_S3:
+  case AK_STORAGE_REDIS:
+  case AK_STORAGE_HTTP:
+    /* Network backends not implemented in kernel */
+    return 0;
 
-    case AK_STORAGE_VIRTIO:
-        if (ak_state.virtio_fd < 0)
-            return 0;
+  case AK_STORAGE_VIRTIO:
+    if (ak_state.virtio_fd < 0)
+      return 0;
 
-        /* Protocol: [cmd:1][ptr:8] -> [status:1][len:4][data:len] */
-        /* Would read from virtio_fd here */
-        return 0;
+    /* Protocol: [cmd:1][ptr:8] -> [status:1][len:4][data:len] */
+    /* Would read from virtio_fd here */
+    return 0;
 
-    default:
-        return 0;
-    }
+  default:
+    return 0;
+  }
 }
 
-s64 ak_backend_delete(u64 ptr)
-{
-    if (!ak_state.initialized || ak_state.config.backend == AK_STORAGE_NONE)
-        return AK_E_STATE_NOT_FOUND;
+s64 ak_backend_delete(u64 ptr) {
+  if (!ak_state.initialized || ak_state.config.backend == AK_STORAGE_NONE)
+    return AK_E_STATE_NOT_FOUND;
 
-    switch (ak_state.config.backend) {
-    case AK_STORAGE_S3:
-    case AK_STORAGE_REDIS:
-    case AK_STORAGE_HTTP:
-        return AK_E_STATE_BACKEND_ERROR;
+  switch (ak_state.config.backend) {
+  case AK_STORAGE_S3:
+  case AK_STORAGE_REDIS:
+  case AK_STORAGE_HTTP:
+    return AK_E_STATE_BACKEND_ERROR;
 
-    case AK_STORAGE_VIRTIO:
-        if (ak_state.virtio_fd < 0)
-            return AK_E_STATE_BACKEND_ERROR;
-        return AK_E_STATE_BACKEND_ERROR;
+  case AK_STORAGE_VIRTIO:
+    if (ak_state.virtio_fd < 0)
+      return AK_E_STATE_BACKEND_ERROR;
+    return AK_E_STATE_BACKEND_ERROR;
 
-    default:
-        return AK_E_STATE_BACKEND_ERROR;
-    }
+  default:
+    return AK_E_STATE_BACKEND_ERROR;
+  }
 }
 
-u64 *ak_backend_list(u32 *count_out)
-{
-    if (count_out)
-        *count_out = 0;
+u64 *ak_backend_list(u32 *count_out) {
+  if (count_out)
+    *count_out = 0;
 
-    if (!ak_state.initialized || ak_state.config.backend == AK_STORAGE_NONE)
-        return 0;
+  if (!ak_state.initialized || ak_state.config.backend == AK_STORAGE_NONE)
+    return 0;
 
-    switch (ak_state.config.backend) {
-    case AK_STORAGE_S3:
-    case AK_STORAGE_REDIS:
-    case AK_STORAGE_HTTP:
-        return 0;
+  switch (ak_state.config.backend) {
+  case AK_STORAGE_S3:
+  case AK_STORAGE_REDIS:
+  case AK_STORAGE_HTTP:
+    return 0;
 
-    case AK_STORAGE_VIRTIO:
-        if (ak_state.virtio_fd < 0)
-            return 0;
-        return 0;
+  case AK_STORAGE_VIRTIO:
+    if (ak_state.virtio_fd < 0)
+      return 0;
+    return 0;
 
-    default:
-        return 0;
-    }
+  default:
+    return 0;
+  }
 }
 
-boolean ak_backend_healthy(void)
-{
-    if (!ak_state.initialized)
-        return false;
+boolean ak_backend_healthy(void) {
+  if (!ak_state.initialized)
+    return false;
 
-    if (ak_state.config.backend == AK_STORAGE_NONE)
-        return true;
+  if (ak_state.config.backend == AK_STORAGE_NONE)
+    return true;
 
-    switch (ak_state.config.backend) {
-    case AK_STORAGE_S3:
-    case AK_STORAGE_REDIS:
-    case AK_STORAGE_HTTP:
-        /* Network backends require external connectivity */
-        return false;
+  switch (ak_state.config.backend) {
+  case AK_STORAGE_S3:
+  case AK_STORAGE_REDIS:
+  case AK_STORAGE_HTTP:
+    /* Network backends require external connectivity */
+    return false;
 
-    case AK_STORAGE_VIRTIO:
-        return ak_state.virtio_fd >= 0;
+  case AK_STORAGE_VIRTIO:
+    return ak_state.virtio_fd >= 0;
 
-    default:
-        return false;
-    }
+  default:
+    return false;
+  }
 }
 
 /* ============================================================
  * SYSCALL HANDLER
  * ============================================================ */
 
-static int u64_to_str(u64 n, char *buf)
-{
-    char tmp[24];
-    int len = 0;
+static int u64_to_str(u64 n, char *buf) {
+  char tmp[24];
+  int len = 0;
 
-    if (n == 0) {
-        buf[0] = '0';
-        return 1;
-    }
+  if (n == 0) {
+    buf[0] = '0';
+    return 1;
+  }
 
-    while (n > 0) {
-        tmp[len++] = '0' + (n % 10);
-        n /= 10;
-    }
+  while (n > 0) {
+    tmp[len++] = '0' + (n % 10);
+    n /= 10;
+  }
 
-    for (int i = 0; i < len; i++)
-        buf[i] = tmp[len - 1 - i];
+  for (int i = 0; i < len; i++)
+    buf[i] = tmp[len - 1 - i];
 
-    return len;
+  return len;
 }
 
-ak_response_t *ak_state_handle_commit(ak_agent_context_t *ctx, ak_request_t *req)
-{
-    if (!ctx || !req)
-        return ak_response_error(ak_state.h, req, AK_E_SCHEMA_INVALID);
+ak_response_t *ak_state_handle_commit(ak_agent_context_t *ctx,
+                                      ak_request_t *req) {
+  if (!ctx || !req)
+    return ak_response_error(ak_state.h, req, AK_E_SCHEMA_INVALID);
 
-    /* Perform sync */
-    ak_sync_result_t sync_result = ak_state_sync_immediate();
+  /* Perform sync */
+  ak_sync_result_t sync_result = ak_state_sync_immediate();
 
-    if (sync_result.status != AK_SYNC_COMPLETED &&
-        sync_result.status != AK_SYNC_PARTIAL) {
-        return ak_response_error(ak_state.h, req, sync_result.error_code);
-    }
+  if (sync_result.status != AK_SYNC_COMPLETED &&
+      sync_result.status != AK_SYNC_PARTIAL) {
+    return ak_response_error(ak_state.h, req, sync_result.error_code);
+  }
 
-    /* Emit anchor */
-    s64 anchor_result = ak_state_emit_anchor();
-    if (anchor_result != 0)
-        return ak_response_error(ak_state.h, req, anchor_result);
+  /* Emit anchor */
+  s64 anchor_result = ak_state_emit_anchor();
+  if (anchor_result != 0)
+    return ak_response_error(ak_state.h, req, anchor_result);
 
-    /* Build response */
-    buffer result_buf = allocate_buffer(ak_state.h, 256);
-    if (result_buf == INVALID_ADDRESS)
-        return ak_response_error(ak_state.h, req, AK_E_STATE_SYNC_FAILED);
+  /* Build response */
+  buffer result_buf = allocate_buffer(ak_state.h, 256);
+  if (result_buf == INVALID_ADDRESS)
+    return ak_response_error(ak_state.h, req, AK_E_STATE_SYNC_FAILED);
 
-    char json[256];
-    int len = 0;
+  char json[256];
+  int len = 0;
 
-    const char *prefix = "{\"objects_synced\":";
-    u64 prefix_len = runtime_strlen(prefix);
-    runtime_memcpy(&json[len], prefix, prefix_len);
-    len += prefix_len;
+  const char *prefix = "{\"objects_synced\":";
+  u64 prefix_len = runtime_strlen(prefix);
+  runtime_memcpy(&json[len], prefix, prefix_len);
+  len += prefix_len;
 
-    len += u64_to_str(sync_result.objects_synced, &json[len]);
+  len += u64_to_str(sync_result.objects_synced, &json[len]);
 
-    const char *middle = ",\"anchor_sequence\":";
-    u64 middle_len = runtime_strlen(middle);
-    runtime_memcpy(&json[len], middle, middle_len);
-    len += middle_len;
+  const char *middle = ",\"anchor_sequence\":";
+  u64 middle_len = runtime_strlen(middle);
+  runtime_memcpy(&json[len], middle, middle_len);
+  len += middle_len;
 
-    len += u64_to_str(ak_state.anchor_sequence, &json[len]);
+  len += u64_to_str(ak_state.anchor_sequence, &json[len]);
 
-    json[len++] = '}';
+  json[len++] = '}';
 
-    buffer_write(result_buf, json, len);
+  buffer_write(result_buf, json, len);
 
-    return ak_response_success(ak_state.h, req, result_buf);
+  return ak_response_success(ak_state.h, req, result_buf);
 }
 
 /* ============================================================
  * STATISTICS
  * ============================================================ */
 
-void ak_state_get_stats(ak_state_stats_t *stats)
-{
-    if (stats)
-        runtime_memcpy(stats, &ak_state.stats, sizeof(ak_state_stats_t));
+void ak_state_get_stats(ak_state_stats_t *stats) {
+  if (stats)
+    runtime_memcpy(stats, &ak_state.stats, sizeof(ak_state_stats_t));
 }
 
 /* ============================================================
@@ -987,60 +954,57 @@ static volatile s64 ak_state_io_result __attribute__((unused)) = 0;
  * Uses the standard CRC32 polynomial (0xEDB88320).
  * Available for future use (e.g., header checksums).
  */
-__attribute__((unused))
-static u32 ak_state_crc32(const u8 *data, u64 len)
-{
-    static const u32 crc32_table[256] = {
-        0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f,
-        0xe963a535, 0x9e6495a3, 0x0edb8832, 0x79dcb8a4, 0xe0d5e91e, 0x97d2d988,
-        0x09b64c2b, 0x7eb17cbd, 0xe7b82d07, 0x90bf1d91, 0x1db71064, 0x6ab020f2,
-        0xf3b97148, 0x84be41de, 0x1adad47d, 0x6ddde4eb, 0xf4d4b551, 0x83d385c7,
-        0x136c9856, 0x646ba8c0, 0xfd62f97a, 0x8a65c9ec, 0x14015c4f, 0x63066cd9,
-        0xfa0f3d63, 0x8d080df5, 0x3b6e20c8, 0x4c69105e, 0xd56041e4, 0xa2677172,
-        0x3c03e4d1, 0x4b04d447, 0xd20d85fd, 0xa50ab56b, 0x35b5a8fa, 0x42b2986c,
-        0xdbbbc9d6, 0xacbcf940, 0x32d86ce3, 0x45df5c75, 0xdcd60dcf, 0xabd13d59,
-        0x26d930ac, 0x51de003a, 0xc8d75180, 0xbfd06116, 0x21b4f4b5, 0x56b3c423,
-        0xcfba9599, 0xb8bda50f, 0x2802b89e, 0x5f058808, 0xc60cd9b2, 0xb10be924,
-        0x2f6f7c87, 0x58684c11, 0xc1611dab, 0xb6662d3d, 0x76dc4190, 0x01db7106,
-        0x98d220bc, 0xefd5102a, 0x71b18589, 0x06b6b51f, 0x9fbfe4a5, 0xe8b8d433,
-        0x7807c9a2, 0x0f00f934, 0x9609a88e, 0xe10e9818, 0x7f6a0dbb, 0x086d3d2d,
-        0x91646c97, 0xe6635c01, 0x6b6b51f4, 0x1c6c6162, 0x856530d8, 0xf262004e,
-        0x6c0695ed, 0x1b01a57b, 0x8208f4c1, 0xf50fc457, 0x65b0d9c6, 0x12b7e950,
-        0x8bbeb8ea, 0xfcb9887c, 0x62dd1ddf, 0x15da2d49, 0x8cd37cf3, 0xfbd44c65,
-        0x4db26158, 0x3ab551ce, 0xa3bc0074, 0xd4bb30e2, 0x4adfa541, 0x3dd895d7,
-        0xa4d1c46d, 0xd3d6f4fb, 0x4369e96a, 0x346ed9fc, 0xad678846, 0xda60b8d0,
-        0x44042d73, 0x33031de5, 0xaa0a4c5f, 0xdd0d7a9c, 0x5005713c, 0x270241aa,
-        0xbe0b1010, 0xc90c2086, 0x5768b525, 0x206f85b3, 0xb966d409, 0xce61e49f,
-        0x5edef90e, 0x29d9c998, 0xb0d09822, 0xc7d7a8b4, 0x59b33d17, 0x2eb40d81,
-        0xb7bd5c3b, 0xc0ba6cad, 0xedb88320, 0x9abfb3b6, 0x03b6e20c, 0x74b1d29a,
-        0xead54739, 0x9dd277af, 0x04db2615, 0x73dc1683, 0xe3630b12, 0x94643b82,
-        0x0d6d6a3e, 0x7a6a5aa8, 0xe40ecf0b, 0x9309ff9d, 0x0a00ae27, 0x7d079eb1,
-        0xf00f9344, 0x8708a3d2, 0x1e01f268, 0x6906c2fe, 0xf762575d, 0x806567cb,
-        0x196c3671, 0x6e6b06e7, 0xfed41b76, 0x89d32be0, 0x10da7a5a, 0x67dd4acc,
-        0xf9b9df6f, 0x8ebeeff9, 0x17b7be43, 0x60b08ed5, 0xd6d6a3e8, 0xa1d1937e,
-        0x38d8c2c4, 0x4fdff252, 0xd1bb67f1, 0xa6bc5767, 0x3fb506dd, 0x48b2364b,
-        0xd80d2bda, 0xaf0a1b4c, 0x36034af6, 0x41047a60, 0xdf60efc3, 0xa867df55,
-        0x316e8eef, 0x4669be79, 0xcb61b38c, 0xbc66831a, 0x256fd2a0, 0x5268e236,
-        0xcc0c7795, 0xbb0b4703, 0x220216b9, 0x5505262f, 0xc5ba3bbe, 0xb2bd0b28,
-        0x2bb45a92, 0x5cb36a04, 0xc2d7ffa7, 0xb5d0cf31, 0x2cd99e8b, 0x5bdeae1d,
-        0x9b64c2b0, 0xec63f226, 0x756aa39c, 0x026d930a, 0x9c0906a9, 0xeb0e363f,
-        0x72076785, 0x05005713, 0x95bf4a82, 0xe2b87a14, 0x7bb12bae, 0x0cb61b38,
-        0x92d28e9b, 0xe5d5be0d, 0x7cdcefb7, 0x0bdbdf21, 0x86d3d2d4, 0xf1d4e242,
-        0x68ddb3f8, 0x1fda836e, 0x81be16cd, 0xf6b9265b, 0x6fb077e1, 0x18b74777,
-        0x88085ae6, 0xff0f6a70, 0x66063bca, 0x11010b5c, 0x8f659eff, 0xf862ae69,
-        0x616bffd3, 0x166ccf45, 0xa00ae278, 0xd70dd2ee, 0x4e048354, 0x3903b3c2,
-        0xa7672661, 0xd06016f7, 0x4969474d, 0x3e6e77db, 0xaed16a4a, 0xd9d65adc,
-        0x40df0b66, 0x37d83bf0, 0xa9bcae53, 0xdede86c5, 0x57d79a8f, 0x20d09a19,
-        0xb7d99a83, 0xc0dea815, 0x548b5b76, 0x238c6be0, 0xba85605a, 0xcda962cc,
-        0x5ddee15d, 0x2ad9d0cb, 0xb3d08671, 0xc4d7b6e7, 0x5a03b844, 0x2d046882,
-        0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d
-    };
+__attribute__((unused)) static u32 ak_state_crc32(const u8 *data, u64 len) {
+  static const u32 crc32_table[256] = {
+      0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f,
+      0xe963a535, 0x9e6495a3, 0x0edb8832, 0x79dcb8a4, 0xe0d5e91e, 0x97d2d988,
+      0x09b64c2b, 0x7eb17cbd, 0xe7b82d07, 0x90bf1d91, 0x1db71064, 0x6ab020f2,
+      0xf3b97148, 0x84be41de, 0x1adad47d, 0x6ddde4eb, 0xf4d4b551, 0x83d385c7,
+      0x136c9856, 0x646ba8c0, 0xfd62f97a, 0x8a65c9ec, 0x14015c4f, 0x63066cd9,
+      0xfa0f3d63, 0x8d080df5, 0x3b6e20c8, 0x4c69105e, 0xd56041e4, 0xa2677172,
+      0x3c03e4d1, 0x4b04d447, 0xd20d85fd, 0xa50ab56b, 0x35b5a8fa, 0x42b2986c,
+      0xdbbbc9d6, 0xacbcf940, 0x32d86ce3, 0x45df5c75, 0xdcd60dcf, 0xabd13d59,
+      0x26d930ac, 0x51de003a, 0xc8d75180, 0xbfd06116, 0x21b4f4b5, 0x56b3c423,
+      0xcfba9599, 0xb8bda50f, 0x2802b89e, 0x5f058808, 0xc60cd9b2, 0xb10be924,
+      0x2f6f7c87, 0x58684c11, 0xc1611dab, 0xb6662d3d, 0x76dc4190, 0x01db7106,
+      0x98d220bc, 0xefd5102a, 0x71b18589, 0x06b6b51f, 0x9fbfe4a5, 0xe8b8d433,
+      0x7807c9a2, 0x0f00f934, 0x9609a88e, 0xe10e9818, 0x7f6a0dbb, 0x086d3d2d,
+      0x91646c97, 0xe6635c01, 0x6b6b51f4, 0x1c6c6162, 0x856530d8, 0xf262004e,
+      0x6c0695ed, 0x1b01a57b, 0x8208f4c1, 0xf50fc457, 0x65b0d9c6, 0x12b7e950,
+      0x8bbeb8ea, 0xfcb9887c, 0x62dd1ddf, 0x15da2d49, 0x8cd37cf3, 0xfbd44c65,
+      0x4db26158, 0x3ab551ce, 0xa3bc0074, 0xd4bb30e2, 0x4adfa541, 0x3dd895d7,
+      0xa4d1c46d, 0xd3d6f4fb, 0x4369e96a, 0x346ed9fc, 0xad678846, 0xda60b8d0,
+      0x44042d73, 0x33031de5, 0xaa0a4c5f, 0xdd0d7a9c, 0x5005713c, 0x270241aa,
+      0xbe0b1010, 0xc90c2086, 0x5768b525, 0x206f85b3, 0xb966d409, 0xce61e49f,
+      0x5edef90e, 0x29d9c998, 0xb0d09822, 0xc7d7a8b4, 0x59b33d17, 0x2eb40d81,
+      0xb7bd5c3b, 0xc0ba6cad, 0xedb88320, 0x9abfb3b6, 0x03b6e20c, 0x74b1d29a,
+      0xead54739, 0x9dd277af, 0x04db2615, 0x73dc1683, 0xe3630b12, 0x94643b82,
+      0x0d6d6a3e, 0x7a6a5aa8, 0xe40ecf0b, 0x9309ff9d, 0x0a00ae27, 0x7d079eb1,
+      0xf00f9344, 0x8708a3d2, 0x1e01f268, 0x6906c2fe, 0xf762575d, 0x806567cb,
+      0x196c3671, 0x6e6b06e7, 0xfed41b76, 0x89d32be0, 0x10da7a5a, 0x67dd4acc,
+      0xf9b9df6f, 0x8ebeeff9, 0x17b7be43, 0x60b08ed5, 0xd6d6a3e8, 0xa1d1937e,
+      0x38d8c2c4, 0x4fdff252, 0xd1bb67f1, 0xa6bc5767, 0x3fb506dd, 0x48b2364b,
+      0xd80d2bda, 0xaf0a1b4c, 0x36034af6, 0x41047a60, 0xdf60efc3, 0xa867df55,
+      0x316e8eef, 0x4669be79, 0xcb61b38c, 0xbc66831a, 0x256fd2a0, 0x5268e236,
+      0xcc0c7795, 0xbb0b4703, 0x220216b9, 0x5505262f, 0xc5ba3bbe, 0xb2bd0b28,
+      0x2bb45a92, 0x5cb36a04, 0xc2d7ffa7, 0xb5d0cf31, 0x2cd99e8b, 0x5bdeae1d,
+      0x9b64c2b0, 0xec63f226, 0x756aa39c, 0x026d930a, 0x9c0906a9, 0xeb0e363f,
+      0x72076785, 0x05005713, 0x95bf4a82, 0xe2b87a14, 0x7bb12bae, 0x0cb61b38,
+      0x92d28e9b, 0xe5d5be0d, 0x7cdcefb7, 0x0bdbdf21, 0x86d3d2d4, 0xf1d4e242,
+      0x68ddb3f8, 0x1fda836e, 0x81be16cd, 0xf6b9265b, 0x6fb077e1, 0x18b74777,
+      0x88085ae6, 0xff0f6a70, 0x66063bca, 0x11010b5c, 0x8f659eff, 0xf862ae69,
+      0x616bffd3, 0x166ccf45, 0xa00ae278, 0xd70dd2ee, 0x4e048354, 0x3903b3c2,
+      0xa7672661, 0xd06016f7, 0x4969474d, 0x3e6e77db, 0xaed16a4a, 0xd9d65adc,
+      0x40df0b66, 0x37d83bf0, 0xa9bcae53, 0xdede86c5, 0x57d79a8f, 0x20d09a19,
+      0xb7d99a83, 0xc0dea815, 0x548b5b76, 0x238c6be0, 0xba85605a, 0xcda962cc,
+      0x5ddee15d, 0x2ad9d0cb, 0xb3d08671, 0xc4d7b6e7, 0x5a03b844, 0x2d046882,
+      0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d};
 
-    u32 crc = 0xFFFFFFFF;
-    for (u64 i = 0; i < len; i++) {
-        crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    }
-    return crc ^ 0xFFFFFFFF;
+  u32 crc = 0xFFFFFFFF;
+  for (u64 i = 0; i < len; i++) {
+    crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+  }
+  return crc ^ 0xFFFFFFFF;
 }
 
 /*
@@ -1048,34 +1012,28 @@ static u32 ak_state_crc32(const u8 *data, u64 len)
  * Signals completion and stores result.
  */
 #ifdef KERNEL_STORAGE_ENABLED
-closure_func_basic(status_handler, void, ak_state_write_complete,
-                   status s)
-{
-    ak_state_io_result = is_ok(s) ? 0 : -EIO;
-    ak_state_io_pending = false;
-    closure_finish();
+closure_func_basic(status_handler, void, ak_state_write_complete, status s) {
+  ak_state_io_result = is_ok(s) ? 0 : -EIO;
+  ak_state_io_pending = false;
+  closure_finish();
 }
 
 /*
  * Completion handler for async flush (fsync) operations.
  */
-closure_func_basic(status_handler, void, ak_state_flush_complete,
-                   status s)
-{
-    ak_state_io_result = is_ok(s) ? 0 : -EIO;
-    ak_state_io_pending = false;
-    closure_finish();
+closure_func_basic(status_handler, void, ak_state_flush_complete, status s) {
+  ak_state_io_result = is_ok(s) ? 0 : -EIO;
+  ak_state_io_pending = false;
+  closure_finish();
 }
 
 /*
  * Completion handler for async read operations.
  */
-closure_func_basic(status_handler, void, ak_state_read_complete,
-                   status s)
-{
-    ak_state_io_result = is_ok(s) ? 0 : -EIO;
-    ak_state_io_pending = false;
-    closure_finish();
+closure_func_basic(status_handler, void, ak_state_read_complete, status s) {
+  ak_state_io_result = is_ok(s) ? 0 : -EIO;
+  ak_state_io_pending = false;
+  closure_finish();
 }
 #endif /* KERNEL_STORAGE_ENABLED */
 
@@ -1086,34 +1044,28 @@ closure_func_basic(status_handler, void, ak_state_read_complete,
  * Note: This function is only called from KERNEL_STORAGE_ENABLED code paths.
  * Marked unused to avoid warnings when storage is disabled.
  */
-__attribute__((unused))
-static void ak_state_wait_io(void)
-{
-    while (ak_state_io_pending) {
-        memory_barrier();
-        kern_pause();
-    }
+__attribute__((unused)) static void ak_state_wait_io(void) {
+  while (ak_state_io_pending) {
+    memory_barrier();
+    kern_pause();
+  }
 }
 
-s64 ak_state_set_file_path(const char *path)
-{
-    if (!path)
-        return AK_E_SCHEMA_INVALID;
+s64 ak_state_set_file_path(const char *path) {
+  if (!path)
+    return AK_E_SCHEMA_INVALID;
 
-    u64 len = runtime_strlen(path);
-    if (len >= sizeof(ak_state_file_path) - 1)
-        return AK_E_SCHEMA_INVALID;
+  u64 len = runtime_strlen(path);
+  if (len >= sizeof(ak_state_file_path) - 1)
+    return AK_E_SCHEMA_INVALID;
 
-    runtime_strncpy(ak_state_file_path, path, sizeof(ak_state_file_path) - 1);
-    ak_state_file_path[sizeof(ak_state_file_path) - 1] = '\0';
+  runtime_strncpy(ak_state_file_path, path, sizeof(ak_state_file_path) - 1);
+  ak_state_file_path[sizeof(ak_state_file_path) - 1] = '\0';
 
-    return 0;
+  return 0;
 }
 
-const char *ak_state_get_file_path(void)
-{
-    return ak_state_file_path;
-}
+const char *ak_state_get_file_path(void) { return ak_state_file_path; }
 
 /*
  * ak_state_write_to_disk - Write state to local disk file
@@ -1143,229 +1095,234 @@ const char *ak_state_get_file_path(void)
  * - Partial writes may leave file in inconsistent state
  *   (merkle root verification on load will detect this)
  */
-s64 ak_state_write_to_disk(boolean full_sync)
-{
+s64 ak_state_write_to_disk(boolean full_sync) {
 #ifndef KERNEL_STORAGE_ENABLED
-    /*
-     * Storage not enabled in this build.
-     *
-     * NANOS LIMITATION: When KERNEL_STORAGE_ENABLED is not defined,
-     * filesystem APIs (fsfile_*, sg_list, etc.) are not available.
-     * State persistence requires a storage-enabled kernel build.
-     *
-     * To enable: Build Nanos with storage support and define
-     * KERNEL_STORAGE_ENABLED in the build configuration.
-     */
-    (void)full_sync;
-    return AK_E_NOT_IMPLEMENTED;
+  /*
+   * Storage not enabled in this build.
+   *
+   * NANOS LIMITATION: When KERNEL_STORAGE_ENABLED is not defined,
+   * filesystem APIs (fsfile_*, sg_list, etc.) are not available.
+   * State persistence requires a storage-enabled kernel build.
+   *
+   * To enable: Build Nanos with storage support and define
+   * KERNEL_STORAGE_ENABLED in the build configuration.
+   */
+  (void)full_sync;
+  return AK_E_NOT_IMPLEMENTED;
 #else
-    if (!ak_state.initialized)
-        return AK_E_STATE_NOT_FOUND;
+  if (!ak_state.initialized)
+    return AK_E_STATE_NOT_FOUND;
 
-    /* Get objects to write */
-    u32 object_count = 0;
-    u64 *ptrs = NULL;
+  /* Get objects to write */
+  u32 object_count = 0;
+  u64 *ptrs = NULL;
 
-    if (full_sync) {
-        /* For full sync, we need all objects from heap - use dirty list as proxy */
-        ptrs = ak_state_get_dirty_list(&object_count);
-        /* In a full sync scenario, we'd iterate the entire heap.
-         * For now, this writes dirty objects only since we don't have
-         * a heap enumeration API. */
-    } else {
-        ptrs = ak_state_get_dirty_list(&object_count);
-    }
+  if (full_sync) {
+    /* For full sync, we need all objects from heap - use dirty list as proxy */
+    ptrs = ak_state_get_dirty_list(&object_count);
+    /* In a full sync scenario, we'd iterate the entire heap.
+     * For now, this writes dirty objects only since we don't have
+     * a heap enumeration API. */
+  } else {
+    ptrs = ak_state_get_dirty_list(&object_count);
+  }
 
-    if (object_count == 0) {
-        /* Nothing to write */
-        return 0;
-    }
-
-    /* Open or create the state file */
-    ak_state_fsfile = fsfile_open_or_create(ss(ak_state_file_path), true);
-    if (!ak_state_fsfile) {
-        ak_error("ak_state: failed to open state file %s", ak_state_file_path);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    /* Build the state file in memory first */
-    /* Estimate size: header + entries */
-    u64 estimated_size = sizeof(ak_state_file_header_t) +
-                         (u64)object_count * (sizeof(ak_state_object_entry_t) + 4096);
-    buffer file_buf = allocate_buffer(ak_state.h, estimated_size);
-    if (!file_buf || file_buf == INVALID_ADDRESS) {
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    /* Compute hashes for all objects and build merkle root */
-    u8 *obj_hashes = NULL;
-    if (object_count > 0) {
-        obj_hashes = allocate(ak_state.h, (u64)object_count * AK_HASH_SIZE);
-        if (!obj_hashes || obj_hashes == INVALID_ADDRESS) {
-            deallocate_buffer(file_buf);
-            return AK_E_STATE_BACKEND_ERROR;
-        }
-    }
-
-    /* Serialize each object and compute hashes */
-    buffer *obj_buffers = allocate(ak_state.h, object_count * sizeof(buffer));
-    if (!obj_buffers || obj_buffers == INVALID_ADDRESS) {
-        if (obj_hashes)
-            deallocate(ak_state.h, obj_hashes, (u64)object_count * AK_HASH_SIZE);
-        deallocate_buffer(file_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    u32 valid_count = 0;
-    for (u32 i = 0; i < object_count; i++) {
-        buffer obj_data = ak_heap_serialize_object(ak_state.h, ptrs[i]);
-        if (!obj_data || obj_data == INVALID_ADDRESS) {
-            obj_buffers[i] = NULL;
-            continue;
-        }
-        obj_buffers[i] = obj_data;
-
-        /* Compute hash of object data */
-        compute_hash(obj_data, &obj_hashes[valid_count * AK_HASH_SIZE]);
-        valid_count++;
-    }
-
-    /* Compute merkle root */
-    u8 merkle_root[AK_HASH_SIZE];
-    if (valid_count > 0) {
-        compute_merkle_root(obj_hashes, valid_count, merkle_root);
-    } else {
-        runtime_memset(merkle_root, 0, AK_HASH_SIZE);
-    }
-
-    /* Build file header */
-    ak_state_file_header_t header;
-    runtime_memset(&header, 0, sizeof(header));
-    header.magic = AK_STATE_FILE_MAGIC;
-    header.version = AK_STATE_FILE_VERSION;
-    header.flags = 0;
-    if (ak_state.config.compression_enabled)
-        header.flags |= AK_STATE_FLAG_COMPRESSED;
-    header.object_count = valid_count;
-    header.reserved = 0;
-    header.timestamp_ms = get_timestamp_ms();
-    header.sequence = ak_state.anchor_sequence;
-    runtime_memcpy(header.merkle_root, merkle_root, AK_HASH_SIZE);
-
-    /* Write header to buffer */
-    buffer_write(file_buf, &header, sizeof(header));
-
-    /* Write each object entry */
-    u32 written_count = 0;
-    for (u32 i = 0; i < object_count; i++) {
-        if (!obj_buffers[i])
-            continue;
-
-        /* Get object metadata */
-        ak_object_meta_t meta;
-        if (ak_heap_get_meta(ptrs[i], &meta) != 0) {
-            deallocate_buffer(obj_buffers[i]);
-            continue;
-        }
-
-        /* Build object entry header */
-        ak_state_object_entry_t entry;
-        runtime_memset(&entry, 0, sizeof(entry));
-        entry.ptr = ptrs[i];
-        entry.type_hash = meta.type_hash;
-        entry.version = meta.version;
-        entry.taint = (u32)meta.taint;
-        entry.flags = meta.deleted ? AK_OBJ_FLAG_DELETED : 0;
-        entry.data_length = (u32)buffer_length(obj_buffers[i]);
-
-        /* Copy hash computed earlier */
-        runtime_memcpy(entry.hash, &obj_hashes[written_count * AK_HASH_SIZE], AK_HASH_SIZE);
-
-        /* Write entry header */
-        buffer_write(file_buf, &entry, sizeof(entry));
-
-        /* Write object data */
-        buffer_write(file_buf, buffer_ref(obj_buffers[i], 0), buffer_length(obj_buffers[i]));
-
-        deallocate_buffer(obj_buffers[i]);
-        written_count++;
-    }
-
-    /* Free temporary allocations */
-    deallocate(ak_state.h, obj_buffers, object_count * sizeof(buffer));
-    if (obj_hashes)
-        deallocate(ak_state.h, obj_hashes, (u64)object_count * AK_HASH_SIZE);
-
-    /* Write to file using scatter-gather I/O */
-    sg_list sg = allocate_sg_list();
-    if (!sg || sg == INVALID_ADDRESS) {
-        deallocate_buffer(file_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    sg_buf sgb = sg_list_tail_add(sg, buffer_length(file_buf));
-    if (sgb == INVALID_ADDRESS) {
-        deallocate_sg_list(sg);
-        deallocate_buffer(file_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-    sgb->buf = buffer_ref(file_buf, 0);
-    sgb->size = buffer_length(file_buf);
-    sgb->offset = 0;
-    sgb->refcount = 0;
-
-    /* Initiate async write */
-    ak_state_io_pending = true;
-    ak_state_io_result = 0;
-
-    status_handler write_sh = closure_func(ak_state.h, status_handler, ak_state_write_complete);
-    if (!write_sh || write_sh == INVALID_ADDRESS) {
-        deallocate_sg_list(sg);
-        deallocate_buffer(file_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    range r = irangel(0, buffer_length(file_buf));
-    sg_io writer = pagecache_node_get_writer(fsfile_get_cachenode(ak_state_fsfile));
-    apply(writer, sg, r, write_sh);
-
-    /* Wait for write to complete */
-    ak_state_wait_io();
-
-    deallocate_sg_list(sg);
-
-    if (ak_state_io_result != 0) {
-        deallocate_buffer(file_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    /* Now fsync for durability */
-    ak_state_io_pending = true;
-    ak_state_io_result = 0;
-
-    status_handler flush_sh = closure_func(ak_state.h, status_handler, ak_state_flush_complete);
-    if (!flush_sh || flush_sh == INVALID_ADDRESS) {
-        deallocate_buffer(file_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    /* false = full sync (not just metadata) */
-    fsfile_flush(ak_state_fsfile, false, flush_sh);
-
-    /* Wait for flush to complete */
-    ak_state_wait_io();
-
-    deallocate_buffer(file_buf);
-
-    if (ak_state_io_result != 0) {
-        ak_error("ak_state: fsync failed for state file");
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    /* Update statistics */
-    ak_state.stats.syncs_successful++;
-
+  if (object_count == 0) {
+    /* Nothing to write */
     return 0;
+  }
+
+  /* Open or create the state file */
+  ak_state_fsfile = fsfile_open_or_create(ss(ak_state_file_path), true);
+  if (!ak_state_fsfile) {
+    ak_error("ak_state: failed to open state file %s", ak_state_file_path);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  /* Build the state file in memory first */
+  /* Estimate size: header + entries */
+  u64 estimated_size =
+      sizeof(ak_state_file_header_t) +
+      (u64)object_count * (sizeof(ak_state_object_entry_t) + 4096);
+  buffer file_buf = allocate_buffer(ak_state.h, estimated_size);
+  if (!file_buf || file_buf == INVALID_ADDRESS) {
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  /* Compute hashes for all objects and build merkle root */
+  u8 *obj_hashes = NULL;
+  if (object_count > 0) {
+    obj_hashes = allocate(ak_state.h, (u64)object_count * AK_HASH_SIZE);
+    if (!obj_hashes || obj_hashes == INVALID_ADDRESS) {
+      deallocate_buffer(file_buf);
+      return AK_E_STATE_BACKEND_ERROR;
+    }
+  }
+
+  /* Serialize each object and compute hashes */
+  buffer *obj_buffers = allocate(ak_state.h, object_count * sizeof(buffer));
+  if (!obj_buffers || obj_buffers == INVALID_ADDRESS) {
+    if (obj_hashes)
+      deallocate(ak_state.h, obj_hashes, (u64)object_count * AK_HASH_SIZE);
+    deallocate_buffer(file_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  u32 valid_count = 0;
+  for (u32 i = 0; i < object_count; i++) {
+    buffer obj_data = ak_heap_serialize_object(ak_state.h, ptrs[i]);
+    if (!obj_data || obj_data == INVALID_ADDRESS) {
+      obj_buffers[i] = NULL;
+      continue;
+    }
+    obj_buffers[i] = obj_data;
+
+    /* Compute hash of object data */
+    compute_hash(obj_data, &obj_hashes[valid_count * AK_HASH_SIZE]);
+    valid_count++;
+  }
+
+  /* Compute merkle root */
+  u8 merkle_root[AK_HASH_SIZE];
+  if (valid_count > 0) {
+    compute_merkle_root(obj_hashes, valid_count, merkle_root);
+  } else {
+    runtime_memset(merkle_root, 0, AK_HASH_SIZE);
+  }
+
+  /* Build file header */
+  ak_state_file_header_t header;
+  runtime_memset(&header, 0, sizeof(header));
+  header.magic = AK_STATE_FILE_MAGIC;
+  header.version = AK_STATE_FILE_VERSION;
+  header.flags = 0;
+  if (ak_state.config.compression_enabled)
+    header.flags |= AK_STATE_FLAG_COMPRESSED;
+  header.object_count = valid_count;
+  header.reserved = 0;
+  header.timestamp_ms = get_timestamp_ms();
+  header.sequence = ak_state.anchor_sequence;
+  runtime_memcpy(header.merkle_root, merkle_root, AK_HASH_SIZE);
+
+  /* Write header to buffer */
+  buffer_write(file_buf, &header, sizeof(header));
+
+  /* Write each object entry */
+  u32 written_count = 0;
+  for (u32 i = 0; i < object_count; i++) {
+    if (!obj_buffers[i])
+      continue;
+
+    /* Get object metadata */
+    ak_object_meta_t meta;
+    if (ak_heap_get_meta(ptrs[i], &meta) != 0) {
+      deallocate_buffer(obj_buffers[i]);
+      continue;
+    }
+
+    /* Build object entry header */
+    ak_state_object_entry_t entry;
+    runtime_memset(&entry, 0, sizeof(entry));
+    entry.ptr = ptrs[i];
+    entry.type_hash = meta.type_hash;
+    entry.version = meta.version;
+    entry.taint = (u32)meta.taint;
+    entry.flags = meta.deleted ? AK_OBJ_FLAG_DELETED : 0;
+    entry.data_length = (u32)buffer_length(obj_buffers[i]);
+
+    /* Copy hash computed earlier */
+    runtime_memcpy(entry.hash, &obj_hashes[written_count * AK_HASH_SIZE],
+                   AK_HASH_SIZE);
+
+    /* Write entry header */
+    buffer_write(file_buf, &entry, sizeof(entry));
+
+    /* Write object data */
+    buffer_write(file_buf, buffer_ref(obj_buffers[i], 0),
+                 buffer_length(obj_buffers[i]));
+
+    deallocate_buffer(obj_buffers[i]);
+    written_count++;
+  }
+
+  /* Free temporary allocations */
+  deallocate(ak_state.h, obj_buffers, object_count * sizeof(buffer));
+  if (obj_hashes)
+    deallocate(ak_state.h, obj_hashes, (u64)object_count * AK_HASH_SIZE);
+
+  /* Write to file using scatter-gather I/O */
+  sg_list sg = allocate_sg_list();
+  if (!sg || sg == INVALID_ADDRESS) {
+    deallocate_buffer(file_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  sg_buf sgb = sg_list_tail_add(sg, buffer_length(file_buf));
+  if (sgb == INVALID_ADDRESS) {
+    deallocate_sg_list(sg);
+    deallocate_buffer(file_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+  sgb->buf = buffer_ref(file_buf, 0);
+  sgb->size = buffer_length(file_buf);
+  sgb->offset = 0;
+  sgb->refcount = 0;
+
+  /* Initiate async write */
+  ak_state_io_pending = true;
+  ak_state_io_result = 0;
+
+  status_handler write_sh =
+      closure_func(ak_state.h, status_handler, ak_state_write_complete);
+  if (!write_sh || write_sh == INVALID_ADDRESS) {
+    deallocate_sg_list(sg);
+    deallocate_buffer(file_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  range r = irangel(0, buffer_length(file_buf));
+  sg_io writer =
+      pagecache_node_get_writer(fsfile_get_cachenode(ak_state_fsfile));
+  apply(writer, sg, r, write_sh);
+
+  /* Wait for write to complete */
+  ak_state_wait_io();
+
+  deallocate_sg_list(sg);
+
+  if (ak_state_io_result != 0) {
+    deallocate_buffer(file_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  /* Now fsync for durability */
+  ak_state_io_pending = true;
+  ak_state_io_result = 0;
+
+  status_handler flush_sh =
+      closure_func(ak_state.h, status_handler, ak_state_flush_complete);
+  if (!flush_sh || flush_sh == INVALID_ADDRESS) {
+    deallocate_buffer(file_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  /* false = full sync (not just metadata) */
+  fsfile_flush(ak_state_fsfile, false, flush_sh);
+
+  /* Wait for flush to complete */
+  ak_state_wait_io();
+
+  deallocate_buffer(file_buf);
+
+  if (ak_state_io_result != 0) {
+    ak_error("ak_state: fsync failed for state file");
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  /* Update statistics */
+  ak_state.stats.syncs_successful++;
+
+  return 0;
 #endif /* KERNEL_STORAGE_ENABLED */
 }
 
@@ -1398,231 +1355,234 @@ s64 ak_state_write_to_disk(boolean full_sync)
  * PARTIAL RECOVERY:
  * -----------------
  * If some objects have corrupt hashes but the merkle root doesn't match,
- * we still attempt to restore valid objects but return AK_E_STATE_MERKLE_MISMATCH.
+ * we still attempt to restore valid objects but return
+ * AK_E_STATE_MERKLE_MISMATCH.
  */
-s64 ak_state_load_from_disk(void)
-{
+s64 ak_state_load_from_disk(void) {
 #ifndef KERNEL_STORAGE_ENABLED
-    /*
-     * Storage not enabled in this build.
-     *
-     * NANOS LIMITATION: Filesystem APIs require KERNEL_STORAGE_ENABLED.
-     * See ak_state_write_to_disk() for details.
-     */
-    return AK_E_NOT_IMPLEMENTED;
+  /*
+   * Storage not enabled in this build.
+   *
+   * NANOS LIMITATION: Filesystem APIs require KERNEL_STORAGE_ENABLED.
+   * See ak_state_write_to_disk() for details.
+   */
+  return AK_E_NOT_IMPLEMENTED;
 #else
-    if (!ak_state.initialized)
-        return AK_E_STATE_NOT_FOUND;
+  if (!ak_state.initialized)
+    return AK_E_STATE_NOT_FOUND;
 
-    /* Try to open existing state file */
-    ak_state_fsfile = fsfile_open_or_create(ss(ak_state_file_path), false);
-    if (!ak_state_fsfile) {
-        /* File doesn't exist - not an error, just no state to load */
-        return AK_E_STATE_NOT_FOUND;
-    }
+  /* Try to open existing state file */
+  ak_state_fsfile = fsfile_open_or_create(ss(ak_state_file_path), false);
+  if (!ak_state_fsfile) {
+    /* File doesn't exist - not an error, just no state to load */
+    return AK_E_STATE_NOT_FOUND;
+  }
 
-    u64 file_size = fsfile_get_length(ak_state_fsfile);
-    if (file_size < sizeof(ak_state_file_header_t)) {
-        /* File too small to contain valid header */
-        return AK_E_STATE_FILE_CORRUPT;
-    }
+  u64 file_size = fsfile_get_length(ak_state_fsfile);
+  if (file_size < sizeof(ak_state_file_header_t)) {
+    /* File too small to contain valid header */
+    return AK_E_STATE_FILE_CORRUPT;
+  }
 
-    /* Allocate buffer for reading */
-    buffer read_buf = allocate_buffer(ak_state.h, file_size);
-    if (!read_buf || read_buf == INVALID_ADDRESS) {
-        return AK_E_STATE_BACKEND_ERROR;
-    }
+  /* Allocate buffer for reading */
+  buffer read_buf = allocate_buffer(ak_state.h, file_size);
+  if (!read_buf || read_buf == INVALID_ADDRESS) {
+    return AK_E_STATE_BACKEND_ERROR;
+  }
 
-    /* Ensure buffer has space */
-    buffer_produce(read_buf, file_size);
+  /* Ensure buffer has space */
+  buffer_produce(read_buf, file_size);
 
-    /* Read entire file using scatter-gather I/O */
-    sg_list sg = allocate_sg_list();
-    if (!sg || sg == INVALID_ADDRESS) {
-        deallocate_buffer(read_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    sg_buf sgb = sg_list_tail_add(sg, file_size);
-    if (sgb == INVALID_ADDRESS) {
-        deallocate_sg_list(sg);
-        deallocate_buffer(read_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-    sgb->buf = buffer_ref(read_buf, 0);
-    sgb->size = file_size;
-    sgb->offset = 0;
-    sgb->refcount = 0;
-
-    /* Initiate async read */
-    ak_state_io_pending = true;
-    ak_state_io_result = 0;
-
-    status_handler read_sh = closure_func(ak_state.h, status_handler, ak_state_read_complete);
-    if (!read_sh || read_sh == INVALID_ADDRESS) {
-        deallocate_sg_list(sg);
-        deallocate_buffer(read_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    range r = irangel(0, file_size);
-    sg_io reader = fsfile_get_reader(ak_state_fsfile);
-    apply(reader, sg, r, read_sh);
-
-    /* Wait for read to complete */
-    ak_state_wait_io();
-
-    deallocate_sg_list(sg);
-
-    if (ak_state_io_result != 0) {
-        deallocate_buffer(read_buf);
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    /* Parse and verify file header */
-    u8 *data = buffer_ref(read_buf, 0);
-    ak_state_file_header_t *header = (ak_state_file_header_t *)data;
-
-    /* Verify magic */
-    if (header->magic != AK_STATE_FILE_MAGIC) {
-        ak_warn("ak_state: invalid file magic 0x%08x, expected 0x%08x",
-                header->magic, AK_STATE_FILE_MAGIC);
-        deallocate_buffer(read_buf);
-        return AK_E_STATE_FILE_CORRUPT;
-    }
-
-    /* Verify version */
-    if (header->version != AK_STATE_FILE_VERSION) {
-        ak_warn("ak_state: unsupported version %u, expected %u",
-                header->version, AK_STATE_FILE_VERSION);
-        deallocate_buffer(read_buf);
-        return AK_E_STATE_VERSION_MISMATCH;
-    }
-
-    u32 object_count = header->object_count;
-    if (object_count > AK_MAX_DIRTY_OBJECTS) {
-        ak_warn("ak_state: object count %u exceeds maximum %u",
-                object_count, AK_MAX_DIRTY_OBJECTS);
-        deallocate_buffer(read_buf);
-        return AK_E_STATE_FILE_CORRUPT;
-    }
-
-    /* Allocate hash array for merkle verification */
-    u8 *obj_hashes = NULL;
-    if (object_count > 0) {
-        obj_hashes = allocate(ak_state.h, (u64)object_count * AK_HASH_SIZE);
-        if (!obj_hashes || obj_hashes == INVALID_ADDRESS) {
-            deallocate_buffer(read_buf);
-            return AK_E_STATE_BACKEND_ERROR;
-        }
-    }
-
-    /* Parse and verify each object entry */
-    u64 offset = sizeof(ak_state_file_header_t);
-    u64 objects_loaded = 0;
-    u64 bytes_loaded = 0;
-    boolean hash_mismatch = false;
-
-    for (u32 i = 0; i < object_count; i++) {
-        /* Check bounds for entry header */
-        if (offset + sizeof(ak_state_object_entry_t) > file_size) {
-            ak_warn("ak_state: truncated file at object %u", i);
-            break;
-        }
-
-        ak_state_object_entry_t *entry = (ak_state_object_entry_t *)(data + offset);
-        offset += sizeof(ak_state_object_entry_t);
-
-        /* Check bounds for object data */
-        if (offset + entry->data_length > file_size) {
-            ak_warn("ak_state: truncated object data at object %u", i);
-            break;
-        }
-
-        u8 *obj_data = data + offset;
-
-        /* Verify object hash */
-        buffer obj_buf = alloca_wrap_buffer(obj_data, entry->data_length);
-        u8 computed_hash[AK_HASH_SIZE];
-        compute_hash(obj_buf, computed_hash);
-
-        if (runtime_memcmp(computed_hash, entry->hash, AK_HASH_SIZE) != 0) {
-            ak_warn("ak_state: hash mismatch for object ptr=%llu", entry->ptr);
-            hash_mismatch = true;
-            /* Copy the stored hash for merkle computation anyway */
-            runtime_memcpy(&obj_hashes[i * AK_HASH_SIZE], entry->hash, AK_HASH_SIZE);
-            offset += entry->data_length;
-            continue;
-        }
-
-        /* Hash verified - copy for merkle computation */
-        runtime_memcpy(&obj_hashes[i * AK_HASH_SIZE], computed_hash, AK_HASH_SIZE);
-
-        /* Skip deleted objects */
-        if (entry->flags & AK_OBJ_FLAG_DELETED) {
-            offset += entry->data_length;
-            continue;
-        }
-
-        /* Restore object to heap */
-        buffer restore_buf = allocate_buffer(ak_state.h, entry->data_length);
-        if (restore_buf && restore_buf != INVALID_ADDRESS) {
-            buffer_write(restore_buf, obj_data, entry->data_length);
-
-            s64 result = ak_heap_restore(restore_buf);
-            if (result == 0) {
-                objects_loaded++;
-                bytes_loaded += entry->data_length;
-            }
-            deallocate_buffer(restore_buf);
-        }
-
-        offset += entry->data_length;
-    }
-
-    /* Verify merkle root */
-    u8 computed_merkle[AK_HASH_SIZE];
-    if (object_count > 0) {
-        compute_merkle_root(obj_hashes, object_count, computed_merkle);
-        deallocate(ak_state.h, obj_hashes, (u64)object_count * AK_HASH_SIZE);
-
-        if (runtime_memcmp(computed_merkle, header->merkle_root, AK_HASH_SIZE) != 0) {
-            ak_warn("ak_state: merkle root mismatch");
-            deallocate_buffer(read_buf);
-            /* Still loaded some objects, return specific error */
-            ak_state.hydration.hydrated = (objects_loaded > 0);
-            ak_state.hydration.objects_loaded = objects_loaded;
-            ak_state.hydration.bytes_loaded = bytes_loaded;
-            return AK_E_STATE_MERKLE_MISMATCH;
-        }
-    }
-
+  /* Read entire file using scatter-gather I/O */
+  sg_list sg = allocate_sg_list();
+  if (!sg || sg == INVALID_ADDRESS) {
     deallocate_buffer(read_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
 
-    /* Update hydration status */
-    ak_state.hydration.hydrated = (objects_loaded > 0);
-    ak_state.hydration.objects_loaded = objects_loaded;
-    ak_state.hydration.bytes_loaded = bytes_loaded;
-    ak_state.hydration.source_sequence = header->sequence;
+  sg_buf sgb = sg_list_tail_add(sg, file_size);
+  if (sgb == INVALID_ADDRESS) {
+    deallocate_sg_list(sg);
+    deallocate_buffer(read_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+  sgb->buf = buffer_ref(read_buf, 0);
+  sgb->size = file_size;
+  sgb->offset = 0;
+  sgb->refcount = 0;
 
-    /* Update anchor sequence to continue from loaded state */
-    if (header->sequence > ak_state.anchor_sequence) {
-        ak_state.anchor_sequence = header->sequence;
+  /* Initiate async read */
+  ak_state_io_pending = true;
+  ak_state_io_result = 0;
+
+  status_handler read_sh =
+      closure_func(ak_state.h, status_handler, ak_state_read_complete);
+  if (!read_sh || read_sh == INVALID_ADDRESS) {
+    deallocate_sg_list(sg);
+    deallocate_buffer(read_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  range r = irangel(0, file_size);
+  sg_io reader = fsfile_get_reader(ak_state_fsfile);
+  apply(reader, sg, r, read_sh);
+
+  /* Wait for read to complete */
+  ak_state_wait_io();
+
+  deallocate_sg_list(sg);
+
+  if (ak_state_io_result != 0) {
+    deallocate_buffer(read_buf);
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  /* Parse and verify file header */
+  u8 *data = buffer_ref(read_buf, 0);
+  ak_state_file_header_t *header = (ak_state_file_header_t *)data;
+
+  /* Verify magic */
+  if (header->magic != AK_STATE_FILE_MAGIC) {
+    ak_warn("ak_state: invalid file magic 0x%08x, expected 0x%08x",
+            header->magic, AK_STATE_FILE_MAGIC);
+    deallocate_buffer(read_buf);
+    return AK_E_STATE_FILE_CORRUPT;
+  }
+
+  /* Verify version */
+  if (header->version != AK_STATE_FILE_VERSION) {
+    ak_warn("ak_state: unsupported version %u, expected %u", header->version,
+            AK_STATE_FILE_VERSION);
+    deallocate_buffer(read_buf);
+    return AK_E_STATE_VERSION_MISMATCH;
+  }
+
+  u32 object_count = header->object_count;
+  if (object_count > AK_MAX_DIRTY_OBJECTS) {
+    ak_warn("ak_state: object count %u exceeds maximum %u", object_count,
+            AK_MAX_DIRTY_OBJECTS);
+    deallocate_buffer(read_buf);
+    return AK_E_STATE_FILE_CORRUPT;
+  }
+
+  /* Allocate hash array for merkle verification */
+  u8 *obj_hashes = NULL;
+  if (object_count > 0) {
+    obj_hashes = allocate(ak_state.h, (u64)object_count * AK_HASH_SIZE);
+    if (!obj_hashes || obj_hashes == INVALID_ADDRESS) {
+      deallocate_buffer(read_buf);
+      return AK_E_STATE_BACKEND_ERROR;
+    }
+  }
+
+  /* Parse and verify each object entry */
+  u64 offset = sizeof(ak_state_file_header_t);
+  u64 objects_loaded = 0;
+  u64 bytes_loaded = 0;
+  boolean hash_mismatch = false;
+
+  for (u32 i = 0; i < object_count; i++) {
+    /* Check bounds for entry header */
+    if (offset + sizeof(ak_state_object_entry_t) > file_size) {
+      ak_warn("ak_state: truncated file at object %u", i);
+      break;
     }
 
-    /* Update latest anchor with loaded merkle root */
-    runtime_memcpy(ak_state.latest_anchor.heap_root, header->merkle_root, AK_HASH_SIZE);
-    ak_state.latest_anchor.sequence = header->sequence;
-    ak_state.latest_anchor.timestamp_ms = header->timestamp_ms;
+    ak_state_object_entry_t *entry = (ak_state_object_entry_t *)(data + offset);
+    offset += sizeof(ak_state_object_entry_t);
 
-    ak_state.stats.hydrations_total++;
-
-    if (hash_mismatch) {
-        /* Some objects had hash mismatches but merkle was ok - shouldn't happen */
-        return AK_E_STATE_FILE_CORRUPT;
+    /* Check bounds for object data */
+    if (offset + entry->data_length > file_size) {
+      ak_warn("ak_state: truncated object data at object %u", i);
+      break;
     }
 
-    return 0;
+    u8 *obj_data = data + offset;
+
+    /* Verify object hash */
+    buffer obj_buf = alloca_wrap_buffer(obj_data, entry->data_length);
+    u8 computed_hash[AK_HASH_SIZE];
+    compute_hash(obj_buf, computed_hash);
+
+    if (runtime_memcmp(computed_hash, entry->hash, AK_HASH_SIZE) != 0) {
+      ak_warn("ak_state: hash mismatch for object ptr=%llu", entry->ptr);
+      hash_mismatch = true;
+      /* Copy the stored hash for merkle computation anyway */
+      runtime_memcpy(&obj_hashes[i * AK_HASH_SIZE], entry->hash, AK_HASH_SIZE);
+      offset += entry->data_length;
+      continue;
+    }
+
+    /* Hash verified - copy for merkle computation */
+    runtime_memcpy(&obj_hashes[i * AK_HASH_SIZE], computed_hash, AK_HASH_SIZE);
+
+    /* Skip deleted objects */
+    if (entry->flags & AK_OBJ_FLAG_DELETED) {
+      offset += entry->data_length;
+      continue;
+    }
+
+    /* Restore object to heap */
+    buffer restore_buf = allocate_buffer(ak_state.h, entry->data_length);
+    if (restore_buf && restore_buf != INVALID_ADDRESS) {
+      buffer_write(restore_buf, obj_data, entry->data_length);
+
+      s64 result = ak_heap_restore(restore_buf);
+      if (result == 0) {
+        objects_loaded++;
+        bytes_loaded += entry->data_length;
+      }
+      deallocate_buffer(restore_buf);
+    }
+
+    offset += entry->data_length;
+  }
+
+  /* Verify merkle root */
+  u8 computed_merkle[AK_HASH_SIZE];
+  if (object_count > 0) {
+    compute_merkle_root(obj_hashes, object_count, computed_merkle);
+    deallocate(ak_state.h, obj_hashes, (u64)object_count * AK_HASH_SIZE);
+
+    if (runtime_memcmp(computed_merkle, header->merkle_root, AK_HASH_SIZE) !=
+        0) {
+      ak_warn("ak_state: merkle root mismatch");
+      deallocate_buffer(read_buf);
+      /* Still loaded some objects, return specific error */
+      ak_state.hydration.hydrated = (objects_loaded > 0);
+      ak_state.hydration.objects_loaded = objects_loaded;
+      ak_state.hydration.bytes_loaded = bytes_loaded;
+      return AK_E_STATE_MERKLE_MISMATCH;
+    }
+  }
+
+  deallocate_buffer(read_buf);
+
+  /* Update hydration status */
+  ak_state.hydration.hydrated = (objects_loaded > 0);
+  ak_state.hydration.objects_loaded = objects_loaded;
+  ak_state.hydration.bytes_loaded = bytes_loaded;
+  ak_state.hydration.source_sequence = header->sequence;
+
+  /* Update anchor sequence to continue from loaded state */
+  if (header->sequence > ak_state.anchor_sequence) {
+    ak_state.anchor_sequence = header->sequence;
+  }
+
+  /* Update latest anchor with loaded merkle root */
+  runtime_memcpy(ak_state.latest_anchor.heap_root, header->merkle_root,
+                 AK_HASH_SIZE);
+  ak_state.latest_anchor.sequence = header->sequence;
+  ak_state.latest_anchor.timestamp_ms = header->timestamp_ms;
+
+  ak_state.stats.hydrations_total++;
+
+  if (hash_mismatch) {
+    /* Some objects had hash mismatches but merkle was ok - shouldn't happen */
+    return AK_E_STATE_FILE_CORRUPT;
+  }
+
+  return 0;
 #endif /* KERNEL_STORAGE_ENABLED */
 }
 
@@ -1639,99 +1599,102 @@ s64 ak_state_load_from_disk(void)
  * but without actually restoring objects to the heap. Useful for checking
  * backup files or validating state before recovery.
  */
-s64 ak_state_verify_file(const char *path)
-{
+s64 ak_state_verify_file(const char *path) {
 #ifndef KERNEL_STORAGE_ENABLED
-    (void)path;
-    return AK_E_NOT_IMPLEMENTED;
+  (void)path;
+  return AK_E_NOT_IMPLEMENTED;
 #else
-    if (!path)
-        return AK_E_SCHEMA_INVALID;
+  if (!path)
+    return AK_E_SCHEMA_INVALID;
 
-    /* Save and temporarily change file path */
-    char saved_path[256];
-    runtime_strncpy(saved_path, ak_state_file_path, sizeof(saved_path));
-    runtime_strncpy(ak_state_file_path, path, sizeof(ak_state_file_path) - 1);
+  /* Save and temporarily change file path */
+  char saved_path[256];
+  runtime_strncpy(saved_path, ak_state_file_path, sizeof(saved_path));
+  runtime_strncpy(ak_state_file_path, path, sizeof(ak_state_file_path) - 1);
 
-    /* Open the file */
-    fsfile verify_file = fsfile_open_or_create(ss(ak_state_file_path), false);
-    if (!verify_file) {
-        runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
-        return AK_E_STATE_NOT_FOUND;
-    }
+  /* Open the file */
+  fsfile verify_file = fsfile_open_or_create(ss(ak_state_file_path), false);
+  if (!verify_file) {
+    runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
+    return AK_E_STATE_NOT_FOUND;
+  }
 
-    u64 file_size = fsfile_get_length(verify_file);
-    if (file_size < sizeof(ak_state_file_header_t)) {
-        runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
-        return AK_E_STATE_FILE_CORRUPT;
-    }
+  u64 file_size = fsfile_get_length(verify_file);
+  if (file_size < sizeof(ak_state_file_header_t)) {
+    runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
+    return AK_E_STATE_FILE_CORRUPT;
+  }
 
-    /* Read file header */
-    buffer header_buf = allocate_buffer(ak_state.h, sizeof(ak_state_file_header_t));
-    if (!header_buf || header_buf == INVALID_ADDRESS) {
-        runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
-        return AK_E_STATE_BACKEND_ERROR;
-    }
+  /* Read file header */
+  buffer header_buf =
+      allocate_buffer(ak_state.h, sizeof(ak_state_file_header_t));
+  if (!header_buf || header_buf == INVALID_ADDRESS) {
+    runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
+    return AK_E_STATE_BACKEND_ERROR;
+  }
 
-    buffer_produce(header_buf, sizeof(ak_state_file_header_t));
+  buffer_produce(header_buf, sizeof(ak_state_file_header_t));
 
-    sg_list sg = allocate_sg_list();
-    if (!sg || sg == INVALID_ADDRESS) {
-        deallocate_buffer(header_buf);
-        runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    sg_buf sgb = sg_list_tail_add(sg, sizeof(ak_state_file_header_t));
-    if (sgb == INVALID_ADDRESS) {
-        deallocate_sg_list(sg);
-        deallocate_buffer(header_buf);
-        runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-    sgb->buf = buffer_ref(header_buf, 0);
-    sgb->size = sizeof(ak_state_file_header_t);
-    sgb->offset = 0;
-    sgb->refcount = 0;
-
-    ak_state_io_pending = true;
-    ak_state_io_result = 0;
-
-    status_handler read_sh = closure_func(ak_state.h, status_handler, ak_state_read_complete);
-    if (!read_sh || read_sh == INVALID_ADDRESS) {
-        deallocate_sg_list(sg);
-        deallocate_buffer(header_buf);
-        runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    range r = irangel(0, sizeof(ak_state_file_header_t));
-    sg_io reader = fsfile_get_reader(verify_file);
-    apply(reader, sg, r, read_sh);
-
-    ak_state_wait_io();
-    deallocate_sg_list(sg);
-
-    if (ak_state_io_result != 0) {
-        deallocate_buffer(header_buf);
-        runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
-        return AK_E_STATE_BACKEND_ERROR;
-    }
-
-    ak_state_file_header_t *header = (ak_state_file_header_t *)buffer_ref(header_buf, 0);
-
-    s64 result = 0;
-    if (header->magic != AK_STATE_FILE_MAGIC) {
-        result = AK_E_STATE_FILE_CORRUPT;
-    } else if (header->version != AK_STATE_FILE_VERSION) {
-        result = AK_E_STATE_VERSION_MISMATCH;
-    }
-    /* Full merkle verification would require reading entire file - skipped for quick verify */
-
+  sg_list sg = allocate_sg_list();
+  if (!sg || sg == INVALID_ADDRESS) {
     deallocate_buffer(header_buf);
     runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
+    return AK_E_STATE_BACKEND_ERROR;
+  }
 
-    return result;
+  sg_buf sgb = sg_list_tail_add(sg, sizeof(ak_state_file_header_t));
+  if (sgb == INVALID_ADDRESS) {
+    deallocate_sg_list(sg);
+    deallocate_buffer(header_buf);
+    runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+  sgb->buf = buffer_ref(header_buf, 0);
+  sgb->size = sizeof(ak_state_file_header_t);
+  sgb->offset = 0;
+  sgb->refcount = 0;
+
+  ak_state_io_pending = true;
+  ak_state_io_result = 0;
+
+  status_handler read_sh =
+      closure_func(ak_state.h, status_handler, ak_state_read_complete);
+  if (!read_sh || read_sh == INVALID_ADDRESS) {
+    deallocate_sg_list(sg);
+    deallocate_buffer(header_buf);
+    runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  range r = irangel(0, sizeof(ak_state_file_header_t));
+  sg_io reader = fsfile_get_reader(verify_file);
+  apply(reader, sg, r, read_sh);
+
+  ak_state_wait_io();
+  deallocate_sg_list(sg);
+
+  if (ak_state_io_result != 0) {
+    deallocate_buffer(header_buf);
+    runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
+    return AK_E_STATE_BACKEND_ERROR;
+  }
+
+  ak_state_file_header_t *header =
+      (ak_state_file_header_t *)buffer_ref(header_buf, 0);
+
+  s64 result = 0;
+  if (header->magic != AK_STATE_FILE_MAGIC) {
+    result = AK_E_STATE_FILE_CORRUPT;
+  } else if (header->version != AK_STATE_FILE_VERSION) {
+    result = AK_E_STATE_VERSION_MISMATCH;
+  }
+  /* Full merkle verification would require reading entire file - skipped for
+   * quick verify */
+
+  deallocate_buffer(header_buf);
+  runtime_strncpy(ak_state_file_path, saved_path, sizeof(ak_state_file_path));
+
+  return result;
 #endif /* KERNEL_STORAGE_ENABLED */
 }
 

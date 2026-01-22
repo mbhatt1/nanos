@@ -21,8 +21,8 @@
 #ifndef AK_OBSERVE_H
 #define AK_OBSERVE_H
 
-#include "ak_types.h"
 #include "ak_effects.h"
+#include "ak_types.h"
 
 /* ============================================================
  * METRIC TYPES
@@ -30,32 +30,32 @@
  */
 
 typedef enum ak_metric_type {
-    AK_METRIC_COUNTER = 0,      /* Monotonically increasing counter */
-    AK_METRIC_GAUGE = 1,        /* Point-in-time value (can go up/down) */
-    AK_METRIC_HISTOGRAM = 2,    /* Distribution of values */
+  AK_METRIC_COUNTER = 0,   /* Monotonically increasing counter */
+  AK_METRIC_GAUGE = 1,     /* Point-in-time value (can go up/down) */
+  AK_METRIC_HISTOGRAM = 2, /* Distribution of values */
 } ak_metric_type_t;
 
 /* Histogram bucket boundaries (in appropriate units for each metric) */
-#define AK_HISTOGRAM_BUCKETS    16
+#define AK_HISTOGRAM_BUCKETS 16
 
 /* Histogram bucket configuration for latency metrics (nanoseconds) */
 static const u64 AK_LATENCY_BUCKETS[AK_HISTOGRAM_BUCKETS] = {
-    1000,           /* 1us */
-    5000,           /* 5us */
-    10000,          /* 10us */
-    50000,          /* 50us */
-    100000,         /* 100us */
-    500000,         /* 500us */
-    1000000,        /* 1ms */
-    5000000,        /* 5ms */
-    10000000,       /* 10ms */
-    50000000,       /* 50ms */
-    100000000,      /* 100ms */
-    500000000,      /* 500ms */
-    1000000000,     /* 1s */
-    5000000000,     /* 5s */
-    10000000000,    /* 10s */
-    UINT64_MAX      /* +Inf */
+    1000,        /* 1us */
+    5000,        /* 5us */
+    10000,       /* 10us */
+    50000,       /* 50us */
+    100000,      /* 100us */
+    500000,      /* 500us */
+    1000000,     /* 1ms */
+    5000000,     /* 5ms */
+    10000000,    /* 10ms */
+    50000000,    /* 50ms */
+    100000000,   /* 100ms */
+    500000000,   /* 500ms */
+    1000000000,  /* 1s */
+    5000000000,  /* 5s */
+    10000000000, /* 10s */
+    UINT64_MAX   /* +Inf */
 };
 
 /* ============================================================
@@ -64,25 +64,25 @@ static const u64 AK_LATENCY_BUCKETS[AK_HISTOGRAM_BUCKETS] = {
  */
 
 typedef struct ak_metric {
-    char name[64];              /* Metric name (e.g., "ak_effects_total") */
-    char help[128];             /* Human-readable description */
-    ak_metric_type_t type;
-    char labels[256];           /* Label set as "key=value,key=value" */
+  char name[64];  /* Metric name (e.g., "ak_effects_total") */
+  char help[128]; /* Human-readable description */
+  ak_metric_type_t type;
+  char labels[256]; /* Label set as "key=value,key=value" */
 
-    union {
-        /* Counter: monotonically increasing */
-        u64 counter;
+  union {
+    /* Counter: monotonically increasing */
+    u64 counter;
 
-        /* Gauge: can go up or down */
-        s64 gauge;
+    /* Gauge: can go up or down */
+    s64 gauge;
 
-        /* Histogram: distribution tracking */
-        struct {
-            u64 sum;            /* Sum of all observed values */
-            u64 count;          /* Number of observations */
-            u64 buckets[AK_HISTOGRAM_BUCKETS];  /* Cumulative bucket counts */
-        } histogram;
-    } value;
+    /* Histogram: distribution tracking */
+    struct {
+      u64 sum;                           /* Sum of all observed values */
+      u64 count;                         /* Number of observations */
+      u64 buckets[AK_HISTOGRAM_BUCKETS]; /* Cumulative bucket counts */
+    } histogram;
+  } value;
 } ak_metric_t;
 
 /* ============================================================
@@ -93,38 +93,38 @@ typedef struct ak_metric {
  */
 
 /* Trace/span ID sizes (W3C Trace Context) */
-#define AK_TRACE_ID_SIZE        16      /* 128-bit trace ID */
-#define AK_SPAN_ID_SIZE         8       /* 64-bit span ID */
+#define AK_TRACE_ID_SIZE 16 /* 128-bit trace ID */
+#define AK_SPAN_ID_SIZE 8   /* 64-bit span ID */
 
 typedef struct ak_trace_span {
-    /* Identity */
-    u8 trace_id[AK_TRACE_ID_SIZE];      /* Unique trace identifier */
-    u8 span_id[AK_SPAN_ID_SIZE];        /* Unique span identifier */
-    u8 parent_span_id[AK_SPAN_ID_SIZE]; /* Parent span (0 for root) */
+  /* Identity */
+  u8 trace_id[AK_TRACE_ID_SIZE];      /* Unique trace identifier */
+  u8 span_id[AK_SPAN_ID_SIZE];        /* Unique span identifier */
+  u8 parent_span_id[AK_SPAN_ID_SIZE]; /* Parent span (0 for root) */
 
-    /* Operation */
-    char operation[64];                  /* Operation name */
-    ak_effect_op_t effect_op;           /* Effect operation type */
+  /* Operation */
+  char operation[64];       /* Operation name */
+  ak_effect_op_t effect_op; /* Effect operation type */
 
-    /* Timing */
-    u64 start_ns;                       /* Start timestamp (nanoseconds) */
-    u64 end_ns;                         /* End timestamp (0 if in-progress) */
+  /* Timing */
+  u64 start_ns; /* Start timestamp (nanoseconds) */
+  u64 end_ns;   /* End timestamp (0 if in-progress) */
 
-    /* Result */
-    boolean allowed;                    /* true if effect was allowed */
-    ak_deny_reason_t deny_reason;       /* Reason if denied */
-    int errno_equiv;                    /* Errno equivalent if denied */
+  /* Result */
+  boolean allowed;              /* true if effect was allowed */
+  ak_deny_reason_t deny_reason; /* Reason if denied */
+  int errno_equiv;              /* Errno equivalent if denied */
 
-    /* Attributes (JSON key-values for context) */
-    char attributes[512];               /* Extensible attributes */
-    u32 attributes_len;
+  /* Attributes (JSON key-values for context) */
+  char attributes[512]; /* Extensible attributes */
+  u32 attributes_len;
 
-    /* Linkage */
-    struct ak_trace_span *next;         /* For span pool management */
+  /* Linkage */
+  struct ak_trace_span *next; /* For span pool management */
 
-    /* State */
-    boolean active;                     /* Span is still in-progress */
-    boolean recorded;                   /* Span has been exported/recorded */
+  /* State */
+  boolean active;   /* Span is still in-progress */
+  boolean recorded; /* Span has been exported/recorded */
 } ak_trace_span_t;
 
 /* ============================================================
@@ -134,35 +134,35 @@ typedef struct ak_trace_span {
  */
 
 typedef struct ak_decision_log_entry {
-    /* Identity */
-    u8 trace_id[AK_TRACE_ID_SIZE];
-    u64 sequence;                       /* Monotonic sequence number */
+  /* Identity */
+  u8 trace_id[AK_TRACE_ID_SIZE];
+  u64 sequence; /* Monotonic sequence number */
 
-    /* Timestamp */
-    u64 timestamp_ns;
+  /* Timestamp */
+  u64 timestamp_ns;
 
-    /* Effect request (copy of relevant fields) */
-    ak_effect_op_t op;
-    char target[AK_MAX_TARGET];
-    u8 params[AK_MAX_PARAMS];
-    u32 params_len;
+  /* Effect request (copy of relevant fields) */
+  ak_effect_op_t op;
+  char target[AK_MAX_TARGET];
+  u8 params[AK_MAX_PARAMS];
+  u32 params_len;
 
-    /* Context at decision time */
-    ak_mode_t mode;
-    boolean boot_capsule_active;
-    u8 policy_hash[AK_HASH_SIZE];       /* Hash of active policy */
+  /* Context at decision time */
+  ak_mode_t mode;
+  boolean boot_capsule_active;
+  u8 policy_hash[AK_HASH_SIZE]; /* Hash of active policy */
 
-    /* Decision result */
-    boolean allowed;
-    ak_deny_reason_t reason;
-    char missing_cap[AK_MAX_CAPSTR];
-    char suggested_snippet[AK_MAX_SUGGEST];
+  /* Decision result */
+  boolean allowed;
+  ak_deny_reason_t reason;
+  char missing_cap[AK_MAX_CAPSTR];
+  char suggested_snippet[AK_MAX_SUGGEST];
 
-    /* Timing */
-    u64 decision_latency_ns;
+  /* Timing */
+  u64 decision_latency_ns;
 
-    /* Chain for storage */
-    struct ak_decision_log_entry *next;
+  /* Chain for storage */
+  struct ak_decision_log_entry *next;
 } ak_decision_log_entry_t;
 
 /* ============================================================
@@ -287,15 +287,15 @@ s64 ak_metrics_export_json(char *buf, u64 max_len);
  */
 
 /* Metric names */
-#define AK_METRIC_EFFECTS_TOTAL         "ak_effects_total"
-#define AK_METRIC_EFFECTS_LATENCY       "ak_effects_latency_seconds"
-#define AK_METRIC_DENIALS_TOTAL         "ak_denials_total"
-#define AK_METRIC_BUDGET_USAGE          "ak_budget_usage"
-#define AK_METRIC_ACTIVE_AGENTS         "ak_active_agents"
-#define AK_METRIC_STREAMS_ACTIVE        "ak_streams_active"
-#define AK_METRIC_TOKENS_TOTAL          "ak_tokens_total"
-#define AK_METRIC_SPANS_ACTIVE          "ak_spans_active"
-#define AK_METRIC_DECISION_LOG_SIZE     "ak_decision_log_size"
+#define AK_METRIC_EFFECTS_TOTAL "ak_effects_total"
+#define AK_METRIC_EFFECTS_LATENCY "ak_effects_latency_seconds"
+#define AK_METRIC_DENIALS_TOTAL "ak_denials_total"
+#define AK_METRIC_BUDGET_USAGE "ak_budget_usage"
+#define AK_METRIC_ACTIVE_AGENTS "ak_active_agents"
+#define AK_METRIC_STREAMS_ACTIVE "ak_streams_active"
+#define AK_METRIC_TOKENS_TOTAL "ak_tokens_total"
+#define AK_METRIC_SPANS_ACTIVE "ak_spans_active"
+#define AK_METRIC_DECISION_LOG_SIZE "ak_decision_log_size"
 
 /*
  * Record an effect completion for built-in metrics.
@@ -308,12 +308,8 @@ s64 ak_metrics_export_json(char *buf, u64 max_len);
  * @param reason    Deny reason if not allowed
  * @param latency_ns Latency in nanoseconds
  */
-void ak_observe_effect(
-    ak_effect_op_t op,
-    boolean allowed,
-    ak_deny_reason_t reason,
-    u64 latency_ns
-);
+void ak_observe_effect(ak_effect_op_t op, boolean allowed,
+                       ak_deny_reason_t reason, u64 latency_ns);
 
 /* ============================================================
  * DISTRIBUTED TRACING API
@@ -334,11 +330,8 @@ void ak_observe_effect(
  *   - start_ns is set to current time
  *   - Unique span_id generated
  */
-ak_trace_span_t *ak_trace_start(
-    const char *operation,
-    const u8 *parent_trace,
-    const u8 *parent_span
-);
+ak_trace_span_t *ak_trace_start(const char *operation, const u8 *parent_trace,
+                                const u8 *parent_span);
 
 /*
  * End a trace span.
@@ -359,11 +352,8 @@ void ak_trace_end(ak_trace_span_t *span);
  * @param key       Attribute key
  * @param value     Attribute value (will be JSON-escaped)
  */
-void ak_trace_set_attribute(
-    ak_trace_span_t *span,
-    const char *key,
-    const char *value
-);
+void ak_trace_set_attribute(ak_trace_span_t *span, const char *key,
+                            const char *value);
 
 /*
  * Set span effect details.
@@ -374,13 +364,9 @@ void ak_trace_set_attribute(
  * @param allowed   Whether effect was allowed
  * @param reason    Deny reason if not allowed
  */
-void ak_trace_set_effect(
-    ak_trace_span_t *span,
-    ak_effect_op_t op,
-    const char *target,
-    boolean allowed,
-    ak_deny_reason_t reason
-);
+void ak_trace_set_effect(ak_trace_span_t *span, ak_effect_op_t op,
+                         const char *target, boolean allowed,
+                         ak_deny_reason_t reason);
 
 /*
  * Get current active span for this thread.
@@ -482,11 +468,8 @@ boolean ak_decision_log_is_enabled(void);
  *
  * Returns: 0 on success, negative on error.
  */
-int ak_decision_log_record(
-    ak_ctx_t *ctx,
-    const ak_effect_req_t *req,
-    const ak_decision_t *decision
-);
+int ak_decision_log_record(ak_ctx_t *ctx, const ak_effect_req_t *req,
+                           const ak_decision_t *decision);
 
 /*
  * Replay a decision from the log.
@@ -501,11 +484,7 @@ int ak_decision_log_record(
  * Returns: 0 on success and match, 1 on success with different result,
  *          negative on error.
  */
-int ak_decision_replay(
-    const u8 *trace_id,
-    char *result,
-    u64 max_len
-);
+int ak_decision_replay(const u8 *trace_id, char *result, u64 max_len);
 
 /*
  * Query decision log entries.
@@ -514,19 +493,17 @@ int ak_decision_replay(
  * @param start_time_ns Start timestamp filter (0 for no filter)
  * @param end_time_ns   End timestamp filter (UINT64_MAX for no filter)
  * @param op_filter     Operation filter (0 for all)
- * @param allowed_filter Filter by allowed (0=all, 1=allowed only, 2=denied only)
+ * @param allowed_filter Filter by allowed (0=all, 1=allowed only, 2=denied
+ * only)
  * @param count_out     Output: number of entries returned
  *
  * Returns: Array of decision log entries (caller must free).
  */
-ak_decision_log_entry_t **ak_decision_log_query(
-    heap h,
-    u64 start_time_ns,
-    u64 end_time_ns,
-    ak_effect_op_t op_filter,
-    int allowed_filter,
-    u64 *count_out
-);
+ak_decision_log_entry_t **ak_decision_log_query(heap h, u64 start_time_ns,
+                                                u64 end_time_ns,
+                                                ak_effect_op_t op_filter,
+                                                int allowed_filter,
+                                                u64 *count_out);
 
 /*
  * Export decision log as JSON.
@@ -550,12 +527,12 @@ void ak_decision_log_clear(void);
  * Get decision log statistics.
  */
 typedef struct ak_decision_log_stats {
-    u64 total_entries;
-    u64 allowed_count;
-    u64 denied_count;
-    u64 oldest_timestamp_ns;
-    u64 newest_timestamp_ns;
-    u64 storage_bytes;
+  u64 total_entries;
+  u64 allowed_count;
+  u64 denied_count;
+  u64 oldest_timestamp_ns;
+  u64 newest_timestamp_ns;
+  u64 storage_bytes;
 } ak_decision_log_stats_t;
 
 void ak_decision_log_get_stats(ak_decision_log_stats_t *stats);
@@ -577,10 +554,8 @@ void ak_decision_log_get_stats(ak_decision_log_stats_t *stats);
  *
  * Returns: Span for this authorization, or NULL if tracing disabled.
  */
-ak_trace_span_t *ak_observe_effect_start(
-    ak_ctx_t *ctx,
-    const ak_effect_req_t *req
-);
+ak_trace_span_t *ak_observe_effect_start(ak_ctx_t *ctx,
+                                         const ak_effect_req_t *req);
 
 /*
  * Complete a trace span for an effect authorization.
@@ -590,21 +565,19 @@ ak_trace_span_t *ak_observe_effect_start(
  * @param span      Span to complete
  * @param decision  Authorization decision
  */
-void ak_observe_effect_end(
-    ak_trace_span_t *span,
-    const ak_decision_t *decision
-);
+void ak_observe_effect_end(ak_trace_span_t *span,
+                           const ak_decision_t *decision);
 
 /* ============================================================
  * ERROR CODES
  * ============================================================
  */
 
-#define AK_E_OBSERVE_NOT_INIT       (-4800)
-#define AK_E_OBSERVE_METRIC_EXISTS  (-4801)
+#define AK_E_OBSERVE_NOT_INIT (-4800)
+#define AK_E_OBSERVE_METRIC_EXISTS (-4801)
 #define AK_E_OBSERVE_METRIC_NOT_FOUND (-4802)
-#define AK_E_OBSERVE_SPAN_LIMIT     (-4803)
-#define AK_E_OBSERVE_LOG_FULL       (-4804)
+#define AK_E_OBSERVE_SPAN_LIMIT (-4803)
+#define AK_E_OBSERVE_LOG_FULL (-4804)
 #define AK_E_OBSERVE_REPLAY_NOT_FOUND (-4805)
 
 /* ============================================================
@@ -612,9 +585,9 @@ void ak_observe_effect_end(
  * ============================================================
  */
 
-#define AK_OBSERVE_MAX_METRICS      256
-#define AK_OBSERVE_MAX_SPANS        1024
-#define AK_OBSERVE_SPAN_POOL_SIZE   64
+#define AK_OBSERVE_MAX_METRICS 256
+#define AK_OBSERVE_MAX_SPANS 1024
+#define AK_OBSERVE_SPAN_POOL_SIZE 64
 #define AK_OBSERVE_DECISION_LOG_MAX 10000
 
 #endif /* AK_OBSERVE_H */

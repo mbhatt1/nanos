@@ -26,13 +26,13 @@
  * ============================================================ */
 
 /* Hash table size for recorded effects (must be power of 2) */
-#define AK_RECORD_HASH_SIZE     256
+#define AK_RECORD_HASH_SIZE 256
 
 /* Maximum unique effects to record */
-#define AK_RECORD_MAX_EFFECTS   4096
+#define AK_RECORD_MAX_EFFECTS 4096
 
 /* Maximum size of generated policy JSON */
-#define AK_RECORD_MAX_POLICY    65536
+#define AK_RECORD_MAX_POLICY 65536
 
 /* ============================================================
  * RECORD STATE STRUCTURE
@@ -41,21 +41,21 @@
  */
 
 typedef struct ak_record_state {
-    /* Heap for allocations */
-    heap h;
+  /* Heap for allocations */
+  heap h;
 
-    /* Hash table of recorded effects (chained) */
-    ak_recorded_effect_t *buckets[AK_RECORD_HASH_SIZE];
+  /* Hash table of recorded effects (chained) */
+  ak_recorded_effect_t *buckets[AK_RECORD_HASH_SIZE];
 
-    /* Statistics */
-    u32 unique_count;           /* Number of unique effects recorded */
-    u64 total_count;            /* Total effects seen (including duplicates) */
+  /* Statistics */
+  u32 unique_count; /* Number of unique effects recorded */
+  u64 total_count;  /* Total effects seen (including duplicates) */
 
-    /* Enabled flag */
-    boolean enabled;
+  /* Enabled flag */
+  boolean enabled;
 
-    /* Timestamp when recording started */
-    u64 start_time_ms;
+  /* Timestamp when recording started */
+  u64 start_time_ms;
 
 } ak_record_state_t;
 
@@ -226,8 +226,8 @@ int ak_record_effect(ak_record_state_t *state, const ak_effect_req_t *req);
  *   -ENOENT  - No effects recorded
  *   -ERANGE  - Buffer too small (partial output may be written)
  */
-sysreturn ak_record_get_suggestions(ak_record_state_t *state,
-                                    char *out, u64 out_len);
+sysreturn ak_record_get_suggestions(ak_record_state_t *state, char *out,
+                                    u64 out_len);
 
 /*
  * ak_record_get_suggestions_toml - Generate TOML policy from recorded effects.
@@ -245,8 +245,8 @@ sysreturn ak_record_get_suggestions(ak_record_state_t *state,
  *   -ENOENT  - No effects recorded
  *   -ERANGE  - Buffer too small
  */
-sysreturn ak_record_get_suggestions_toml(ak_record_state_t *state,
-                                         char *out, u64 out_len);
+sysreturn ak_record_get_suggestions_toml(ak_record_state_t *state, char *out,
+                                         u64 out_len);
 
 /* ============================================================
  * MANAGEMENT
@@ -304,7 +304,8 @@ u64 ak_record_total_count(ak_record_state_t *state);
  *   true  - Continue iteration
  *   false - Stop iteration
  */
-typedef boolean (*ak_record_iter_fn)(const ak_recorded_effect_t *effect, void *arg);
+typedef boolean (*ak_record_iter_fn)(const ak_recorded_effect_t *effect,
+                                     void *arg);
 
 /*
  * ak_record_foreach - Iterate over all recorded effects.
@@ -320,7 +321,8 @@ typedef boolean (*ak_record_iter_fn)(const ak_recorded_effect_t *effect, void *a
  * Returns:
  *   Number of effects iterated
  */
-u32 ak_record_foreach(ak_record_state_t *state, ak_record_iter_fn fn, void *arg);
+u32 ak_record_foreach(ak_record_state_t *state, ak_record_iter_fn fn,
+                      void *arg);
 
 /* ============================================================
  * CONTEXT INTEGRATION

@@ -31,9 +31,9 @@
 #ifndef AK_POSIX_ROUTE_H
 #define AK_POSIX_ROUTE_H
 
-#include "ak_effects.h"
-#include "ak_context.h"
 #include "ak_compat.h"
+#include "ak_context.h"
+#include "ak_effects.h"
 
 /* Forward declarations for network types */
 struct sockaddr;
@@ -196,8 +196,8 @@ sysreturn ak_route_rename(const char *oldpath, const char *newpath);
  * Returns:
  *   0 on success, negative errno on failure/denial
  */
-sysreturn ak_route_renameat(int olddirfd, const char *oldpath,
-                            int newdirfd, const char *newpath);
+sysreturn ak_route_renameat(int olddirfd, const char *oldpath, int newdirfd,
+                            const char *newpath);
 
 /* ============================================================
  * NETWORK ROUTING HOOKS
@@ -240,8 +240,7 @@ sysreturn ak_route_connect(int fd, const struct sockaddr *addr,
  * Returns:
  *   0 on success, negative errno on failure/denial
  */
-sysreturn ak_route_bind(int fd, const struct sockaddr *addr,
-                        socklen_t addrlen);
+sysreturn ak_route_bind(int fd, const struct sockaddr *addr, socklen_t addrlen);
 
 /*
  * Route listen() syscall through AK.
@@ -423,7 +422,7 @@ void ak_route_register_fd(int fd, const char *path, boolean is_directory);
  *   is_directory - True if fd refers to a directory
  */
 void ak_route_register_fd_from_openat(int fd, int dirfd, const char *path,
-                                       int flags, boolean is_directory);
+                                      int flags, boolean is_directory);
 
 /*
  * Route close() syscall and unregister the FD.
@@ -473,31 +472,31 @@ int ak_route_set_cwd_from_fd(int fd);
  * ============================================================ */
 
 typedef struct ak_posix_route_stats {
-    /* Total calls */
-    u64 total_routed;
-    u64 total_bypassed;     /* MODE_OFF bypass */
-    u64 total_allowed;
-    u64 total_denied;
+  /* Total calls */
+  u64 total_routed;
+  u64 total_bypassed; /* MODE_OFF bypass */
+  u64 total_allowed;
+  u64 total_denied;
 
-    /* Per-syscall counts */
-    u64 open_calls;
-    u64 openat_calls;
-    u64 unlink_calls;
-    u64 mkdir_calls;
-    u64 rename_calls;
-    u64 connect_calls;
-    u64 bind_calls;
-    u64 listen_calls;
-    u64 dns_calls;
-    u64 spawn_calls;        /* Process spawn calls */
+  /* Per-syscall counts */
+  u64 open_calls;
+  u64 openat_calls;
+  u64 unlink_calls;
+  u64 mkdir_calls;
+  u64 rename_calls;
+  u64 connect_calls;
+  u64 bind_calls;
+  u64 listen_calls;
+  u64 dns_calls;
+  u64 spawn_calls; /* Process spawn calls */
 
-    /* Denial breakdown */
-    u64 fs_denials;
-    u64 net_denials;
-    u64 proc_denials;       /* Process operation denials */
+  /* Denial breakdown */
+  u64 fs_denials;
+  u64 net_denials;
+  u64 proc_denials; /* Process operation denials */
 
-    /* HARD mode enforcement */
-    u64 hard_mode_blocks;   /* Raw syscalls blocked in HARD mode */
+  /* HARD mode enforcement */
+  u64 hard_mode_blocks; /* Raw syscalls blocked in HARD mode */
 } ak_posix_route_stats_t;
 
 /*
@@ -523,59 +522,63 @@ void ak_posix_route_get_stats(ak_posix_route_stats_t *stats);
  * Usage in syscall handler:
  *   AK_ROUTE_FS(open, path, flags, mode);
  */
-#define AK_ROUTE_FS(syscall, ...) \
-    do { \
-        if (ak_routing_active()) { \
-            sysreturn rv = ak_route_##syscall(__VA_ARGS__); \
-            if (rv < 0) return rv; \
-        } \
-    } while(0)
+#define AK_ROUTE_FS(syscall, ...)                                              \
+  do {                                                                         \
+    if (ak_routing_active()) {                                                 \
+      sysreturn rv = ak_route_##syscall(__VA_ARGS__);                          \
+      if (rv < 0)                                                              \
+        return rv;                                                             \
+    }                                                                          \
+  } while (0)
 
 /*
  * Macro for routing a network syscall.
  * Usage in syscall handler:
  *   AK_ROUTE_NET(connect, fd, addr, addrlen);
  */
-#define AK_ROUTE_NET(syscall, ...) \
-    do { \
-        if (ak_routing_active()) { \
-            sysreturn rv = ak_route_##syscall(__VA_ARGS__); \
-            if (rv < 0) return rv; \
-        } \
-    } while(0)
+#define AK_ROUTE_NET(syscall, ...)                                             \
+  do {                                                                         \
+    if (ak_routing_active()) {                                                 \
+      sysreturn rv = ak_route_##syscall(__VA_ARGS__);                          \
+      if (rv < 0)                                                              \
+        return rv;                                                             \
+    }                                                                          \
+  } while (0)
 
 /*
  * Macro for routing a process syscall.
  * Usage in syscall handler:
  *   AK_ROUTE_PROC(spawn, program, argv, flags);
  */
-#define AK_ROUTE_PROC(syscall, ...) \
-    do { \
-        if (ak_routing_active()) { \
-            sysreturn rv = ak_route_##syscall(__VA_ARGS__); \
-            if (rv < 0) return rv; \
-        } \
-    } while(0)
+#define AK_ROUTE_PROC(syscall, ...)                                            \
+  do {                                                                         \
+    if (ak_routing_active()) {                                                 \
+      sysreturn rv = ak_route_##syscall(__VA_ARGS__);                          \
+      if (rv < 0)                                                              \
+        return rv;                                                             \
+    }                                                                          \
+  } while (0)
 
 /*
  * Conditional execution based on AK authorization.
  * Returns denial error if not authorized, otherwise continues.
  */
-#define AK_REQUIRE_AUTHORIZED(route_func, ...) \
-    do { \
-        if (ak_routing_active()) { \
-            sysreturn rv = route_func(__VA_ARGS__); \
-            if (rv < 0) return rv; \
-        } \
-    } while(0)
+#define AK_REQUIRE_AUTHORIZED(route_func, ...)                                 \
+  do {                                                                         \
+    if (ak_routing_active()) {                                                 \
+      sysreturn rv = route_func(__VA_ARGS__);                                  \
+      if (rv < 0)                                                              \
+        return rv;                                                             \
+    }                                                                          \
+  } while (0)
 
 #else /* !CONFIG_AK_ENABLED */
 
 /* No-op when AK is disabled */
-#define AK_ROUTE_FS(syscall, ...)           ((void)0)
-#define AK_ROUTE_NET(syscall, ...)          ((void)0)
-#define AK_ROUTE_PROC(syscall, ...)         ((void)0)
-#define AK_REQUIRE_AUTHORIZED(func, ...)    ((void)0)
+#define AK_ROUTE_FS(syscall, ...) ((void)0)
+#define AK_ROUTE_NET(syscall, ...) ((void)0)
+#define AK_ROUTE_PROC(syscall, ...) ((void)0)
+#define AK_REQUIRE_AUTHORIZED(func, ...) ((void)0)
 
 #endif /* CONFIG_AK_ENABLED */
 

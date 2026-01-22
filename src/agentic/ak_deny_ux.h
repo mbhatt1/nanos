@@ -36,10 +36,10 @@
  */
 
 /* Record control commands for ak_sys_record_control */
-#define AK_RECORD_CMD_ENABLE    0   /* Enable recording (AK_MODE_RECORD) */
-#define AK_RECORD_CMD_DISABLE   1   /* Disable recording (AK_MODE_SOFT) */
-#define AK_RECORD_CMD_CLEAR     2   /* Clear recorded effects */
-#define AK_RECORD_CMD_COUNT     3   /* Get count of recorded effects */
+#define AK_RECORD_CMD_ENABLE 0  /* Enable recording (AK_MODE_RECORD) */
+#define AK_RECORD_CMD_DISABLE 1 /* Disable recording (AK_MODE_SOFT) */
+#define AK_RECORD_CMD_CLEAR 2   /* Clear recorded effects */
+#define AK_RECORD_CMD_COUNT 3   /* Get count of recorded effects */
 
 /* ============================================================
  * LAST ERROR JSON FORMAT
@@ -62,7 +62,7 @@
  */
 
 /* Maximum size of JSON output from AK_SYS_LAST_ERROR */
-#define AK_LAST_ERROR_MAX_JSON  2048
+#define AK_LAST_ERROR_MAX_JSON 2048
 
 /* ============================================================
  * DENY UX SYSCALL HANDLERS
@@ -201,13 +201,13 @@ sysreturn ak_sys_record_control(u64 cmd);
  */
 
 /* Rate limit window in nanoseconds (1 second) */
-#define AK_DENY_LOG_WINDOW_NS   (1000000000ULL)
+#define AK_DENY_LOG_WINDOW_NS (1000000000ULL)
 
 /* Maximum denials to log per effect category per window */
 #define AK_DENY_LOG_MAX_PER_CAT 10
 
 /* Total maximum denials to log per window */
-#define AK_DENY_LOG_MAX_TOTAL   50
+#define AK_DENY_LOG_MAX_TOTAL 50
 
 /*
  * ak_deny_log_init - Initialize the deny logging subsystem.
@@ -343,17 +343,17 @@ int ak_suggest_for_infer(const ak_effect_req_t *req, char *buf, u32 buf_len);
 
 /* Trace ring entry for recording authorization decisions */
 typedef struct ak_trace_entry {
-    u64 timestamp_ns;           /* When the decision was made */
-    u64 trace_id;               /* Correlation ID */
-    ak_effect_op_t op;          /* Operation type */
-    boolean allowed;            /* Was it allowed? */
-    ak_deny_reason_t reason;    /* If denied, why */
-    char target[128];           /* Truncated target */
-    char missing_cap[AK_MAX_CAPSTR];
+  u64 timestamp_ns;        /* When the decision was made */
+  u64 trace_id;            /* Correlation ID */
+  ak_effect_op_t op;       /* Operation type */
+  boolean allowed;         /* Was it allowed? */
+  ak_deny_reason_t reason; /* If denied, why */
+  char target[128];        /* Truncated target */
+  char missing_cap[AK_MAX_CAPSTR];
 } ak_trace_entry_t;
 
 /* Trace ring configuration */
-#define AK_TRACE_RING_SIZE      256     /* Number of entries */
+#define AK_TRACE_RING_SIZE 256 /* Number of entries */
 #define AK_TRACE_RING_ENTRY_SIZE sizeof(ak_trace_entry_t)
 
 /*
@@ -385,8 +385,7 @@ void ak_trace_ring_push(const ak_effect_req_t *req,
  * Returns:
  *   Number of entries read
  */
-u32 ak_trace_ring_read(ak_trace_entry_t *entries, u32 max_entries,
-                       u64 *offset);
+u32 ak_trace_ring_read(ak_trace_entry_t *entries, u32 max_entries, u64 *offset);
 
 /* ============================================================
  * RECORD MODE SUGGESTIONS
@@ -412,8 +411,7 @@ void ak_record_init(heap h);
  *   req      - The denied request
  *   decision - The denial decision
  */
-void ak_record_deny(const ak_effect_req_t *req,
-                    const ak_decision_t *decision);
+void ak_record_deny(const ak_effect_req_t *req, const ak_decision_t *decision);
 
 /*
  * ak_record_export - Export accumulated suggestions as TOML.

@@ -25,17 +25,17 @@
  */
 
 typedef struct ak_key {
-    u8 kid;                     /* Key ID (0-255) */
-    u8 secret[AK_KEY_SIZE];     /* HMAC key material */
-    u64 created_ms;
-    u64 expires_ms;             /* Grace period end */
-    boolean active;             /* Can sign new tokens */
-    boolean retired;            /* Cannot verify */
+  u8 kid;                 /* Key ID (0-255) */
+  u8 secret[AK_KEY_SIZE]; /* HMAC key material */
+  u64 created_ms;
+  u64 expires_ms;  /* Grace period end */
+  boolean active;  /* Can sign new tokens */
+  boolean retired; /* Cannot verify */
 } ak_key_t;
 
-#define AK_MAX_KEYS         4       /* Active + 3 grace keys */
-#define AK_KEY_ROTATION_MS  (24 * 60 * 60 * 1000)  /* 24 hours */
-#define AK_KEY_GRACE_MS     (4 * AK_KEY_ROTATION_MS)
+#define AK_MAX_KEYS 4                            /* Active + 3 grace keys */
+#define AK_KEY_ROTATION_MS (24 * 60 * 60 * 1000) /* 24 hours */
+#define AK_KEY_GRACE_MS (4 * AK_KEY_ROTATION_MS)
 
 /* Initialize key management subsystem */
 void ak_keys_init(heap h);
@@ -76,14 +76,9 @@ void ak_key_rotate(void);
  * Use ak_capability_delegate() for child tokens.
  */
 ak_capability_t *ak_capability_create(
-    heap h,
-    ak_cap_type_t type,
-    const char *resource,       /* Domain/path pattern */
-    const char **methods,       /* NULL-terminated array */
-    u32 ttl_ms,
-    u32 rate_limit,
-    u32 rate_window_ms,
-    u8 *run_id                  /* Bound run */
+    heap h, ak_cap_type_t type, const char *resource, /* Domain/path pattern */
+    const char **methods, /* NULL-terminated array */
+    u32 ttl_ms, u32 rate_limit, u32 rate_window_ms, u8 *run_id /* Bound run */
 );
 
 /*
@@ -96,16 +91,11 @@ ak_capability_t *ak_capability_create(
  *
  * Returns NULL if delegation would violate monotonicity.
  */
-ak_capability_t *ak_capability_delegate(
-    heap h,
-    ak_capability_t *parent,
-    ak_cap_type_t type,
-    const char *resource,
-    const char **methods,
-    u32 ttl_ms,
-    u32 rate_limit,
-    u32 rate_window_ms
-);
+ak_capability_t *ak_capability_delegate(heap h, ak_capability_t *parent,
+                                        ak_cap_type_t type,
+                                        const char *resource,
+                                        const char **methods, u32 ttl_ms,
+                                        u32 rate_limit, u32 rate_window_ms);
 
 /* Free capability (zeros memory for security) */
 void ak_capability_destroy(heap h, ak_capability_t *cap);
@@ -148,13 +138,9 @@ s64 ak_capability_verify(ak_capability_t *cap);
  *
  * SECURITY: Fails-closed on any ambiguity.
  */
-s64 ak_capability_check_scope(
-    ak_capability_t *cap,
-    ak_cap_type_t required_type,
-    const char *resource,
-    const char *method,
-    u8 *run_id
-);
+s64 ak_capability_check_scope(ak_capability_t *cap, ak_cap_type_t required_type,
+                              const char *resource, const char *method,
+                              u8 *run_id);
 
 /*
  * Full capability validation (verify + scope + revocation).
@@ -164,13 +150,9 @@ s64 ak_capability_check_scope(
  *
  * Returns: 0 on success, negative error code on failure.
  */
-s64 ak_capability_validate(
-    ak_capability_t *cap,
-    ak_cap_type_t required_type,
-    const char *resource,
-    const char *method,
-    u8 *run_id
-);
+s64 ak_capability_validate(ak_capability_t *cap, ak_cap_type_t required_type,
+                           const char *resource, const char *method,
+                           u8 *run_id);
 
 /* ============================================================
  * REVOCATION
@@ -179,9 +161,9 @@ s64 ak_capability_validate(
  */
 
 typedef struct ak_revocation_entry {
-    u8 tid[AK_TOKEN_ID_SIZE];
-    u64 revoked_ms;
-    buffer reason;
+  u8 tid[AK_TOKEN_ID_SIZE];
+  u64 revoked_ms;
+  buffer reason;
 } ak_revocation_entry_t;
 
 /* Initialize revocation subsystem */

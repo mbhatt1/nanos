@@ -267,8 +267,7 @@ u64 ak_trace_id_generate(ak_ctx_t *ctx);
  *   req      - The denied effect request
  *   decision - The denial decision
  */
-void ak_ctx_record_deny(ak_ctx_t *ctx,
-                        const ak_effect_req_t *req,
+void ak_ctx_record_deny(ak_ctx_t *ctx, const ak_effect_req_t *req,
                         const ak_decision_t *decision);
 
 /*
@@ -333,13 +332,13 @@ struct ak_policy_v2 *ak_ctx_get_policy(ak_ctx_t *ctx);
  * Statistics for context operations.
  */
 typedef struct ak_context_stats {
-    u64 contexts_created;       /* Total contexts created */
-    u64 contexts_destroyed;     /* Total contexts destroyed */
-    u64 contexts_active;        /* Currently active contexts */
-    u64 boot_capsules_dropped;  /* Boot capsules dropped */
-    u64 mode_changes;           /* Mode change operations */
-    u64 trace_ids_generated;    /* Total trace IDs generated */
-    u64 denials_recorded;       /* Denials recorded */
+  u64 contexts_created;      /* Total contexts created */
+  u64 contexts_destroyed;    /* Total contexts destroyed */
+  u64 contexts_active;       /* Currently active contexts */
+  u64 boot_capsules_dropped; /* Boot capsules dropped */
+  u64 mode_changes;          /* Mode change operations */
+  u64 trace_ids_generated;   /* Total trace IDs generated */
+  u64 denials_recorded;      /* Denials recorded */
 } ak_context_stats_t;
 
 /*

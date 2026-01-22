@@ -22,11 +22,11 @@
  * ============================================================ */
 
 typedef enum ak_approval_status {
-    AK_APPROVAL_PENDING,        /* Awaiting decision */
-    AK_APPROVAL_GRANTED,        /* Approved by reviewer */
-    AK_APPROVAL_DENIED,         /* Rejected by reviewer */
-    AK_APPROVAL_TIMEOUT,        /* Expired without decision */
-    AK_APPROVAL_CANCELLED,      /* Cancelled by requester */
+  AK_APPROVAL_PENDING,   /* Awaiting decision */
+  AK_APPROVAL_GRANTED,   /* Approved by reviewer */
+  AK_APPROVAL_DENIED,    /* Rejected by reviewer */
+  AK_APPROVAL_TIMEOUT,   /* Expired without decision */
+  AK_APPROVAL_CANCELLED, /* Cancelled by requester */
 } ak_approval_status_t;
 
 /* Forward declaration for closure types */
@@ -41,8 +41,7 @@ struct ak_approval_request;
  * @param data      User-provided callback data
  */
 closure_type(ak_approval_decision_handler, void,
-             struct ak_approval_request *request,
-             ak_approval_status_t status,
+             struct ak_approval_request *request, ak_approval_status_t status,
              void *data);
 
 /*
@@ -69,35 +68,35 @@ closure_type(ak_approval_iterator, boolean,
  * ============================================================ */
 
 typedef struct ak_approval_request {
-    /* Identity */
-    u64 id;                     /* Unique request ID */
-    u8 run_id[AK_TOKEN_ID_SIZE];
-    u8 agent_id[AK_TOKEN_ID_SIZE];
+  /* Identity */
+  u64 id; /* Unique request ID */
+  u8 run_id[AK_TOKEN_ID_SIZE];
+  u8 agent_id[AK_TOKEN_ID_SIZE];
 
-    /* Operation details */
-    u16 op;                     /* Syscall number */
-    buffer request_json;        /* Full request for review */
-    buffer justification;       /* Why this operation is needed */
-    buffer context;             /* Additional context for reviewer */
+  /* Operation details */
+  u16 op;               /* Syscall number */
+  buffer request_json;  /* Full request for review */
+  buffer justification; /* Why this operation is needed */
+  buffer context;       /* Additional context for reviewer */
 
-    /* Timing */
-    u64 requested_ms;
-    u64 timeout_ms;
-    u64 decided_ms;             /* When decision was made (0 if pending) */
+  /* Timing */
+  u64 requested_ms;
+  u64 timeout_ms;
+  u64 decided_ms; /* When decision was made (0 if pending) */
 
-    /* Status */
-    ak_approval_status_t status;
+  /* Status */
+  ak_approval_status_t status;
 
-    /* Reviewer info (if decided) */
-    char reviewer_id[64];       /* Who approved/denied */
-    buffer reviewer_note;       /* Optional note from reviewer */
+  /* Reviewer info (if decided) */
+  char reviewer_id[64]; /* Who approved/denied */
+  buffer reviewer_note; /* Optional note from reviewer */
 
-    /* Callback - invoked when a decision is made */
-    ak_approval_decision_handler on_decision;
-    void *callback_data;
+  /* Callback - invoked when a decision is made */
+  ak_approval_decision_handler on_decision;
+  void *callback_data;
 
-    /* Linkage for pending queue */
-    struct ak_approval_request *next;
+  /* Linkage for pending queue */
+  struct ak_approval_request *next;
 } ak_approval_request_t;
 
 /* ============================================================
@@ -120,12 +119,9 @@ void ak_approval_init(heap h);
  * @param justification Why this operation is needed
  * @return              Request handle, or NULL on failure
  */
-ak_approval_request_t *ak_approval_request(
-    heap h,
-    ak_agent_context_t *ctx,
-    ak_request_t *req,
-    buffer justification
-);
+ak_approval_request_t *ak_approval_request(heap h, ak_agent_context_t *ctx,
+                                           ak_request_t *req,
+                                           buffer justification);
 
 /*
  * Set callback for when decision is made.
@@ -134,11 +130,8 @@ ak_approval_request_t *ak_approval_request(
  * @param cb            Callback closure (ak_approval_decision_handler)
  * @param data          User data passed to callback
  */
-void ak_approval_set_callback(
-    ak_approval_request_t *request,
-    ak_approval_decision_handler cb,
-    void *data
-);
+void ak_approval_set_callback(ak_approval_request_t *request,
+                              ak_approval_decision_handler cb, void *data);
 
 /*
  * Check approval status (non-blocking).

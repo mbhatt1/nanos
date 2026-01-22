@@ -78,15 +78,16 @@ u64 ak_compress_bound(u64 input_size);
 boolean ak_compress_worthwhile(u64 input_size);
 
 /* Minimum size to consider compression (smaller may expand) */
-#define AK_COMPRESS_MIN_SIZE    64
+#define AK_COMPRESS_MIN_SIZE 64
 
 /* Maximum decompression size (256MB) - protects against decompression bombs */
-#define AK_DECOMPRESS_MAX_SIZE  (256ULL * 1024 * 1024)
+#define AK_DECOMPRESS_MAX_SIZE (256ULL * 1024 * 1024)
 
-/* Maximum compression ratio allowed (1024:1) - protects against malicious data */
-#define AK_COMPRESS_MAX_RATIO   1024
+/* Maximum compression ratio allowed (1024:1) - protects against malicious data
+ */
+#define AK_COMPRESS_MAX_RATIO 1024
 
 /* Maximum size that can be stored in 32-bit header */
-#define AK_COMPRESS_MAX_INPUT   0xFFFFFFFFULL
+#define AK_COMPRESS_MAX_INPUT 0xFFFFFFFFULL
 
 #endif /* AK_COMPRESS_H */

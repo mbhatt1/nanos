@@ -41,36 +41,36 @@
 #ifndef AK_POLICY_TOML_H
 #define AK_POLICY_TOML_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
 
 /* ============================================================
  * CONSTANTS
  * ============================================================ */
 
-#define AK_TOML_MAX_KEY         64      /* Maximum key length */
-#define AK_TOML_MAX_VALUE       512     /* Maximum string value length */
-#define AK_TOML_MAX_SECTION     128     /* Maximum section name length */
-#define AK_TOML_MAX_RULES       256     /* Maximum rules per category */
-#define AK_TOML_MAX_PROFILES    16      /* Maximum profile includes */
-#define AK_TOML_MAX_HOSTCALLS   32      /* Maximum WASM hostcalls */
-#define AK_TOML_MAX_LINE        1024    /* Maximum line length */
+#define AK_TOML_MAX_KEY 64       /* Maximum key length */
+#define AK_TOML_MAX_VALUE 512    /* Maximum string value length */
+#define AK_TOML_MAX_SECTION 128  /* Maximum section name length */
+#define AK_TOML_MAX_RULES 256    /* Maximum rules per category */
+#define AK_TOML_MAX_PROFILES 16  /* Maximum profile includes */
+#define AK_TOML_MAX_HOSTCALLS 32 /* Maximum WASM hostcalls */
+#define AK_TOML_MAX_LINE 1024    /* Maximum line length */
 
 /* ============================================================
  * ERROR CODES
  * ============================================================ */
 
 typedef enum ak_toml_error {
-    AK_TOML_OK              = 0,
-    AK_TOML_ERR_NULL        = -1,     /* NULL input */
-    AK_TOML_ERR_SYNTAX      = -2,     /* TOML syntax error */
-    AK_TOML_ERR_OVERFLOW    = -3,     /* Buffer overflow */
-    AK_TOML_ERR_UNKNOWN_KEY = -4,     /* Unknown configuration key */
-    AK_TOML_ERR_TYPE        = -5,     /* Type mismatch */
-    AK_TOML_ERR_ALLOC       = -6,     /* Memory allocation failed */
-    AK_TOML_ERR_IO          = -7,     /* I/O error */
-    AK_TOML_ERR_TOO_MANY    = -8,     /* Too many rules/items */
+  AK_TOML_OK = 0,
+  AK_TOML_ERR_NULL = -1,        /* NULL input */
+  AK_TOML_ERR_SYNTAX = -2,      /* TOML syntax error */
+  AK_TOML_ERR_OVERFLOW = -3,    /* Buffer overflow */
+  AK_TOML_ERR_UNKNOWN_KEY = -4, /* Unknown configuration key */
+  AK_TOML_ERR_TYPE = -5,        /* Type mismatch */
+  AK_TOML_ERR_ALLOC = -6,       /* Memory allocation failed */
+  AK_TOML_ERR_IO = -7,          /* I/O error */
+  AK_TOML_ERR_TOO_MANY = -8,    /* Too many rules/items */
 } ak_toml_error_t;
 
 /* ============================================================
@@ -78,12 +78,12 @@ typedef enum ak_toml_error {
  * ============================================================ */
 
 typedef enum ak_toml_type {
-    AK_TOML_TYPE_NONE       = 0,
-    AK_TOML_TYPE_STRING     = 1,
-    AK_TOML_TYPE_INTEGER    = 2,
-    AK_TOML_TYPE_BOOLEAN    = 3,
-    AK_TOML_TYPE_ARRAY      = 4,
-    AK_TOML_TYPE_TABLE      = 5,
+  AK_TOML_TYPE_NONE = 0,
+  AK_TOML_TYPE_STRING = 1,
+  AK_TOML_TYPE_INTEGER = 2,
+  AK_TOML_TYPE_BOOLEAN = 3,
+  AK_TOML_TYPE_ARRAY = 4,
+  AK_TOML_TYPE_TABLE = 5,
 } ak_toml_type_t;
 
 /* ============================================================
@@ -94,52 +94,52 @@ typedef enum ak_toml_type {
 
 /* Filesystem rule */
 typedef struct ak_toml_fs_rule {
-    char path[AK_TOML_MAX_VALUE];
-    bool read;
-    bool write;
+  char path[AK_TOML_MAX_VALUE];
+  bool read;
+  bool write;
 } ak_toml_fs_rule_t;
 
 /* Network rule */
 typedef struct ak_toml_net_rule {
-    char pattern[AK_TOML_MAX_VALUE];
-    bool connect;
-    bool bind;
-    bool listen;
+  char pattern[AK_TOML_MAX_VALUE];
+  bool connect;
+  bool bind;
+  bool listen;
 } ak_toml_net_rule_t;
 
 /* DNS rule */
 typedef struct ak_toml_dns_rule {
-    char pattern[AK_TOML_MAX_VALUE];
-    bool allow;
+  char pattern[AK_TOML_MAX_VALUE];
+  bool allow;
 } ak_toml_dns_rule_t;
 
 /* Tool rule */
 typedef struct ak_toml_tool_rule {
-    char name[AK_TOML_MAX_KEY];
-    char version[AK_TOML_MAX_KEY];
-    bool allow;
+  char name[AK_TOML_MAX_KEY];
+  char version[AK_TOML_MAX_KEY];
+  bool allow;
 } ak_toml_tool_rule_t;
 
 /* WASM rule */
 typedef struct ak_toml_wasm_rule {
-    char module[AK_TOML_MAX_KEY];
-    char hostcalls[AK_TOML_MAX_HOSTCALLS][AK_TOML_MAX_KEY];
-    int hostcall_count;
+  char module[AK_TOML_MAX_KEY];
+  char hostcalls[AK_TOML_MAX_HOSTCALLS][AK_TOML_MAX_KEY];
+  int hostcall_count;
 } ak_toml_wasm_rule_t;
 
 /* Inference rule */
 typedef struct ak_toml_infer_rule {
-    char model[AK_TOML_MAX_KEY];
-    uint64_t max_tokens;
+  char model[AK_TOML_MAX_KEY];
+  uint64_t max_tokens;
 } ak_toml_infer_rule_t;
 
 /* Budget configuration */
 typedef struct ak_toml_budgets {
-    uint64_t cpu_ns;
-    uint64_t wall_time_ms;
-    uint64_t bytes;
-    uint64_t tokens;
-    uint64_t tool_calls;
+  uint64_t cpu_ns;
+  uint64_t wall_time_ms;
+  uint64_t bytes;
+  uint64_t tokens;
+  uint64_t tool_calls;
 } ak_toml_budgets_t;
 
 /* ============================================================
@@ -149,43 +149,43 @@ typedef struct ak_toml_budgets {
  */
 
 typedef struct ak_toml_policy {
-    /* Metadata */
-    char version[AK_TOML_MAX_KEY];
-    char name[AK_TOML_MAX_VALUE];
+  /* Metadata */
+  char version[AK_TOML_MAX_KEY];
+  char name[AK_TOML_MAX_VALUE];
 
-    /* Filesystem rules */
-    ak_toml_fs_rule_t fs_rules[AK_TOML_MAX_RULES];
-    int fs_rule_count;
+  /* Filesystem rules */
+  ak_toml_fs_rule_t fs_rules[AK_TOML_MAX_RULES];
+  int fs_rule_count;
 
-    /* Network rules */
-    ak_toml_net_rule_t net_rules[AK_TOML_MAX_RULES];
-    int net_rule_count;
+  /* Network rules */
+  ak_toml_net_rule_t net_rules[AK_TOML_MAX_RULES];
+  int net_rule_count;
 
-    /* DNS rules */
-    ak_toml_dns_rule_t dns_rules[AK_TOML_MAX_RULES];
-    int dns_rule_count;
+  /* DNS rules */
+  ak_toml_dns_rule_t dns_rules[AK_TOML_MAX_RULES];
+  int dns_rule_count;
 
-    /* Tool rules */
-    ak_toml_tool_rule_t tool_allow_rules[AK_TOML_MAX_RULES];
-    int tool_allow_count;
-    ak_toml_tool_rule_t tool_deny_rules[AK_TOML_MAX_RULES];
-    int tool_deny_count;
+  /* Tool rules */
+  ak_toml_tool_rule_t tool_allow_rules[AK_TOML_MAX_RULES];
+  int tool_allow_count;
+  ak_toml_tool_rule_t tool_deny_rules[AK_TOML_MAX_RULES];
+  int tool_deny_count;
 
-    /* WASM rules */
-    ak_toml_wasm_rule_t wasm_rules[AK_TOML_MAX_RULES];
-    int wasm_rule_count;
+  /* WASM rules */
+  ak_toml_wasm_rule_t wasm_rules[AK_TOML_MAX_RULES];
+  int wasm_rule_count;
 
-    /* Inference rules */
-    ak_toml_infer_rule_t infer_rules[AK_TOML_MAX_RULES];
-    int infer_rule_count;
+  /* Inference rules */
+  ak_toml_infer_rule_t infer_rules[AK_TOML_MAX_RULES];
+  int infer_rule_count;
 
-    /* Budgets */
-    ak_toml_budgets_t budgets;
-    bool has_budgets;
+  /* Budgets */
+  ak_toml_budgets_t budgets;
+  bool has_budgets;
 
-    /* Profiles */
-    char profiles[AK_TOML_MAX_PROFILES][AK_TOML_MAX_KEY];
-    int profile_count;
+  /* Profiles */
+  char profiles[AK_TOML_MAX_PROFILES][AK_TOML_MAX_KEY];
+  int profile_count;
 
 } ak_toml_policy_t;
 
@@ -194,25 +194,25 @@ typedef struct ak_toml_policy {
  * ============================================================ */
 
 typedef struct ak_toml_parser {
-    /* Input */
-    const char *input;
-    size_t input_len;
-    size_t pos;
+  /* Input */
+  const char *input;
+  size_t input_len;
+  size_t pos;
 
-    /* Current position tracking */
-    int line;
-    int col;
+  /* Current position tracking */
+  int line;
+  int col;
 
-    /* Current section context */
-    char section[AK_TOML_MAX_SECTION];
-    bool in_array_table;    /* [[section]] vs [section] */
+  /* Current section context */
+  char section[AK_TOML_MAX_SECTION];
+  bool in_array_table; /* [[section]] vs [section] */
 
-    /* Output policy */
-    ak_toml_policy_t *policy;
+  /* Output policy */
+  ak_toml_policy_t *policy;
 
-    /* Error info */
-    ak_toml_error_t error;
-    char error_msg[256];
+  /* Error info */
+  ak_toml_error_t error;
+  char error_msg[256];
 
 } ak_toml_parser_t;
 
@@ -235,11 +235,8 @@ void ak_toml_policy_init(ak_toml_policy_t *policy);
  * @param policy    Output policy structure (must be initialized)
  * @return          AK_TOML_OK on success, error code on failure
  */
-ak_toml_error_t ak_toml_parse(
-    const char *toml,
-    size_t toml_len,
-    ak_toml_policy_t *policy
-);
+ak_toml_error_t ak_toml_parse(const char *toml, size_t toml_len,
+                              ak_toml_policy_t *policy);
 
 /*
  * Parse TOML file into policy structure.
@@ -248,10 +245,7 @@ ak_toml_error_t ak_toml_parse(
  * @param policy    Output policy structure (must be initialized)
  * @return          AK_TOML_OK on success, error code on failure
  */
-ak_toml_error_t ak_toml_parse_file(
-    const char *path,
-    ak_toml_policy_t *policy
-);
+ak_toml_error_t ak_toml_parse_file(const char *path, ak_toml_policy_t *policy);
 
 /*
  * Get error message for last parse error.
@@ -286,12 +280,9 @@ const char *ak_toml_get_error(ak_toml_error_t error);
  * @param json_len_out  Actual length written (if non-NULL)
  * @return              AK_TOML_OK on success, error code on failure
  */
-ak_toml_error_t ak_policy_toml_to_json(
-    const ak_toml_policy_t *policy,
-    char *json_out,
-    size_t json_max_len,
-    size_t *json_len_out
-);
+ak_toml_error_t ak_policy_toml_to_json(const ak_toml_policy_t *policy,
+                                       char *json_out, size_t json_max_len,
+                                       size_t *json_len_out);
 
 /*
  * Convert TOML file directly to JSON.
@@ -304,12 +295,9 @@ ak_toml_error_t ak_policy_toml_to_json(
  * @param json_len_out  Actual length written (if non-NULL)
  * @return              AK_TOML_OK on success, error code on failure
  */
-ak_toml_error_t ak_policy_toml_file_to_json(
-    const char *toml_path,
-    char *json_out,
-    size_t json_max_len,
-    size_t *json_len_out
-);
+ak_toml_error_t ak_policy_toml_file_to_json(const char *toml_path,
+                                            char *json_out, size_t json_max_len,
+                                            size_t *json_len_out);
 
 /* ============================================================
  * UTILITY FUNCTIONS

@@ -14,17 +14,17 @@
 #ifndef AK_SECRETS_H
 #define AK_SECRETS_H
 
-#include "ak_types.h"
 #include "ak_capability.h"
+#include "ak_types.h"
 
 /* ============================================================
  * SECRET BACKEND TYPES
  * ============================================================ */
 
 typedef enum ak_secret_backend {
-    AK_SECRET_BACKEND_ENV,      /* Environment variables (AK_SECRET_<name>) */
-    AK_SECRET_BACKEND_FILE,     /* File-based (/run/secrets/<name>) */
-    AK_SECRET_BACKEND_VIRTIO,   /* virtio-serial to host secret manager */
+  AK_SECRET_BACKEND_ENV,    /* Environment variables (AK_SECRET_<name>) */
+  AK_SECRET_BACKEND_FILE,   /* File-based (/run/secrets/<name>) */
+  AK_SECRET_BACKEND_VIRTIO, /* virtio-serial to host secret manager */
 } ak_secret_backend_t;
 
 /* ============================================================
@@ -32,10 +32,10 @@ typedef enum ak_secret_backend {
  * ============================================================ */
 
 typedef struct ak_secrets_config {
-    ak_secret_backend_t backend;
-    const char *file_path;      /* For FILE backend (default: /run/secrets) */
-    int virtio_fd;              /* For VIRTIO backend */
-    table env_secrets;          /* Preloaded secrets from environment */
+  ak_secret_backend_t backend;
+  const char *file_path; /* For FILE backend (default: /run/secrets) */
+  int virtio_fd;         /* For VIRTIO backend */
+  table env_secrets;     /* Preloaded secrets from environment */
 } ak_secrets_config_t;
 
 /* ============================================================

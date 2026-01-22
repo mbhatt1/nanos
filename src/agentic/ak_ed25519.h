@@ -20,8 +20,8 @@
  * CONSTANTS
  * ============================================================ */
 
-#define AK_ED25519_PUBLIC_KEY_SIZE  32
-#define AK_ED25519_SIGNATURE_SIZE   64
+#define AK_ED25519_PUBLIC_KEY_SIZE 32
+#define AK_ED25519_SIGNATURE_SIZE 64
 #define AK_ED25519_MAX_TRUSTED_KEYS 16
 
 /* ============================================================
@@ -38,8 +38,7 @@
  * @return             true if signature is valid
  */
 boolean ak_ed25519_verify(const u8 *message, u64 message_len,
-                          const u8 *signature,
-                          const u8 *public_key);
+                          const u8 *signature, const u8 *public_key);
 
 /* ============================================================
  * TRUSTED KEY MANAGEMENT

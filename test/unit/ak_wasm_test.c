@@ -1500,6 +1500,7 @@ bool test_exec_state_transitions(void)
     test_assert_eq(result, 0);
     test_assert_eq(ctx->state, AK_WASM_STATE_COMPLETED);
 
+    mock_buffer_free(input);
     mock_exec_destroy(ctx);
     mock_buffer_free(bytecode);
     mock_wasm_shutdown();

@@ -37,11 +37,10 @@ void ak_heap_init(heap h);
  *   - taint = AK_TAINT_UNTRUSTED (unless specified)
  *   - owner_run_id = caller's run
  */
-u64 ak_heap_alloc(
-    u64 type_hash,              /* Schema type identifier */
-    buffer value,               /* Initial JSON value */
-    u8 *run_id,                 /* Owner run */
-    ak_taint_t taint            /* Initial taint level */
+u64 ak_heap_alloc(u64 type_hash,   /* Schema type identifier */
+                  buffer value,    /* Initial JSON value */
+                  u8 *run_id,      /* Owner run */
+                  ak_taint_t taint /* Initial taint level */
 );
 
 /*
@@ -54,12 +53,8 @@ u64 ak_heap_alloc(
  *   - version_out: current version
  *   - taint_out: taint level (optional, can be NULL)
  */
-s64 ak_heap_read(
-    u64 ptr,
-    buffer *value_out,
-    u64 *version_out,
-    ak_taint_t *taint_out
-);
+s64 ak_heap_read(u64 ptr, buffer *value_out, u64 *version_out,
+                 ak_taint_t *taint_out);
 
 /*
  * WRITE: Update object with CAS.
@@ -73,11 +68,9 @@ s64 ak_heap_read(
  *   -ENOENT        - Object not found or deleted
  *   AK_E_SCHEMA_INVALID - Patch result invalid
  */
-s64 ak_heap_write(
-    u64 ptr,
-    buffer patch,               /* RFC 6902 JSON Patch */
-    u64 expected_version,       /* CAS: must match current */
-    u64 *new_version_out        /* Output: new version after write */
+s64 ak_heap_write(u64 ptr, buffer patch, /* RFC 6902 JSON Patch */
+                  u64 expected_version,  /* CAS: must match current */
+                  u64 *new_version_out   /* Output: new version after write */
 );
 
 /*
@@ -88,10 +81,7 @@ s64 ak_heap_write(
  *
  * Returns: 0 on success, AK_E_CONFLICT on version mismatch.
  */
-s64 ak_heap_delete(
-    u64 ptr,
-    u64 expected_version
-);
+s64 ak_heap_delete(u64 ptr, u64 expected_version);
 
 /* ============================================================
  * OBJECT QUERIES
@@ -106,13 +96,13 @@ boolean ak_heap_exists(u64 ptr);
  * Get object metadata without value.
  */
 typedef struct ak_object_meta {
-    u64 ptr;
-    u64 type_hash;
-    u64 version;
-    u64 created_ms;
-    u64 modified_ms;
-    ak_taint_t taint;
-    boolean deleted;
+  u64 ptr;
+  u64 type_hash;
+  u64 version;
+  u64 created_ms;
+  u64 modified_ms;
+  ak_taint_t taint;
+  boolean deleted;
 } ak_object_meta_t;
 
 s64 ak_heap_get_meta(u64 ptr, ak_object_meta_t *meta_out);
@@ -120,20 +110,12 @@ s64 ak_heap_get_meta(u64 ptr, ak_object_meta_t *meta_out);
 /*
  * List objects by type.
  */
-u64 *ak_heap_list_by_type(
-    heap h,
-    u64 type_hash,
-    u64 *count_out
-);
+u64 *ak_heap_list_by_type(heap h, u64 type_hash, u64 *count_out);
 
 /*
  * List objects owned by run.
  */
-u64 *ak_heap_list_by_run(
-    heap h,
-    u8 *run_id,
-    u64 *count_out
-);
+u64 *ak_heap_list_by_run(heap h, u8 *run_id, u64 *count_out);
 
 /* ============================================================
  * VERSION HISTORY
@@ -142,20 +124,12 @@ u64 *ak_heap_list_by_run(
 /*
  * Get historical version of object.
  */
-s64 ak_heap_read_version(
-    u64 ptr,
-    u64 version,
-    buffer *value_out
-);
+s64 ak_heap_read_version(u64 ptr, u64 version, buffer *value_out);
 
 /*
  * List all versions of object.
  */
-u64 *ak_heap_list_versions(
-    heap h,
-    u64 ptr,
-    u64 *count_out
-);
+u64 *ak_heap_list_versions(heap h, u64 ptr, u64 *count_out);
 
 /* ============================================================
  * TAINT OPERATIONS
@@ -167,11 +141,7 @@ u64 *ak_heap_list_versions(
  * SECURITY: Taint can only be decreased (made more trusted) by
  * passing through a sanitizer. Direct taint update is restricted.
  */
-s64 ak_heap_set_taint(
-    u64 ptr,
-    ak_taint_t new_taint,
-    u64 expected_version
-);
+s64 ak_heap_set_taint(u64 ptr, ak_taint_t new_taint, u64 expected_version);
 
 /*
  * Get taint level.
@@ -187,18 +157,12 @@ ak_taint_t ak_heap_get_taint(u64 ptr);
  *
  * Schema is JSON Schema (draft-07).
  */
-void ak_heap_register_schema(
-    u64 type_hash,
-    buffer schema_json
-);
+void ak_heap_register_schema(u64 type_hash, buffer schema_json);
 
 /*
  * Validate value against schema.
  */
-boolean ak_heap_validate_schema(
-    u64 type_hash,
-    buffer value
-);
+boolean ak_heap_validate_schema(u64 type_hash, buffer value);
 
 /* ============================================================
  * JSON PATCH (RFC 6902)
@@ -210,11 +174,7 @@ boolean ak_heap_validate_schema(
  * Returns: new value on success, NULL on error.
  * Caller must free returned buffer.
  */
-buffer ak_json_patch_apply(
-    heap h,
-    buffer original,
-    buffer patch
-);
+buffer ak_json_patch_apply(heap h, buffer original, buffer patch);
 
 /*
  * Validate JSON Patch syntax.
@@ -224,11 +184,7 @@ boolean ak_json_patch_validate(buffer patch);
 /*
  * Create JSON Patch from diff.
  */
-buffer ak_json_patch_diff(
-    heap h,
-    buffer old_value,
-    buffer new_value
-);
+buffer ak_json_patch_diff(heap h, buffer old_value, buffer new_value);
 
 /* ============================================================
  * GARBAGE COLLECTION
@@ -253,11 +209,11 @@ u64 ak_heap_purge_tombstones(u64 older_than_ms);
  * ============================================================ */
 
 typedef struct ak_heap_stats {
-    u64 object_count;
-    u64 deleted_count;
-    u64 version_count;
-    u64 bytes_used;
-    u64 bytes_versions;
+  u64 object_count;
+  u64 deleted_count;
+  u64 version_count;
+  u64 bytes_used;
+  u64 bytes_versions;
 } ak_heap_stats_t;
 
 void ak_heap_get_stats(ak_heap_stats_t *stats);
@@ -317,8 +273,10 @@ void ak_heap_txn_rollback(ak_heap_txn_t *txn);
 /*
  * Transaction-aware versions of core ops.
  */
-u64 ak_heap_txn_alloc(ak_heap_txn_t *txn, u64 type_hash, buffer value, u8 *run_id, ak_taint_t taint);
-s64 ak_heap_txn_write(ak_heap_txn_t *txn, u64 ptr, buffer patch, u64 expected_version);
+u64 ak_heap_txn_alloc(ak_heap_txn_t *txn, u64 type_hash, buffer value,
+                      u8 *run_id, ak_taint_t taint);
+s64 ak_heap_txn_write(ak_heap_txn_t *txn, u64 ptr, buffer patch,
+                      u64 expected_version);
 s64 ak_heap_txn_delete(ak_heap_txn_t *txn, u64 ptr, u64 expected_version);
 
 #endif /* AK_HEAP_H */

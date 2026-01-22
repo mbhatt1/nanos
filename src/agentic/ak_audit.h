@@ -50,23 +50,14 @@ s64 ak_audit_load(void);
  *
  * Returns: log sequence number on success, negative on error.
  */
-s64 ak_audit_append(
-    u8 *pid,
-    u8 *run_id,
-    u16 op,
-    u8 *req_hash,
-    u8 *res_hash,
-    u8 *policy_hash
-);
+s64 ak_audit_append(u8 *pid, u8 *run_id, u16 op, u8 *req_hash, u8 *res_hash,
+                    u8 *policy_hash);
 
 /*
  * Convenience: append from request/response structures.
  */
-s64 ak_audit_append_request(
-    ak_request_t *req,
-    ak_response_t *res,
-    u8 *policy_hash
-);
+s64 ak_audit_append_request(ak_request_t *req, ak_response_t *res,
+                            u8 *policy_hash);
 
 /*
  * Query log entries.
@@ -75,18 +66,13 @@ s64 ak_audit_append_request(
  * Caller must free returned array.
  */
 typedef struct ak_log_query_filter {
-    u8 *pid;                    /* NULL = any */
-    u8 *run_id;                 /* NULL = any */
-    u16 op;                     /* 0 = any */
+  u8 *pid;    /* NULL = any */
+  u8 *run_id; /* NULL = any */
+  u16 op;     /* 0 = any */
 } ak_log_query_filter_t;
 
-ak_log_entry_t **ak_audit_query(
-    heap h,
-    ak_log_query_filter_t *filter,
-    u64 start_seq,
-    u64 end_seq,
-    u64 *count_out
-);
+ak_log_entry_t **ak_audit_query(heap h, ak_log_query_filter_t *filter,
+                                u64 start_seq, u64 end_seq, u64 *count_out);
 
 /*
  * Get current log head sequence number.
@@ -187,13 +173,13 @@ void ak_audit_sync(void);
  * Get storage statistics.
  */
 typedef struct ak_audit_stats {
-    u64 entry_count;
-    u64 bytes_used;
-    u64 anchor_count;
-    u64 last_anchor_seq;
-    u64 last_sync_ms;
-    u64 disk_bytes_written;     /* Total bytes written to disk */
-    boolean storage_enabled;    /* Whether persistent storage is active */
+  u64 entry_count;
+  u64 bytes_used;
+  u64 anchor_count;
+  u64 last_anchor_seq;
+  u64 last_sync_ms;
+  u64 disk_bytes_written;  /* Total bytes written to disk */
+  boolean storage_enabled; /* Whether persistent storage is active */
 } ak_audit_stats_t;
 
 void ak_audit_get_stats(ak_audit_stats_t *stats);
@@ -207,11 +193,8 @@ void ak_audit_get_stats(ak_audit_stats_t *stats);
  *
  * hash = SHA256(prev_hash || canonical(entry_without_hashes))
  */
-void ak_audit_compute_entry_hash(
-    ak_log_entry_t *entry,
-    u8 *prev_hash,
-    u8 *hash_out
-);
+void ak_audit_compute_entry_hash(ak_log_entry_t *entry, u8 *prev_hash,
+                                 u8 *hash_out);
 
 /*
  * Compute hash of request/response for logging.
@@ -229,21 +212,17 @@ void ak_audit_hash_response(ak_response_t *res, u8 *hash_out);
  * Bundle contains everything needed to replay a run.
  */
 typedef struct ak_replay_bundle {
-    u8 run_id[AK_TOKEN_ID_SIZE];
-    u64 start_seq;
-    u64 end_seq;
-    ak_log_entry_t **entries;
-    u64 entry_count;
-    buffer heap_snapshot;       /* Initial heap state */
-    u8 policy_hash[AK_HASH_SIZE];
+  u8 run_id[AK_TOKEN_ID_SIZE];
+  u64 start_seq;
+  u64 end_seq;
+  ak_log_entry_t **entries;
+  u64 entry_count;
+  buffer heap_snapshot; /* Initial heap state */
+  u8 policy_hash[AK_HASH_SIZE];
 } ak_replay_bundle_t;
 
-ak_replay_bundle_t *ak_audit_create_bundle(
-    heap h,
-    u8 *run_id,
-    u64 start_seq,
-    u64 end_seq
-);
+ak_replay_bundle_t *ak_audit_create_bundle(heap h, u8 *run_id, u64 start_seq,
+                                           u64 end_seq);
 
 void ak_audit_destroy_bundle(heap h, ak_replay_bundle_t *bundle);
 
@@ -265,17 +244,14 @@ s64 ak_audit_log_policy_change(u8 *old_hash, u8 *new_hash, const char *reason);
  * Log agent lifecycle event.
  */
 typedef enum ak_lifecycle_event {
-    AK_LIFECYCLE_SPAWN,
-    AK_LIFECYCLE_EXIT,
-    AK_LIFECYCLE_CRASH,
-    AK_LIFECYCLE_TIMEOUT,
+  AK_LIFECYCLE_SPAWN,
+  AK_LIFECYCLE_EXIT,
+  AK_LIFECYCLE_CRASH,
+  AK_LIFECYCLE_TIMEOUT,
 } ak_lifecycle_event_t;
 
-s64 ak_audit_log_lifecycle(
-    u8 *agent_id,
-    u8 *run_id,
-    ak_lifecycle_event_t event
-);
+s64 ak_audit_log_lifecycle(u8 *agent_id, u8 *run_id,
+                           ak_lifecycle_event_t event);
 
 /* ============================================================
  * RING BUFFER - High-frequency data-plane audit events
@@ -286,28 +262,28 @@ s64 ak_audit_log_lifecycle(
  * Ring overwrites oldest entries when full (bounded memory).
  */
 
-#define AK_RING_BUFFER_SIZE     4096    /* Must be power of 2 */
-#define AK_RING_BUFFER_MASK     (AK_RING_BUFFER_SIZE - 1)
+#define AK_RING_BUFFER_SIZE 4096 /* Must be power of 2 */
+#define AK_RING_BUFFER_MASK (AK_RING_BUFFER_SIZE - 1)
 
 /* Compact ring buffer entry for data-plane events */
 typedef struct ak_ring_entry {
-    u64 seq;                            /* Sequence number */
-    u64 ts_ns;                          /* Timestamp (nanoseconds) */
-    u8 pid[AK_TOKEN_ID_SIZE];           /* Process/Agent ID */
-    u8 run_id[AK_TOKEN_ID_SIZE];        /* Run ID */
-    u16 op;                             /* Operation code */
-    u8 req_hash[AK_HASH_SIZE];          /* Request hash */
-    u8 res_hash[AK_HASH_SIZE];          /* Response hash */
-    s64 result_code;                    /* Result/errno */
-    u32 latency_us;                     /* Latency in microseconds */
-    u8 flags;                           /* Event flags */
+  u64 seq;                     /* Sequence number */
+  u64 ts_ns;                   /* Timestamp (nanoseconds) */
+  u8 pid[AK_TOKEN_ID_SIZE];    /* Process/Agent ID */
+  u8 run_id[AK_TOKEN_ID_SIZE]; /* Run ID */
+  u16 op;                      /* Operation code */
+  u8 req_hash[AK_HASH_SIZE];   /* Request hash */
+  u8 res_hash[AK_HASH_SIZE];   /* Response hash */
+  s64 result_code;             /* Result/errno */
+  u32 latency_us;              /* Latency in microseconds */
+  u8 flags;                    /* Event flags */
 } __attribute__((packed)) ak_ring_entry_t;
 
 /* Ring buffer flags */
-#define AK_RING_FLAG_DENIED     0x01    /* Operation was denied */
-#define AK_RING_FLAG_TIMEOUT    0x02    /* Operation timed out */
-#define AK_RING_FLAG_ERROR      0x04    /* Error occurred */
-#define AK_RING_FLAG_OVERFLOW   0x80    /* Ring buffer overflowed */
+#define AK_RING_FLAG_DENIED 0x01   /* Operation was denied */
+#define AK_RING_FLAG_TIMEOUT 0x02  /* Operation timed out */
+#define AK_RING_FLAG_ERROR 0x04    /* Error occurred */
+#define AK_RING_FLAG_OVERFLOW 0x80 /* Ring buffer overflowed */
 
 /*
  * Initialize ring buffer (called from ak_audit_init).
@@ -319,16 +295,8 @@ void ak_ring_init(void);
  *
  * Returns: sequence number of entry, or 0 if ring not initialized.
  */
-u64 ak_ring_push(
-    u8 *pid,
-    u8 *run_id,
-    u16 op,
-    u8 *req_hash,
-    u8 *res_hash,
-    s64 result_code,
-    u32 latency_us,
-    u8 flags
-);
+u64 ak_ring_push(u8 *pid, u8 *run_id, u16 op, u8 *req_hash, u8 *res_hash,
+                 s64 result_code, u32 latency_us, u8 flags);
 
 /*
  * Pop entry from ring buffer (non-blocking).
@@ -348,12 +316,12 @@ boolean ak_ring_peek(u64 offset, ak_ring_entry_t *entry_out);
  * Get ring buffer statistics.
  */
 typedef struct ak_ring_stats {
-    u64 total_pushed;           /* Total entries ever pushed */
-    u64 total_popped;           /* Total entries ever popped */
-    u64 current_count;          /* Current entries in buffer */
-    u64 overflow_count;         /* Number of overwrites */
-    u64 head_seq;               /* Current head sequence */
-    u64 tail_seq;               /* Current tail sequence */
+  u64 total_pushed;   /* Total entries ever pushed */
+  u64 total_popped;   /* Total entries ever popped */
+  u64 current_count;  /* Current entries in buffer */
+  u64 overflow_count; /* Number of overwrites */
+  u64 head_seq;       /* Current head sequence */
+  u64 tail_seq;       /* Current tail sequence */
 } ak_ring_stats_t;
 
 void ak_ring_get_stats(ak_ring_stats_t *stats);

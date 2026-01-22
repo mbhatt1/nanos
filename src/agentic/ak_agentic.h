@@ -27,11 +27,11 @@
 #ifndef AK_AGENTIC_H
 #define AK_AGENTIC_H
 
-#include "ak_types.h"
 #include "ak_effects.h"
-#include "ak_wasm.h"
 #include "ak_inference.h"
 #include "ak_tool_registry.h"
+#include "ak_types.h"
+#include "ak_wasm.h"
 
 /* ============================================================
  * BUDGET TRACKING
@@ -41,24 +41,24 @@
  */
 
 typedef struct ak_agentic_budget {
-    /* Tool call budget */
-    u64 tool_calls_limit;
-    u64 tool_calls_remaining;
-    u64 tool_calls_used;
+  /* Tool call budget */
+  u64 tool_calls_limit;
+  u64 tool_calls_remaining;
+  u64 tool_calls_used;
 
-    /* Token budget (for inference) */
-    u64 tokens_limit;
-    u64 tokens_remaining;
-    u64 tokens_used;
+  /* Token budget (for inference) */
+  u64 tokens_limit;
+  u64 tokens_remaining;
+  u64 tokens_used;
 
-    /* WASM call budget */
-    u64 wasm_calls_limit;
-    u64 wasm_calls_remaining;
-    u64 wasm_calls_used;
+  /* WASM call budget */
+  u64 wasm_calls_limit;
+  u64 wasm_calls_remaining;
+  u64 wasm_calls_used;
 
-    /* Time tracking */
-    u64 start_ns;
-    u64 wall_time_limit_ns;
+  /* Time tracking */
+  u64 start_ns;
+  u64 wall_time_limit_ns;
 } ak_agentic_budget_t;
 
 /*
@@ -77,13 +77,9 @@ void ak_agentic_budget_init(ak_agentic_budget_t *budget);
  * @param wasm_calls    Maximum WASM calls
  * @param wall_time_ns  Maximum wall time in nanoseconds
  */
-void ak_agentic_budget_init_custom(
-    ak_agentic_budget_t *budget,
-    u64 tool_calls,
-    u64 tokens,
-    u64 wasm_calls,
-    u64 wall_time_ns
-);
+void ak_agentic_budget_init_custom(ak_agentic_budget_t *budget, u64 tool_calls,
+                                   u64 tokens, u64 wasm_calls,
+                                   u64 wall_time_ns);
 
 /*
  * Check if tool call budget is available.
@@ -160,12 +156,8 @@ int ak_budget_get_state(ak_ctx_t *ctx, ak_agentic_budget_t *budget);
  * @param result_len    In: max result size, Out: actual result size
  * @return              0 on success, negative error code on failure
  */
-typedef int (*ak_tool_handler_t)(
-    const u8 *args,
-    u32 args_len,
-    u8 *result,
-    u32 *result_len
-);
+typedef int (*ak_tool_handler_t)(const u8 *args, u32 args_len, u8 *result,
+                                 u32 *result_len);
 
 /*
  * Register a native tool handler.
@@ -175,11 +167,8 @@ typedef int (*ak_tool_handler_t)(
  * @param handler   Handler function
  * @return          0 on success, -EEXIST if name exists
  */
-int ak_tool_handler_register(
-    const char *name,
-    const char *version,
-    ak_tool_handler_t handler
-);
+int ak_tool_handler_register(const char *name, const char *version,
+                             ak_tool_handler_t handler);
 
 /*
  * Unregister a native tool handler.
@@ -224,15 +213,9 @@ ak_tool_handler_t ak_tool_handler_lookup(const char *name, const char *version);
  * @param result_len    In: max result size, Out: actual result size
  * @return              0 on success, negative error on denial/failure
  */
-int ak_handle_tool_call(
-    ak_ctx_t *ctx,
-    const char *tool_name,
-    const char *version,
-    const u8 *args,
-    u32 args_len,
-    u8 *result,
-    u32 *result_len
-);
+int ak_handle_tool_call(ak_ctx_t *ctx, const char *tool_name,
+                        const char *version, const u8 *args, u32 args_len,
+                        u8 *result, u32 *result_len);
 
 /* ============================================================
  * WASM INVOKE HANDLER
@@ -260,15 +243,9 @@ int ak_handle_tool_call(
  * @param result_len    In: max result size, Out: actual result size
  * @return              0 on success, negative error on denial/failure
  */
-int ak_handle_wasm_invoke(
-    ak_ctx_t *ctx,
-    const char *module,
-    const char *function,
-    const u8 *args,
-    u32 args_len,
-    u8 *result,
-    u32 *result_len
-);
+int ak_handle_wasm_invoke(ak_ctx_t *ctx, const char *module,
+                          const char *function, const u8 *args, u32 args_len,
+                          u8 *result, u32 *result_len);
 
 /*
  * Check if a WASM hostcall is allowed by policy.
@@ -282,11 +259,8 @@ int ak_handle_wasm_invoke(
  * @param hostcall  Name of hostcall being attempted
  * @return          0 if allowed, -EPERM if denied
  */
-int ak_wasm_hostcall_check(
-    ak_ctx_t *ctx,
-    const char *module,
-    const char *hostcall
-);
+int ak_wasm_hostcall_check(ak_ctx_t *ctx, const char *module,
+                           const char *hostcall);
 
 /* ============================================================
  * INFERENCE HANDLER
@@ -315,16 +289,9 @@ int ak_wasm_hostcall_check(
  * @param response_len  In: max response size, Out: actual response size
  * @return              0 on success, negative error on denial/failure
  */
-int ak_handle_infer(
-    ak_ctx_t *ctx,
-    const char *model,
-    const char *version,
-    const u8 *prompt,
-    u32 prompt_len,
-    u64 max_tokens,
-    u8 *response,
-    u32 *response_len
-);
+int ak_handle_infer(ak_ctx_t *ctx, const char *model, const char *version,
+                    const u8 *prompt, u32 prompt_len, u64 max_tokens,
+                    u8 *response, u32 *response_len);
 
 /* ============================================================
  * INITIALIZATION
@@ -349,30 +316,30 @@ void ak_agentic_shutdown(void);
  * ============================================================ */
 
 typedef struct ak_agentic_stats {
-    /* Tool calls */
-    u64 tool_calls_total;
-    u64 tool_calls_allowed;
-    u64 tool_calls_denied;
-    u64 tool_calls_budget_exceeded;
-    u64 tool_calls_failed;
+  /* Tool calls */
+  u64 tool_calls_total;
+  u64 tool_calls_allowed;
+  u64 tool_calls_denied;
+  u64 tool_calls_budget_exceeded;
+  u64 tool_calls_failed;
 
-    /* WASM invocations */
-    u64 wasm_invokes_total;
-    u64 wasm_invokes_allowed;
-    u64 wasm_invokes_denied;
-    u64 wasm_invokes_budget_exceeded;
-    u64 wasm_invokes_failed;
-    u64 wasm_hostcalls_total;
-    u64 wasm_hostcalls_denied;
+  /* WASM invocations */
+  u64 wasm_invokes_total;
+  u64 wasm_invokes_allowed;
+  u64 wasm_invokes_denied;
+  u64 wasm_invokes_budget_exceeded;
+  u64 wasm_invokes_failed;
+  u64 wasm_hostcalls_total;
+  u64 wasm_hostcalls_denied;
 
-    /* Inference */
-    u64 infer_requests_total;
-    u64 infer_requests_allowed;
-    u64 infer_requests_denied;
-    u64 infer_requests_budget_exceeded;
-    u64 infer_requests_failed;
-    u64 infer_tokens_in;
-    u64 infer_tokens_out;
+  /* Inference */
+  u64 infer_requests_total;
+  u64 infer_requests_allowed;
+  u64 infer_requests_denied;
+  u64 infer_requests_budget_exceeded;
+  u64 infer_requests_failed;
+  u64 infer_tokens_in;
+  u64 infer_tokens_out;
 } ak_agentic_stats_t;
 
 /*
@@ -386,19 +353,19 @@ void ak_agentic_get_stats(ak_agentic_stats_t *stats);
  * ERROR CODES
  * ============================================================ */
 
-#define AK_E_AGENTIC_NOT_INIT       (-4700)
+#define AK_E_AGENTIC_NOT_INIT (-4700)
 #define AK_E_TOOL_HANDLER_NOT_FOUND (-4701)
-#define AK_E_WASM_MODULE_NOT_FOUND  (-4702)
-#define AK_E_INFER_MODEL_NOT_FOUND  (-4703)
-#define AK_E_HOSTCALL_DENIED        (-4704)
+#define AK_E_WASM_MODULE_NOT_FOUND (-4702)
+#define AK_E_INFER_MODEL_NOT_FOUND (-4703)
+#define AK_E_HOSTCALL_DENIED (-4704)
 
 /* ============================================================
  * DEFAULT BUDGETS
  * ============================================================ */
 
-#define AK_DEFAULT_TOOL_CALL_BUDGET     100
-#define AK_DEFAULT_TOKEN_BUDGET         100000
-#define AK_DEFAULT_WASM_CALL_BUDGET     1000
-#define AK_DEFAULT_WALL_TIME_NS         (300ULL * 1000000000ULL)  /* 5 minutes */
+#define AK_DEFAULT_TOOL_CALL_BUDGET 100
+#define AK_DEFAULT_TOKEN_BUDGET 100000
+#define AK_DEFAULT_WASM_CALL_BUDGET 1000
+#define AK_DEFAULT_WALL_TIME_NS (300ULL * 1000000000ULL) /* 5 minutes */
 
 #endif /* AK_AGENTIC_H */

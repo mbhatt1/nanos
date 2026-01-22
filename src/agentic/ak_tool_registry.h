@@ -23,8 +23,8 @@
 #ifndef AK_TOOL_REGISTRY_H
 #define AK_TOOL_REGISTRY_H
 
-#include "ak_types.h"
 #include "ak_effects.h"
+#include "ak_types.h"
 
 /* Forward declaration */
 typedef struct ak_tool_def ak_tool_def_t;
@@ -51,15 +51,15 @@ typedef s64 (*ak_tool_handler_fn)(ak_ctx_t *ctx, buffer args, buffer *result);
  * TOOL DEFINITION FLAGS
  * ============================================================ */
 
-#define AK_TOOL_FLAG_NONE           0x0000
-#define AK_TOOL_FLAG_ASYNC          0x0001  /* Tool supports async execution */
-#define AK_TOOL_FLAG_IDEMPOTENT     0x0002  /* Safe to retry on failure */
-#define AK_TOOL_FLAG_SENSITIVE      0x0004  /* Contains/processes PII/secrets */
-#define AK_TOOL_FLAG_READ_ONLY      0x0008  /* No side effects */
-#define AK_TOOL_FLAG_INTERNAL       0x0010  /* Not exposed to agents */
-#define AK_TOOL_FLAG_DEPRECATED     0x0020  /* Scheduled for removal */
-#define AK_TOOL_FLAG_EXPERIMENTAL   0x0040  /* API may change */
-#define AK_TOOL_FLAG_COMPOSABLE     0x0080  /* Can be used in composition */
+#define AK_TOOL_FLAG_NONE 0x0000
+#define AK_TOOL_FLAG_ASYNC 0x0001        /* Tool supports async execution */
+#define AK_TOOL_FLAG_IDEMPOTENT 0x0002   /* Safe to retry on failure */
+#define AK_TOOL_FLAG_SENSITIVE 0x0004    /* Contains/processes PII/secrets */
+#define AK_TOOL_FLAG_READ_ONLY 0x0008    /* No side effects */
+#define AK_TOOL_FLAG_INTERNAL 0x0010     /* Not exposed to agents */
+#define AK_TOOL_FLAG_DEPRECATED 0x0020   /* Scheduled for removal */
+#define AK_TOOL_FLAG_EXPERIMENTAL 0x0040 /* API may change */
+#define AK_TOOL_FLAG_COMPOSABLE 0x0080   /* Can be used in composition */
 
 /* ============================================================
  * TOOL DEFINITION STRUCTURE
@@ -73,41 +73,41 @@ typedef s64 (*ak_tool_handler_fn)(ak_ctx_t *ctx, buffer args, buffer *result);
  */
 
 struct ak_tool_def {
-    /* Identity */
-    char name[64];              /* Tool name (must be unique) */
-    char version[16];           /* Semantic version (e.g., "1.2.3") */
-    char description[256];      /* Human-readable description */
+  /* Identity */
+  char name[64];         /* Tool name (must be unique) */
+  char version[16];      /* Semantic version (e.g., "1.2.3") */
+  char description[256]; /* Human-readable description */
 
-    /* JSON Schemas for validation */
-    char input_schema[1024];    /* JSON Schema for input arguments */
-    char output_schema[1024];   /* JSON Schema for output result */
+  /* JSON Schemas for validation */
+  char input_schema[1024];  /* JSON Schema for input arguments */
+  char output_schema[1024]; /* JSON Schema for output result */
 
-    /* Handler */
-    ak_tool_handler_fn handler; /* Tool implementation */
-    void *handler_ctx;          /* Context passed to handler */
+  /* Handler */
+  ak_tool_handler_fn handler; /* Tool implementation */
+  void *handler_ctx;          /* Context passed to handler */
 
-    /* Behavior */
-    u32 flags;                  /* AK_TOOL_FLAG_* */
-    u64 timeout_ms;             /* Execution timeout (0 = no limit) */
+  /* Behavior */
+  u32 flags;      /* AK_TOOL_FLAG_* */
+  u64 timeout_ms; /* Execution timeout (0 = no limit) */
 
-    /* Mock mode for testing */
-    boolean mock_enabled;       /* If true, return mock_response instead */
-    buffer mock_response;       /* Pre-configured mock response */
+  /* Mock mode for testing */
+  boolean mock_enabled; /* If true, return mock_response instead */
+  buffer mock_response; /* Pre-configured mock response */
 
-    /* Capability requirements */
-    ak_cap_type_t required_cap; /* Required capability type */
-    char cap_resource[256];     /* Required resource pattern */
+  /* Capability requirements */
+  ak_cap_type_t required_cap; /* Required capability type */
+  char cap_resource[256];     /* Required resource pattern */
 
-    /* Metrics */
-    u64 invocation_count;       /* Times invoked */
-    u64 success_count;          /* Successful invocations */
-    u64 failure_count;          /* Failed invocations */
-    u64 total_time_ns;          /* Total execution time */
-    u64 registered_ms;          /* Registration timestamp */
+  /* Metrics */
+  u64 invocation_count; /* Times invoked */
+  u64 success_count;    /* Successful invocations */
+  u64 failure_count;    /* Failed invocations */
+  u64 total_time_ns;    /* Total execution time */
+  u64 registered_ms;    /* Registration timestamp */
 
-    /* Internal linkage */
-    boolean active;             /* Is tool registered */
-    struct ak_tool_def *next;   /* For hash bucket chaining */
+  /* Internal linkage */
+  boolean active;           /* Is tool registered */
+  struct ak_tool_def *next; /* For hash bucket chaining */
 };
 
 /* ============================================================
@@ -122,11 +122,11 @@ struct ak_tool_def {
  */
 
 typedef enum ak_version_match {
-    AK_VERSION_EXACT,           /* Exact version match required */
-    AK_VERSION_MAJOR,           /* Same major version */
-    AK_VERSION_ANY,             /* Any version */
-    AK_VERSION_SEMVER,          /* Semver compatible (^) */
-    AK_VERSION_RANGE,           /* Version range (>=, <=, etc.) */
+  AK_VERSION_EXACT,  /* Exact version match required */
+  AK_VERSION_MAJOR,  /* Same major version */
+  AK_VERSION_ANY,    /* Any version */
+  AK_VERSION_SEMVER, /* Semver compatible (^) */
+  AK_VERSION_RANGE,  /* Version range (>=, <=, etc.) */
 } ak_version_match_t;
 
 /* ============================================================
@@ -136,9 +136,9 @@ typedef enum ak_version_match {
  */
 
 typedef struct ak_tool_list {
-    ak_tool_def_t **tools;      /* Array of tool pointers */
-    u32 count;                  /* Number of tools */
-    u32 capacity;               /* Array capacity */
+  ak_tool_def_t **tools; /* Array of tool pointers */
+  u32 count;             /* Number of tools */
+  u32 capacity;          /* Array capacity */
 } ak_tool_list_t;
 
 /* ============================================================
@@ -148,22 +148,22 @@ typedef struct ak_tool_list {
  * the output of each tool as input to the next.
  */
 
-#define AK_MAX_COMPOSITE_CHAIN  16
+#define AK_MAX_COMPOSITE_CHAIN 16
 
 typedef struct ak_composite_tool {
-    char name[64];              /* Composite tool name */
-    char version[16];           /* Composite version */
+  char name[64];    /* Composite tool name */
+  char version[16]; /* Composite version */
 
-    /* Chain of tools */
-    struct {
-        char name[64];
-        char version[16];
-    } chain[AK_MAX_COMPOSITE_CHAIN];
-    u32 chain_length;
+  /* Chain of tools */
+  struct {
+    char name[64];
+    char version[16];
+  } chain[AK_MAX_COMPOSITE_CHAIN];
+  u32 chain_length;
 
-    /* Behavior */
-    boolean stop_on_error;      /* Stop chain on first error */
-    u64 total_timeout_ms;       /* Timeout for entire chain */
+  /* Behavior */
+  boolean stop_on_error; /* Stop chain on first error */
+  u64 total_timeout_ms;  /* Timeout for entire chain */
 } ak_composite_tool_t;
 
 /* ============================================================
@@ -253,7 +253,7 @@ ak_tool_def_t *ak_tool_lookup(const char *name, const char *version);
  * @return          Tool definition or NULL if not found
  */
 ak_tool_def_t *ak_tool_lookup_ex(const char *name, const char *version,
-                                  ak_version_match_t mode);
+                                 ak_version_match_t mode);
 
 /*
  * List all registered tools.
@@ -352,7 +352,7 @@ int ak_tool_set_mock(const char *name, buffer response);
  * @return          0 on success, -ENOENT if tool not found
  */
 int ak_tool_set_mock_version(const char *name, const char *version,
-                              buffer response);
+                             buffer response);
 
 /*
  * Disable mock mode for a tool.
@@ -511,20 +511,20 @@ boolean ak_version_matches(const char *version, const char *pattern,
  * ============================================================ */
 
 typedef struct ak_tool_registry_stats {
-    u64 tools_registered;       /* Total tools ever registered */
-    u64 tools_active;           /* Currently active tools */
-    u64 tools_unregistered;     /* Tools unregistered */
-    u64 invocations_total;      /* Total invocations */
-    u64 invocations_success;    /* Successful invocations */
-    u64 invocations_failed;     /* Failed invocations */
-    u64 invocations_denied;     /* Denied by policy */
-    u64 invocations_mock;       /* Mock mode invocations */
-    u64 invocations_timeout;    /* Timed out invocations */
-    u64 schema_validations;     /* Schema validations performed */
-    u64 schema_failures;        /* Schema validation failures */
-    u64 composite_invocations;  /* Composite tool invocations */
-    u64 lookups_total;          /* Total lookups */
-    u64 lookups_miss;           /* Lookups that found nothing */
+  u64 tools_registered;      /* Total tools ever registered */
+  u64 tools_active;          /* Currently active tools */
+  u64 tools_unregistered;    /* Tools unregistered */
+  u64 invocations_total;     /* Total invocations */
+  u64 invocations_success;   /* Successful invocations */
+  u64 invocations_failed;    /* Failed invocations */
+  u64 invocations_denied;    /* Denied by policy */
+  u64 invocations_mock;      /* Mock mode invocations */
+  u64 invocations_timeout;   /* Timed out invocations */
+  u64 schema_validations;    /* Schema validations performed */
+  u64 schema_failures;       /* Schema validation failures */
+  u64 composite_invocations; /* Composite tool invocations */
+  u64 lookups_total;         /* Total lookups */
+  u64 lookups_miss;          /* Lookups that found nothing */
 } ak_tool_registry_stats_t;
 
 /*
@@ -543,28 +543,28 @@ void ak_tool_registry_reset_stats(void);
  * ERROR CODES
  * ============================================================ */
 
-#define AK_E_TOOL_NOT_FOUND         (-4750)
-#define AK_E_TOOL_VERSION_MISMATCH  (-4751)
-#define AK_E_TOOL_ALREADY_EXISTS    (-4752)
-#define AK_E_TOOL_REGISTRY_FULL     (-4753)
-#define AK_E_TOOL_INVALID_DEF       (-4754)
-#define AK_E_TOOL_SCHEMA_INVALID    (-4755)
-#define AK_E_TOOL_ARGS_INVALID      (-4756)
-#define AK_E_TOOL_RESULT_INVALID    (-4757)
-#define AK_E_TOOL_TIMEOUT           (-4758)
-#define AK_E_TOOL_MOCK_ENABLED      (-4759)  /* Informational, not error */
-#define AK_E_TOOL_CHAIN_ERROR       (-4760)
-#define AK_E_TOOL_CHAIN_TOO_LONG    (-4761)
+#define AK_E_TOOL_NOT_FOUND (-4750)
+#define AK_E_TOOL_VERSION_MISMATCH (-4751)
+#define AK_E_TOOL_ALREADY_EXISTS (-4752)
+#define AK_E_TOOL_REGISTRY_FULL (-4753)
+#define AK_E_TOOL_INVALID_DEF (-4754)
+#define AK_E_TOOL_SCHEMA_INVALID (-4755)
+#define AK_E_TOOL_ARGS_INVALID (-4756)
+#define AK_E_TOOL_RESULT_INVALID (-4757)
+#define AK_E_TOOL_TIMEOUT (-4758)
+#define AK_E_TOOL_MOCK_ENABLED (-4759) /* Informational, not error */
+#define AK_E_TOOL_CHAIN_ERROR (-4760)
+#define AK_E_TOOL_CHAIN_TOO_LONG (-4761)
 
 /* ============================================================
  * CONSTANTS
  * ============================================================ */
 
-#define AK_TOOL_REGISTRY_MAX_TOOLS      256
-#define AK_TOOL_NAME_MAX                64
-#define AK_TOOL_VERSION_MAX             16
-#define AK_TOOL_DESCRIPTION_MAX         256
-#define AK_TOOL_SCHEMA_MAX              1024
-#define AK_TOOL_DEFAULT_TIMEOUT_MS      30000
+#define AK_TOOL_REGISTRY_MAX_TOOLS 256
+#define AK_TOOL_NAME_MAX 64
+#define AK_TOOL_VERSION_MAX 16
+#define AK_TOOL_DESCRIPTION_MAX 256
+#define AK_TOOL_SCHEMA_MAX 1024
+#define AK_TOOL_DEFAULT_TIMEOUT_MS 30000
 
 #endif /* AK_TOOL_REGISTRY_H */

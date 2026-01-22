@@ -26,19 +26,19 @@
 #ifndef AK_POLICY_V2_H
 #define AK_POLICY_V2_H
 
-#include "ak_types.h"
 #include "ak_effects.h"
+#include "ak_types.h"
 
 /* ============================================================
  * POLICY VERSION AND CONSTANTS
  * ============================================================ */
 
-#define AK_POLICY_V2_VERSION        "1.0"
-#define AK_POLICY_V2_PATH           "/ak/policy.json"
-#define AK_POLICY_V2_MAX_RULES      256
-#define AK_POLICY_V2_MAX_PATTERN    256
-#define AK_POLICY_V2_MAX_PROFILES   16
-#define AK_POLICY_V2_MAX_HOSTCALLS  32
+#define AK_POLICY_V2_VERSION "1.0"
+#define AK_POLICY_V2_PATH "/ak/policy.json"
+#define AK_POLICY_V2_MAX_RULES 256
+#define AK_POLICY_V2_MAX_PATTERN 256
+#define AK_POLICY_V2_MAX_PROFILES 16
+#define AK_POLICY_V2_MAX_HOSTCALLS 32
 
 /* ============================================================
  * FILESYSTEM RULES
@@ -48,10 +48,10 @@
  */
 
 typedef struct ak_fs_rule_v2 {
-    char pattern[AK_POLICY_V2_MAX_PATTERN];  /* Glob pattern: /app/**, /tmp/* */
-    boolean read;                             /* Allow read access */
-    boolean write;                            /* Allow write access */
-    struct ak_fs_rule_v2 *next;
+  char pattern[AK_POLICY_V2_MAX_PATTERN]; /* Glob pattern: /app/**, /tmp/* */
+  boolean read;                           /* Allow read access */
+  boolean write;                          /* Allow write access */
+  struct ak_fs_rule_v2 *next;
 } ak_fs_rule_v2_t;
 
 /* ============================================================
@@ -62,11 +62,11 @@ typedef struct ak_fs_rule_v2 {
  */
 
 typedef struct ak_net_rule_v2 {
-    char pattern[AK_POLICY_V2_MAX_PATTERN];  /* "dns:*.example.com:*" */
-    boolean connect;                          /* Allow outbound connect */
-    boolean bind;                             /* Allow local bind */
-    boolean listen;                           /* Allow listen */
-    struct ak_net_rule_v2 *next;
+  char pattern[AK_POLICY_V2_MAX_PATTERN]; /* "dns:*.example.com:*" */
+  boolean connect;                        /* Allow outbound connect */
+  boolean bind;                           /* Allow local bind */
+  boolean listen;                         /* Allow listen */
+  struct ak_net_rule_v2 *next;
 } ak_net_rule_v2_t;
 
 /* ============================================================
@@ -77,9 +77,10 @@ typedef struct ak_net_rule_v2 {
  */
 
 typedef struct ak_dns_rule_v2 {
-    char pattern[AK_POLICY_V2_MAX_PATTERN];  /* "*.example.com", "api.github.com" */
-    boolean allow;
-    struct ak_dns_rule_v2 *next;
+  char
+      pattern[AK_POLICY_V2_MAX_PATTERN]; /* "*.example.com", "api.github.com" */
+  boolean allow;
+  struct ak_dns_rule_v2 *next;
 } ak_dns_rule_v2_t;
 
 /* ============================================================
@@ -89,9 +90,9 @@ typedef struct ak_dns_rule_v2 {
  */
 
 typedef struct ak_tool_rule_v2 {
-    char pattern[64];                         /* "http_*", "file_read" */
-    boolean allow;                            /* true = allow, false = deny */
-    struct ak_tool_rule_v2 *next;
+  char pattern[64]; /* "http_*", "file_read" */
+  boolean allow;    /* true = allow, false = deny */
+  struct ak_tool_rule_v2 *next;
 } ak_tool_rule_v2_t;
 
 /* ============================================================
@@ -101,10 +102,10 @@ typedef struct ak_tool_rule_v2 {
  */
 
 typedef struct ak_wasm_rule_v2 {
-    char module_pattern[64];                  /* Module name pattern */
-    char *allowed_hostcalls[AK_POLICY_V2_MAX_HOSTCALLS];
-    u32 hostcall_count;
-    struct ak_wasm_rule_v2 *next;
+  char module_pattern[64]; /* Module name pattern */
+  char *allowed_hostcalls[AK_POLICY_V2_MAX_HOSTCALLS];
+  u32 hostcall_count;
+  struct ak_wasm_rule_v2 *next;
 } ak_wasm_rule_v2_t;
 
 /* ============================================================
@@ -114,9 +115,9 @@ typedef struct ak_wasm_rule_v2 {
  */
 
 typedef struct ak_infer_rule_v2 {
-    char model_pattern[64];                   /* "gpt-4", "claude-*" */
-    u64 max_tokens;                           /* Token limit for this model */
-    struct ak_infer_rule_v2 *next;
+  char model_pattern[64]; /* "gpt-4", "claude-*" */
+  u64 max_tokens;         /* Token limit for this model */
+  struct ak_infer_rule_v2 *next;
 } ak_infer_rule_v2_t;
 
 /* ============================================================
@@ -127,14 +128,15 @@ typedef struct ak_infer_rule_v2 {
  */
 
 typedef struct ak_spawn_rule_v2 {
-    char pattern[AK_POLICY_V2_MAX_PATTERN];   /* Program path pattern: "/usr/bin/*" */
-    boolean allow;                             /* Allow spawn */
-    boolean inherit_caps;                      /* Child inherits caps */
-    boolean inherit_policy;                    /* Child inherits policy */
-    boolean sandboxed;                         /* Spawn in sandbox */
-    u32 max_children;                          /* Max concurrent children (0=unlimited) */
-    u64 max_wall_ms;                           /* Max wall time for child */
-    struct ak_spawn_rule_v2 *next;
+  char pattern[AK_POLICY_V2_MAX_PATTERN]; /* Program path pattern: "/usr/bin/*"
+                                           */
+  boolean allow;                          /* Allow spawn */
+  boolean inherit_caps;                   /* Child inherits caps */
+  boolean inherit_policy;                 /* Child inherits policy */
+  boolean sandboxed;                      /* Spawn in sandbox */
+  u32 max_children; /* Max concurrent children (0=unlimited) */
+  u64 max_wall_ms;  /* Max wall time for child */
+  struct ak_spawn_rule_v2 *next;
 } ak_spawn_rule_v2_t;
 
 /* ============================================================
@@ -144,11 +146,11 @@ typedef struct ak_spawn_rule_v2 {
  */
 
 typedef struct ak_budgets_v2 {
-    u64 cpu_ns;                               /* CPU time limit (nanoseconds) */
-    u64 wall_ns;                              /* Wall time limit (nanoseconds) */
-    u64 bytes;                                /* Total byte budget */
-    u64 tokens;                               /* LLM token budget */
-    u64 tool_calls;                           /* Max tool invocations */
+  u64 cpu_ns;     /* CPU time limit (nanoseconds) */
+  u64 wall_ns;    /* Wall time limit (nanoseconds) */
+  u64 bytes;      /* Total byte budget */
+  u64 tokens;     /* LLM token budget */
+  u64 tool_calls; /* Max tool invocations */
 } ak_budgets_v2_t;
 
 /* ============================================================
@@ -158,45 +160,45 @@ typedef struct ak_budgets_v2 {
  */
 
 typedef struct ak_policy_v2 {
-    /* Memory allocator */
-    heap h;
+  /* Memory allocator */
+  heap h;
 
-    /* Identity and versioning */
-    char version[16];                         /* Policy format version */
-    u8 policy_hash[AK_HASH_SIZE];            /* SHA-256 of policy content */
-    u64 loaded_ns;                            /* Load timestamp (monotonic) */
+  /* Identity and versioning */
+  char version[16];             /* Policy format version */
+  u8 policy_hash[AK_HASH_SIZE]; /* SHA-256 of policy content */
+  u64 loaded_ns;                /* Load timestamp (monotonic) */
 
-    /* Filesystem capabilities */
-    ak_fs_rule_v2_t *fs_rules;
+  /* Filesystem capabilities */
+  ak_fs_rule_v2_t *fs_rules;
 
-    /* Network capabilities */
-    ak_net_rule_v2_t *net_rules;
+  /* Network capabilities */
+  ak_net_rule_v2_t *net_rules;
 
-    /* DNS capabilities (P0 REQUIRED) */
-    ak_dns_rule_v2_t *dns_rules;
+  /* DNS capabilities (P0 REQUIRED) */
+  ak_dns_rule_v2_t *dns_rules;
 
-    /* Tool capabilities */
-    ak_tool_rule_v2_t *tool_rules;
+  /* Tool capabilities */
+  ak_tool_rule_v2_t *tool_rules;
 
-    /* WASM capabilities */
-    ak_wasm_rule_v2_t *wasm_rules;
+  /* WASM capabilities */
+  ak_wasm_rule_v2_t *wasm_rules;
 
-    /* Inference capabilities */
-    ak_infer_rule_v2_t *infer_rules;
+  /* Inference capabilities */
+  ak_infer_rule_v2_t *infer_rules;
 
-    /* Process spawn capabilities */
-    ak_spawn_rule_v2_t *spawn_rules;
+  /* Process spawn capabilities */
+  ak_spawn_rule_v2_t *spawn_rules;
 
-    /* Resource budgets */
-    ak_budgets_v2_t budgets;
+  /* Resource budgets */
+  ak_budgets_v2_t budgets;
 
-    /* Profile includes (P0: simple string list) */
-    char *included_profiles[AK_POLICY_V2_MAX_PROFILES];
-    u32 profile_count;
+  /* Profile includes (P0: simple string list) */
+  char *included_profiles[AK_POLICY_V2_MAX_PROFILES];
+  u32 profile_count;
 
-    /* Load state */
-    boolean loaded;                           /* true if policy loaded successfully */
-    boolean fail_closed;                      /* true if in fail-closed state */
+  /* Load state */
+  boolean loaded;      /* true if policy loaded successfully */
+  boolean fail_closed; /* true if in fail-closed state */
 
 } ak_policy_v2_t;
 
@@ -205,13 +207,13 @@ typedef struct ak_policy_v2 {
  * ============================================================ */
 
 typedef enum ak_policy_v2_result {
-    AK_POLICY_V2_OK                 = 0,
-    AK_POLICY_V2_ERR_NO_POLICY      = -1,     /* No policy found */
-    AK_POLICY_V2_ERR_PARSE          = -2,     /* JSON parse error */
-    AK_POLICY_V2_ERR_INVALID        = -3,     /* Invalid policy structure */
-    AK_POLICY_V2_ERR_VERSION        = -4,     /* Unsupported version */
-    AK_POLICY_V2_ERR_ALLOC          = -5,     /* Memory allocation failed */
-    AK_POLICY_V2_ERR_IO             = -6,     /* I/O error reading policy */
+  AK_POLICY_V2_OK = 0,
+  AK_POLICY_V2_ERR_NO_POLICY = -1, /* No policy found */
+  AK_POLICY_V2_ERR_PARSE = -2,     /* JSON parse error */
+  AK_POLICY_V2_ERR_INVALID = -3,   /* Invalid policy structure */
+  AK_POLICY_V2_ERR_VERSION = -4,   /* Unsupported version */
+  AK_POLICY_V2_ERR_ALLOC = -5,     /* Memory allocation failed */
+  AK_POLICY_V2_ERR_IO = -6,        /* I/O error reading policy */
 } ak_policy_v2_result_t;
 
 /* ============================================================
@@ -317,11 +319,8 @@ void ak_policy_v2_destroy(ak_policy_v2_t *policy);
  * @param decision_out  Authorization decision (always populated)
  * @return              true if allowed, false if denied
  */
-boolean ak_policy_v2_check(
-    ak_policy_v2_t *policy,
-    const ak_effect_req_t *req,
-    ak_decision_t *decision_out
-);
+boolean ak_policy_v2_check(ak_policy_v2_t *policy, const ak_effect_req_t *req,
+                           ak_decision_t *decision_out);
 
 /*
  * Check filesystem access.
@@ -331,11 +330,8 @@ boolean ak_policy_v2_check(
  * @param write     true for write, false for read
  * @return          true if allowed
  */
-boolean ak_policy_v2_check_fs(
-    ak_policy_v2_t *policy,
-    const char *path,
-    boolean write
-);
+boolean ak_policy_v2_check_fs(ak_policy_v2_t *policy, const char *path,
+                              boolean write);
 
 /*
  * Check network connect.
@@ -344,10 +340,8 @@ boolean ak_policy_v2_check_fs(
  * @param target    Canonical target: "ip:addr:port" or "dns:host:port"
  * @return          true if allowed
  */
-boolean ak_policy_v2_check_net_connect(
-    ak_policy_v2_t *policy,
-    const char *target
-);
+boolean ak_policy_v2_check_net_connect(ak_policy_v2_t *policy,
+                                       const char *target);
 
 /*
  * Check DNS resolution.
@@ -356,10 +350,7 @@ boolean ak_policy_v2_check_net_connect(
  * @param hostname  Domain to resolve
  * @return          true if allowed
  */
-boolean ak_policy_v2_check_dns(
-    ak_policy_v2_t *policy,
-    const char *hostname
-);
+boolean ak_policy_v2_check_dns(ak_policy_v2_t *policy, const char *hostname);
 
 /*
  * Check tool execution.
@@ -368,10 +359,7 @@ boolean ak_policy_v2_check_dns(
  * @param tool_name Tool name
  * @return          true if allowed
  */
-boolean ak_policy_v2_check_tool(
-    ak_policy_v2_t *policy,
-    const char *tool_name
-);
+boolean ak_policy_v2_check_tool(ak_policy_v2_t *policy, const char *tool_name);
 
 /*
  * Check WASM module invocation.
@@ -381,11 +369,8 @@ boolean ak_policy_v2_check_tool(
  * @param hostcall  Hostcall name (NULL to check module only)
  * @return          true if allowed
  */
-boolean ak_policy_v2_check_wasm(
-    ak_policy_v2_t *policy,
-    const char *module,
-    const char *hostcall
-);
+boolean ak_policy_v2_check_wasm(ak_policy_v2_t *policy, const char *module,
+                                const char *hostcall);
 
 /*
  * Check LLM inference.
@@ -396,12 +381,8 @@ boolean ak_policy_v2_check_wasm(
  * @param max_out       If non-NULL, receives max allowed tokens
  * @return              true if allowed
  */
-boolean ak_policy_v2_check_infer(
-    ak_policy_v2_t *policy,
-    const char *model,
-    u64 tokens,
-    u64 *max_out
-);
+boolean ak_policy_v2_check_infer(ak_policy_v2_t *policy, const char *model,
+                                 u64 tokens, u64 *max_out);
 
 /*
  * Check budget limits.
@@ -410,10 +391,8 @@ boolean ak_policy_v2_check_infer(
  * @param req       Effect request with budget fields
  * @return          true if within budget
  */
-boolean ak_policy_v2_check_budget(
-    ak_policy_v2_t *policy,
-    const ak_effect_req_t *req
-);
+boolean ak_policy_v2_check_budget(ak_policy_v2_t *policy,
+                                  const ak_effect_req_t *req);
 
 /*
  * Check process spawn.
@@ -422,10 +401,7 @@ boolean ak_policy_v2_check_budget(
  * @param program   Program path to spawn
  * @return          true if allowed
  */
-boolean ak_policy_v2_check_spawn(
-    ak_policy_v2_t *policy,
-    const char *program
-);
+boolean ak_policy_v2_check_spawn(ak_policy_v2_t *policy, const char *program);
 
 /*
  * Get spawn rule details for a program.
@@ -436,10 +412,8 @@ boolean ak_policy_v2_check_spawn(
  * @param program   Program path
  * @return          Matching rule or NULL if no explicit rule
  */
-const ak_spawn_rule_v2_t *ak_policy_v2_get_spawn_rule(
-    ak_policy_v2_t *policy,
-    const char *program
-);
+const ak_spawn_rule_v2_t *ak_policy_v2_get_spawn_rule(ak_policy_v2_t *policy,
+                                                      const char *program);
 
 /* ============================================================
  * SUGGESTION GENERATION
@@ -455,11 +429,8 @@ const ak_spawn_rule_v2_t *ak_policy_v2_get_spawn_rule(
  * @param snippet   Buffer to receive snippet (must be AK_MAX_SUGGEST bytes)
  * @param max_len   Size of snippet buffer
  */
-void ak_policy_v2_suggest(
-    const ak_effect_req_t *req,
-    char *snippet,
-    u32 max_len
-);
+void ak_policy_v2_suggest(const ak_effect_req_t *req, char *snippet,
+                          u32 max_len);
 
 /*
  * Get the missing capability string for a denied effect.
@@ -470,11 +441,8 @@ void ak_policy_v2_suggest(
  * @param cap       Buffer to receive capability string
  * @param max_len   Size of cap buffer
  */
-void ak_policy_v2_get_missing_cap(
-    const ak_effect_req_t *req,
-    char *cap,
-    u32 max_len
-);
+void ak_policy_v2_get_missing_cap(const ak_effect_req_t *req, char *cap,
+                                  u32 max_len);
 
 /* ============================================================
  * POLICY INSPECTION
@@ -563,6 +531,7 @@ extern const char *AK_PROFILE_TIER2_GLIBC;
  * @param profile_name  Name of profile to expand
  * @return              0 on success, negative on error
  */
-int ak_policy_v2_expand_profile(ak_policy_v2_t *policy, const char *profile_name);
+int ak_policy_v2_expand_profile(ak_policy_v2_t *policy,
+                                const char *profile_name);
 
 #endif /* AK_POLICY_V2_H */

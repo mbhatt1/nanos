@@ -138,8 +138,8 @@ s64 ak_net_check_dns(const char *domain);
  * Network rule types for ak_net_add_rule()
  */
 typedef enum ak_net_rule_type {
-    AK_NET_RULE_ALLOW = 1,      /* Allow connection */
-    AK_NET_RULE_DENY = 2,       /* Deny connection */
+  AK_NET_RULE_ALLOW = 1, /* Allow connection */
+  AK_NET_RULE_DENY = 2,  /* Deny connection */
 } ak_net_rule_type_t;
 
 /*

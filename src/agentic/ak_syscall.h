@@ -17,12 +17,12 @@
 #ifndef AK_SYSCALL_H
 #define AK_SYSCALL_H
 
-#include "ak_types.h"
-#include "ak_capability.h"
 #include "ak_audit.h"
+#include "ak_capability.h"
 #include "ak_heap.h"
-#include "ak_policy.h"
 #include "ak_ipc.h"
+#include "ak_policy.h"
+#include "ak_types.h"
 
 /* ============================================================
  * SYSCALL DISPATCHER INITIALIZATION
@@ -51,8 +51,8 @@ void ak_shutdown(void);
  *
  * Returns: sysreturn (0 on success, negative errno on failure)
  */
-sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
-                             u64 arg3, u64 arg4, u64 arg5);
+sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2, u64 arg3,
+                             u64 arg4, u64 arg5);
 
 /* ============================================================
  * AGENT CONTEXT MANAGEMENT
@@ -67,11 +67,7 @@ sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2,
  *   - Budget tracker
  *   - Sequence tracker
  */
-ak_agent_context_t *ak_context_create(
-    heap h,
-    u8 *pid,
-    ak_policy_t *policy
-);
+ak_agent_context_t *ak_context_create(heap h, u8 *pid, ak_policy_t *policy);
 
 /*
  * Destroy agent context (called on agent exit).
@@ -124,18 +120,12 @@ ak_agent_context_t *ak_get_root_context(void);
  *
  * SECURITY: Response is ONLY returned after audit log sync.
  */
-ak_response_t *ak_dispatch(
-    ak_agent_context_t *ctx,
-    ak_request_t *req
-);
+ak_response_t *ak_dispatch(ak_agent_context_t *ctx, ak_request_t *req);
 
 /*
  * Dispatch from raw buffer (parses request first).
  */
-ak_response_t *ak_dispatch_raw(
-    ak_agent_context_t *ctx,
-    buffer raw_request
-);
+ak_response_t *ak_dispatch_raw(ak_agent_context_t *ctx, buffer raw_request);
 
 /* ============================================================
  * INDIVIDUAL SYSCALL HANDLERS
@@ -177,15 +167,9 @@ ak_response_t *ak_handle_assert(ak_agent_context_t *ctx, ak_request_t *req);
  * SECURITY: Only the kernel can grant root capabilities.
  * Agents can only delegate (attenuate) their own caps.
  */
-s64 ak_grant_capability(
-    ak_agent_context_t *ctx,
-    ak_cap_type_t type,
-    const char *resource,
-    const char **methods,
-    u32 ttl_ms,
-    u32 rate_limit,
-    u32 rate_window_ms
-);
+s64 ak_grant_capability(ak_agent_context_t *ctx, ak_cap_type_t type,
+                        const char *resource, const char **methods, u32 ttl_ms,
+                        u32 rate_limit, u32 rate_window_ms);
 
 /*
  * Revoke capability.
@@ -204,20 +188,12 @@ void ak_revoke_run(ak_agent_context_t *ctx);
 /*
  * Create success response.
  */
-ak_response_t *ak_response_success(
-    heap h,
-    ak_request_t *req,
-    buffer result
-);
+ak_response_t *ak_response_success(heap h, ak_request_t *req, buffer result);
 
 /*
  * Create error response.
  */
-ak_response_t *ak_response_error(
-    heap h,
-    ak_request_t *req,
-    s64 error_code
-);
+ak_response_t *ak_response_error(heap h, ak_request_t *req, s64 error_code);
 
 /*
  * Free response.
@@ -275,27 +251,24 @@ s64 ak_check_policy(ak_agent_context_t *ctx, ak_request_t *req);
  *
  * SECURITY: Must complete before response is sent.
  */
-s64 ak_log_operation(
-    ak_agent_context_t *ctx,
-    ak_request_t *req,
-    ak_response_t *res
-);
+s64 ak_log_operation(ak_agent_context_t *ctx, ak_request_t *req,
+                     ak_response_t *res);
 
 /* ============================================================
  * STATISTICS
  * ============================================================ */
 
 typedef struct ak_dispatch_stats {
-    u64 total_requests;
-    u64 successful_requests;
-    u64 failed_requests;
-    u64 replay_attempts;
-    u64 capability_failures;
-    u64 policy_denials;
-    u64 budget_exceeded;
+  u64 total_requests;
+  u64 successful_requests;
+  u64 failed_requests;
+  u64 replay_attempts;
+  u64 capability_failures;
+  u64 policy_denials;
+  u64 budget_exceeded;
 
-    /* Per-op counts */
-    u64 op_counts[16];
+  /* Per-op counts */
+  u64 op_counts[16];
 } ak_dispatch_stats_t;
 
 void ak_get_dispatch_stats(ak_dispatch_stats_t *stats);
