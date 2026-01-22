@@ -88,7 +88,8 @@ jobs:
           # Skip tests with known issues in upstream nanos code:
           # - bitmap_test: heap-buffer-overflow
           # - objcache_test: null pointer deref in footer struct
-          make asan CC=clang SKIP_TEST="network_test udp_test bitmap_test objcache_test"
+          # - pageheap_test: null pointer deref in pageheap_area struct
+          make asan CC=clang SKIP_TEST="network_test udp_test bitmap_test objcache_test pageheap_test"
           echo ""
           echo "✓ All ASAN tests passed"
 

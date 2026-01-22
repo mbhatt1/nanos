@@ -111,7 +111,7 @@ static int local_strncmp(const char *s1, const char *s2, u64 n) {
 
 /* Parse a JSON string, return end position */
 static const u8 *parse_string(const u8 *p, const u8 *end, char *out, u64 max_len) {
-    if (p >= end || *p != '"') return NULL;
+    if (!p || p >= end || *p != '"') return NULL;
     p++;
 
     u64 i = 0;
@@ -150,7 +150,7 @@ static const u8 *parse_number(const u8 *p, const u8 *end, u64 *out) {
 /* Skip a JSON value (string, number, object, array, bool, null) */
 static const u8 *skip_value(const u8 *p, const u8 *end) {
     p = skip_ws(p, end);
-    if (p >= end) return NULL;
+    if (!p || p >= end) return NULL;
 
     if (*p == '"') {
         p++;
@@ -212,12 +212,12 @@ typedef void (*string_array_cb)(void *ctx, const char *str);
 static const u8 *parse_string_array(const u8 *p, const u8 *end,
                                     string_array_cb cb, void *ctx) {
     p = skip_ws(p, end);
-    if (p >= end || *p != '[') return NULL;
+    if (!p || p >= end || *p != '[') return NULL;
     p++;
 
     while (p < end) {
         p = skip_ws(p, end);
-        if (p >= end) return NULL;
+        if (!p || p >= end) return NULL;
         if (*p == ']') return p + 1;
 
         char str[AK_POLICY_V2_MAX_PATTERN];
@@ -227,7 +227,7 @@ static const u8 *parse_string_array(const u8 *p, const u8 *end,
         if (cb) cb(ctx, str);
 
         p = skip_ws(p, end);
-        if (p >= end) return NULL;
+        if (!p || p >= end) return NULL;
         if (*p == ',') p++;
         else if (*p != ']') return NULL;
     }
@@ -272,12 +272,12 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
     g_parsed_tool_rules = 0;
 
     p = skip_ws(p, end);
-    if (p >= end || *p != '{') return false;
+    if (!p || p >= end || *p != '{') return false;
     p++;
 
-    while (p < end) {
+    while (p && p < end) {
         p = skip_ws(p, end);
-        if (p >= end) return false;
+        if (!p || p >= end) return false;
         if (*p == '}') break;
 
         /* Parse key */
@@ -286,7 +286,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
         if (!p) return false;
 
         p = skip_ws(p, end);
-        if (p >= end || *p != ':') return false;
+        if (!p || p >= end || *p != ':') return false;
         p++;
         p = skip_ws(p, end);
 
@@ -303,7 +303,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
 
             while (p < end) {
                 p = skip_ws(p, end);
-                if (p >= end) return false;
+                if (!p || p >= end) return false;
                 if (*p == '}') { p++; break; }
 
                 char fs_key[32];
@@ -311,7 +311,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
                 if (!p) return false;
 
                 p = skip_ws(p, end);
-                if (p >= end || *p != ':') return false;
+                if (!p || p >= end || *p != ':') return false;
                 p++;
 
                 if (local_strncmp(fs_key, "read", 4) == 0 ||
@@ -333,7 +333,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
 
             while (p < end) {
                 p = skip_ws(p, end);
-                if (p >= end) return false;
+                if (!p || p >= end) return false;
                 if (*p == '}') { p++; break; }
 
                 char net_key[32];
@@ -341,7 +341,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
                 if (!p) return false;
 
                 p = skip_ws(p, end);
-                if (p >= end || *p != ':') return false;
+                if (!p || p >= end || *p != ':') return false;
                 p++;
 
                 if (local_strncmp(net_key, "dns", 3) == 0 ||
@@ -363,7 +363,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
 
             while (p < end) {
                 p = skip_ws(p, end);
-                if (p >= end) return false;
+                if (!p || p >= end) return false;
                 if (*p == '}') { p++; break; }
 
                 char tool_key[32];
@@ -371,7 +371,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
                 if (!p) return false;
 
                 p = skip_ws(p, end);
-                if (p >= end || *p != ':') return false;
+                if (!p || p >= end || *p != ':') return false;
                 p++;
 
                 if (local_strncmp(tool_key, "allow", 5) == 0 ||
