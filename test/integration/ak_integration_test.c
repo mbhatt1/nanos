@@ -491,7 +491,7 @@ static boolean canonicalize_path(const char *path, const char *cwd,
         const char *comp_start = p;
         while (*p && *p != '/')
             p++;
-        size_t comp_len = p - comp_start;
+        size_t comp_len = (size_t)(p - comp_start);
 
         /* Handle . and .. */
         if (comp_len == 1 && comp_start[0] == '.') {
@@ -571,7 +571,7 @@ static void generate_suggestion(const ak_effect_req_t *req, char *snippet, size_
         char name[64];
         const char *colon = strchr(tool, ':');
         if (colon) {
-            size_t len = colon - tool;
+            size_t len = (size_t)(colon - tool);
             if (len >= sizeof(name))
                 len = sizeof(name) - 1;
             memcpy(name, tool, len);
@@ -728,7 +728,7 @@ static int ak_authorize_and_execute(ak_ctx_t *ctx,
         char name[64];
         const char *colon = strchr(tool, ':');
         if (colon) {
-            size_t len = colon - tool;
+            size_t len = (size_t)(colon - tool);
             if (len >= sizeof(name))
                 len = sizeof(name) - 1;
             memcpy(name, tool, len);
@@ -846,13 +846,14 @@ static int ak_authorize_and_execute(ak_ctx_t *ctx,
         ctx->denied++;
         generate_suggestion(req, decision->suggested_snippet, sizeof(decision->suggested_snippet));
 
-        /* Store in last_deny */
+        /* Store in last_deny - use snprintf to avoid truncation warnings */
         ctx->last_deny.op = req->op;
-        strncpy(ctx->last_deny.target, req->target, sizeof(ctx->last_deny.target) - 1);
-        strncpy(ctx->last_deny.missing_cap, decision->missing_cap,
-                sizeof(ctx->last_deny.missing_cap) - 1);
-        strncpy(ctx->last_deny.suggested_snippet, decision->suggested_snippet,
-                sizeof(ctx->last_deny.suggested_snippet) - 1);
+        snprintf(ctx->last_deny.target, sizeof(ctx->last_deny.target),
+                 "%s", req->target);
+        snprintf(ctx->last_deny.missing_cap, sizeof(ctx->last_deny.missing_cap),
+                 "%s", decision->missing_cap);
+        snprintf(ctx->last_deny.suggested_snippet, sizeof(ctx->last_deny.suggested_snippet),
+                 "%s", decision->suggested_snippet);
         ctx->last_deny.trace_id = decision->trace_id;
         ctx->last_deny.errno_equiv = decision->errno_equiv;
         ctx->last_deny.reason = decision->reason_code;
@@ -879,8 +880,9 @@ static long ak_route_open(const char *path, int flags, int mode)
     req.op = AK_E_FS_OPEN;
     req.trace_id = ak_trace_id_generate(ctx);
     canonicalize_path(path, "/", req.target, sizeof(req.target));
-    req.params_len = snprintf((char *)req.params, sizeof(req.params),
-                               "{\"flags\":%d,\"mode\":%d}", flags, mode);
+    int plen = snprintf((char *)req.params, sizeof(req.params),
+                        "{\"flags\":%d,\"mode\":%d}", flags, mode);
+    req.params_len = (plen > 0) ? (u32)plen : 0;
 
     ak_decision_t decision;
     long retval;
