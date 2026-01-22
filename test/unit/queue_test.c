@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <string.h>
+#include <stdatomic.h>
 #include <runtime.h>
 
 #include "../test_utils.h"
@@ -29,7 +30,7 @@ static u64 total_dequeued = 0;
 static u64 results[RESULTS_VEC_SIZE];
 static heap test_heap;
 
-static volatile boolean drain_and_exit;
+static _Atomic int drain_and_exit;
 static volatile u64 vec_count;
 
 /* we don't have a thread-safe id allocator, settle for brute force search */
@@ -62,7 +63,7 @@ static void * test_child(void *arg)
     queue q = (queue)arg;
 
     do {
-        if (!drain_and_exit) {
+        if (!atomic_load(&drain_and_exit)) {
             u64 n_enqueue = (u64)random() % MAX_CONSECUTIVE_OPS;
             queuetest_debug("enqueue %lld...\n", n_enqueue);
             for (u64 i = 0; i < n_enqueue; i++) {
@@ -91,7 +92,7 @@ static void * test_child(void *arg)
             /* ...same with empty condition */
             u64 n = (u64)dequeue(q);
             if (n == INVALID) {
-                if (drain_and_exit) {
+                if (atomic_load(&drain_and_exit)) {
                     queuetest_debug("finished\n");
                     return (void *)EXIT_SUCCESS;
                 } else {
@@ -115,7 +116,7 @@ static void thread_test(void)
     /* spawn threads */
     vec_count = RESULTS_VEC_SIZE;
     zero(results, RESULTS_VEC_SIZE * sizeof(u64));
-    drain_and_exit = false;
+    atomic_store(&drain_and_exit, 0);
     smp_write_barrier();
     queuetest_debug("spawning threads...\n");
     for (int i = 0; i < N_THREADS; i++) {
@@ -124,7 +125,7 @@ static void thread_test(void)
     }
 
     usleep(THREAD_TEST_DURATION_US);
-    drain_and_exit = true;
+    atomic_store(&drain_and_exit, 1);
 
     queuetest_debug("waiting for threads to exit...\n");
     for (int i = 0; i < N_THREADS; i++) {

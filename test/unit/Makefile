@@ -309,9 +309,10 @@ asan:
 
 # ThreadSanitizer
 # Detects: data races, deadlocks
+# Note: Uses suppression file for lock-free queue code which uses memory barriers
 tsan:
 	$(Q) $(MAKE) clean
-	$(Q) $(MAKE) test \
+	$(Q) TSAN_OPTIONS="suppressions=$(CURDIR)/tsan.supp" $(MAKE) test \
 		EXTRA_CFLAGS="-fsanitize=thread -g -O1" \
 		EXTRA_LDFLAGS="-fsanitize=thread" \
 		DISABLE_GCOV=1 \

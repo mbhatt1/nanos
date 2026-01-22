@@ -1,0 +1,14 @@
+# ThreadSanitizer suppression file for nanos unit tests
+#
+# These suppressions are for lock-free code that uses memory barriers
+# for synchronization instead of locks. TSAN doesn't understand these
+# patterns and reports false positives.
+
+# Lock-free queue implementation uses memory barriers
+race:_enqueue_common
+race:_dequeue_common
+race:enqueue
+race:dequeue
+
+# Lock-free queue internals in queue.h
+race:src/runtime/queue.h
