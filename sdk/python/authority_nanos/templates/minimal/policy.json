@@ -1,0 +1,28 @@
+{
+  "policy": {
+    "version": "1.0",
+    "name": "{{PROJECT_NAME}}",
+    "description": "Minimal policy for {{PROJECT_NAME}} agent"
+  },
+  "capabilities": {
+    "heap": {
+      "enabled": true,
+      "max_objects": 100,
+      "max_size_bytes": 1048576
+    },
+    "network": {
+      "enabled": false
+    },
+    "filesystem": {
+      "enabled": false
+    }
+  },
+  "rules": [
+    {
+      "name": "allow-heap-operations",
+      "effect": "allow",
+      "actions": ["heap:alloc", "heap:read", "heap:write", "heap:delete"],
+      "resources": ["*"]
+    }
+  ]
+}

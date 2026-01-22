@@ -1,0 +1,16 @@
+# {{PROJECT_NAME}} Dependencies
+# Generated: {{DATE}}
+
+# Authority Nanos SDK
+authority-nanos>=0.1.0
+
+# Optional: LangChain for LLM integration
+# langchain>=0.1.0
+# langchain-openai>=0.0.5
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Utilities
+python-dateutil>=2.8.0

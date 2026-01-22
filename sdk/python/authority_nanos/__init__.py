@@ -12,8 +12,10 @@ This package provides comprehensive Python support for Authority Kernel operatio
 - Policy-controlled HTTP requests
 - Authorization and capability management
 - Audit logging
+- **LangChain integration** (via authority_nanos.integrations)
+- **CrewAI integration** (via authority_nanos.integrations)
 
-Typical usage:
+Typical usage with real kernel:
 
     from authority_nanos import AuthorityKernel
     import json
@@ -34,12 +36,80 @@ Typical usage:
         if ak.authorize("read", "/etc/config.json"):
             config = ak.file_read("/etc/config.json")
 
+Simulation mode (no kernel required):
+
+    from authority_nanos import AuthorityKernel
+    import json
+
+    # Use simulate=True to run without a real kernel
+    with AuthorityKernel(simulate=True) as ak:
+        # All operations work with in-memory simulation
+        handle = ak.alloc("counter", b'{"value": 0}')
+        data = ak.read(handle)
+
+        # Configure policy for testing
+        ak.deny_operation("write")  # Deny all writes
+        ak.deny_target("/secret/*")  # Deny access to secrets
+
+        # Check if in simulation mode
+        if ak.is_simulated():
+            print("Running in simulation mode")
+
+Or use SimulatedKernel directly for more control:
+
+    from authority_nanos import SimulatedKernel
+
+    with SimulatedKernel() as ak:
+        handle = ak.alloc("counter", b'{"value": 0}')
+        # Simulation-specific methods available directly
+        ak.deny_operation("read")
+        ak.deny_target("/etc/passwd")
+
+LangChain Integration:
+
+    from authority_nanos import AuthorityKernel
+    from authority_nanos.integrations import AuthorityLLM
+
+    with AuthorityKernel(simulate=True) as ak:
+        llm = AuthorityLLM(ak, model="gpt-4")
+        response = llm.invoke("What is the capital of France?")
+        print(response.content)
+
+CrewAI Integration:
+
+    from authority_nanos import AuthorityKernel
+    from authority_nanos.integrations import AuthorityAgent, AuthorityTask, AuthorityCrew
+
+    with AuthorityKernel(simulate=True) as ak:
+        researcher = AuthorityAgent(
+            kernel=ak,
+            role="Researcher",
+            goal="Find information",
+            backstory="Expert research assistant"
+        )
+
+        task = AuthorityTask(
+            description="Research machine learning",
+            expected_output="Summary of key concepts",
+            agent=researcher
+        )
+
+        crew = AuthorityCrew(
+            kernel=ak,
+            agents=[researcher],
+            tasks=[task]
+        )
+
+        result = crew.kickoff()
+        print(result.raw)
+
 For more details, see the documentation at https://authority-systems.github.io/nanos/python
 """
 
 from authority_nanos.core import (
     # Core classes
     AuthorityKernel,
+    SimulatedKernel,
     LibakLoader,
     # Data structures
     Handle,
@@ -68,6 +138,30 @@ from authority_nanos.core import (
 # Exception base classes (canonical location)
 from authority_nanos.exceptions import BudgetExceededError
 
+# Policy tools
+from authority_nanos.policy import (
+    PolicyWizard,
+    PolicyValidator,
+    PolicyExplainer,
+    PolicyMerger,
+    MergeMode,
+    ValidationResult,
+    ValidationSeverity,
+    # Convenience functions
+    validate_policy_file,
+    explain_policy_file,
+    merge_policy_files,
+    run_policy_wizard,
+)
+
+# Integrations (lazy import to avoid dependency issues)
+# Users can import directly: from authority_nanos.integrations import AuthorityLLM
+# Or access via: authority_nanos.integrations.AuthorityLLM
+try:
+    from authority_nanos import integrations
+except ImportError:
+    integrations = None
+
 # Read version from version.txt to ensure consistency with packaging
 import os
 
@@ -89,6 +183,7 @@ __all__ = [
     "__license__",
     # Core classes
     "AuthorityKernel",
+    "SimulatedKernel",
     "LibakLoader",
     # Data structures
     "Handle",
@@ -113,4 +208,18 @@ __all__ = [
     "OutOfMemoryError",
     "LibakError",
     "BudgetExceededError",
+    # Policy tools
+    "PolicyWizard",
+    "PolicyValidator",
+    "PolicyExplainer",
+    "PolicyMerger",
+    "MergeMode",
+    "ValidationResult",
+    "ValidationSeverity",
+    "validate_policy_file",
+    "explain_policy_file",
+    "merge_policy_files",
+    "run_policy_wizard",
+    # Integrations module (for: from authority_nanos import integrations)
+    "integrations",
 ]

@@ -348,17 +348,194 @@ void ak_net_clear_rules(void)
  * AUDIT LOGGING
  * ============================================================ */
 
+/*
+ * Network operation codes for audit ring buffer.
+ * These are internal codes (not syscalls) for network enforcement events.
+ * Range 0x8000+ to distinguish from AK_SYS_* syscall numbers.
+ */
+#define AK_NET_OP_CONNECT       0x8001
+#define AK_NET_OP_BIND          0x8002
+#define AK_NET_OP_ACCEPT        0x8003
+#define AK_NET_OP_SEND          0x8004
+#define AK_NET_OP_RECV          0x8005
+#define AK_NET_OP_DNS           0x8006
+#define AK_NET_OP_SEND_BLOCKED  0x8007
+#define AK_NET_OP_DLP_BLOCK     0x8008
+
+/*
+ * Map event string to operation code.
+ */
+static u16 ak_net_event_to_op(const char *event)
+{
+    if (!event)
+        return 0;
+
+    /* Use first character for fast dispatch, then verify */
+    switch (event[0]) {
+    case 'c':
+        if (runtime_strcmp(event, "connect") == 0)
+            return AK_NET_OP_CONNECT;
+        break;
+    case 'b':
+        if (runtime_strcmp(event, "bind") == 0)
+            return AK_NET_OP_BIND;
+        break;
+    case 'a':
+        if (runtime_strcmp(event, "accept") == 0)
+            return AK_NET_OP_ACCEPT;
+        break;
+    case 's':
+        if (runtime_strcmp(event, "send") == 0)
+            return AK_NET_OP_SEND;
+        if (runtime_strcmp(event, "send_blocked") == 0)
+            return AK_NET_OP_SEND_BLOCKED;
+        if (runtime_strcmp(event, "send_dlp_block") == 0)
+            return AK_NET_OP_DLP_BLOCK;
+        break;
+    case 'r':
+        if (runtime_strcmp(event, "recv") == 0)
+            return AK_NET_OP_RECV;
+        break;
+    case 'd':
+        if (runtime_strcmp(event, "dns") == 0)
+            return AK_NET_OP_DNS;
+        break;
+    }
+    return 0;
+}
+
+/*
+ * Compute a simple hash of the network event parameters.
+ * This provides a fingerprint for correlation in the audit log.
+ * Uses FNV-1a hash for simplicity and speed.
+ */
+static void ak_net_compute_event_hash(const char *event, const char *host,
+                                       u16 port, u64 bytes, u8 *hash_out)
+{
+    /* FNV-1a 256-bit approximation using multiple 64-bit accumulators */
+    u64 h0 = 0xcbf29ce484222325ULL;
+    u64 h1 = 0xcbf29ce484222325ULL;
+    u64 h2 = 0xcbf29ce484222325ULL;
+    u64 h3 = 0xcbf29ce484222325ULL;
+    const u64 prime = 0x100000001b3ULL;
+
+    /* Hash event type */
+    if (event) {
+        const char *p = event;
+        while (*p) {
+            h0 ^= (u8)*p++;
+            h0 *= prime;
+        }
+    }
+
+    /* Hash host */
+    if (host) {
+        const char *p = host;
+        while (*p) {
+            h1 ^= (u8)*p++;
+            h1 *= prime;
+        }
+    }
+
+    /* Hash port */
+    h2 ^= (port & 0xFF);
+    h2 *= prime;
+    h2 ^= (port >> 8);
+    h2 *= prime;
+
+    /* Hash bytes */
+    for (int i = 0; i < 8; i++) {
+        h3 ^= (bytes >> (i * 8)) & 0xFF;
+        h3 *= prime;
+    }
+
+    /* Pack into 32-byte hash output */
+    runtime_memset(hash_out, 0, AK_HASH_SIZE);
+    u64 *out = (u64 *)hash_out;
+    out[0] = h0;
+    out[1] = h1;
+    out[2] = h2;
+    out[3] = h3;
+}
+
 void ak_net_audit_log(const char *event, const char *host, u16 port,
                       boolean allowed, u64 bytes)
 {
-    /* Build JSON audit entry */
-    /* For now, just log to debug output */
-    /* TODO: Integrate with ak_audit_log() */
-    (void)event;
-    (void)host;
-    (void)port;
-    (void)allowed;
-    (void)bytes;
+    ak_agent_context_t *ctx = ak_get_root_context();
+    u8 *pid = NULL;
+    u8 *run_id = NULL;
+    u8 req_hash[AK_HASH_SIZE];
+    u8 res_hash[AK_HASH_SIZE];
+    u8 flags = 0;
+    s64 result_code = 0;
+
+    /* Extract agent identity if available */
+    if (ctx) {
+        pid = ctx->pid;
+        run_id = ctx->run_id;
+    }
+
+    /* Map event to operation code */
+    u16 op = ak_net_event_to_op(event);
+    if (op == 0) {
+        /* Unknown event type - still log but mark as error */
+        op = AK_NET_OP_CONNECT;  /* Default fallback */
+        flags |= AK_RING_FLAG_ERROR;
+    }
+
+    /* Set flags based on decision */
+    if (!allowed) {
+        flags |= AK_RING_FLAG_DENIED;
+        result_code = -EACCES;
+    }
+
+    /* Compute hashes for audit trail */
+    ak_net_compute_event_hash(event, host, port, bytes, req_hash);
+
+    /* Response hash encodes the decision and bytes transferred */
+    runtime_memset(res_hash, 0, AK_HASH_SIZE);
+    res_hash[0] = allowed ? 1 : 0;
+    /* Encode bytes in response hash for data plane events */
+    if (bytes > 0) {
+        u64 *bytes_ptr = (u64 *)&res_hash[8];
+        *bytes_ptr = bytes;
+    }
+    /* Encode port for correlation */
+    res_hash[16] = port & 0xFF;
+    res_hash[17] = (port >> 8) & 0xFF;
+
+    /*
+     * Push to ring buffer for high-frequency data plane events.
+     * This is non-blocking and will not fail the network operation
+     * even if the ring buffer is full (it will overwrite oldest entries).
+     *
+     * The ring buffer is appropriate here because:
+     * 1. Network events can be very high frequency
+     * 2. We don't want audit logging to block data plane operations
+     * 3. Ring buffer provides bounded memory usage
+     * 4. Events can be drained asynchronously for persistent storage
+     */
+    ak_ring_push(
+        pid,
+        run_id,
+        op,
+        req_hash,
+        res_hash,
+        result_code,
+        0,              /* latency_us - not tracked for network events */
+        flags
+    );
+
+    /*
+     * Note: We intentionally do not call ak_audit_append() here because:
+     * 1. Network data plane events are too high-frequency for synchronous logging
+     * 2. ak_audit_append() requires fsync which would block network I/O
+     * 3. The ring buffer provides sufficient audit trail for most use cases
+     *
+     * For critical control plane decisions (e.g., connection denials),
+     * an external component can drain the ring buffer and persist
+     * important events to the hash-chained audit log.
+     */
 }
 
 /* ============================================================

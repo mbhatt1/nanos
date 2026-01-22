@@ -1,0 +1,28 @@
+{
+  "agent_name": "{{PROJECT_NAME}}",
+  "version": "1.0.0",
+  "log_level": "INFO",
+  "max_tasks": 100,
+  "task_timeout_seconds": 300,
+  "features": {
+    "auto_cleanup": true,
+    "verbose_logging": false,
+    "enable_metrics": true,
+    "enable_tracing": false
+  },
+  "heap": {
+    "initial_size_mb": 10,
+    "max_size_mb": 100,
+    "gc_threshold": 0.8
+  },
+  "network": {
+    "timeout_seconds": 30,
+    "retry_count": 3,
+    "retry_delay_seconds": 1
+  },
+  "storage": {
+    "data_dir": "./data",
+    "log_dir": "./logs",
+    "max_log_size_mb": 10
+  }
+}

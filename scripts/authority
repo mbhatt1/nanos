@@ -1,0 +1,1105 @@
+#!/bin/bash
+# Authority Nanos CLI Wrapper
+# Provides a simple interface for common Authority Nanos operations.
+#
+# Usage:
+#   authority new <name>             - Create a new agent project from a template
+#   authority run <app>              - Run an application with Authority Kernel
+#   authority build <app>            - Build an application image
+#   authority policy wizard          - Interactive policy generator
+#   authority policy validate <file> - Validate a policy file
+#   authority policy explain <file>  - Explain what a policy allows/denies
+#   authority policy merge <f1> <f2> - Merge two policies
+#   authority example <num>          - Run one of the bundled examples
+#   authority hello                  - Run a simple hello world demo
+#   authority doctor                 - Check system requirements and installation
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Print colored output
+print_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[OK]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Detect platform
+detect_platform() {
+    PLATFORM=$(uname -s)
+    MACHINE=$(uname -m)
+
+    if [ "$PLATFORM" = "Darwin" ]; then
+        LIBAK_NAME="libak.dylib"
+        if [ "$MACHINE" = "x86_64" ]; then
+            PLATFORM_DIR="pc"
+        else
+            PLATFORM_DIR="virt"
+        fi
+    else
+        LIBAK_NAME="libak.so"
+        if [ "$MACHINE" = "x86_64" ]; then
+            PLATFORM_DIR="pc"
+        else
+            PLATFORM_DIR="virt"
+        fi
+    fi
+}
+
+# Find libak binary
+find_libak() {
+    detect_platform
+
+    # Try primary location
+    LIBAK_PATH="$PROJECT_ROOT/output/platform/$PLATFORM_DIR/lib/$LIBAK_NAME"
+    if [ -f "$LIBAK_PATH" ]; then
+        echo "$LIBAK_PATH"
+        return 0
+    fi
+
+    # Try alternate location
+    if [ "$PLATFORM_DIR" = "pc" ]; then
+        ALT_DIR="virt"
+    else
+        ALT_DIR="pc"
+    fi
+    LIBAK_PATH="$PROJECT_ROOT/output/platform/$ALT_DIR/lib/$LIBAK_NAME"
+    if [ -f "$LIBAK_PATH" ]; then
+        echo "$LIBAK_PATH"
+        return 0
+    fi
+
+    # Try system paths
+    for path in /usr/local/lib/$LIBAK_NAME /usr/lib/$LIBAK_NAME /opt/authority/lib/$LIBAK_NAME; do
+        if [ -f "$path" ]; then
+            echo "$path"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Find kernel image
+find_kernel() {
+    detect_platform
+
+    KERNEL_PATH="$PROJECT_ROOT/output/platform/$PLATFORM_DIR/bin/kernel.img"
+    if [ -f "$KERNEL_PATH" ]; then
+        echo "$KERNEL_PATH"
+        return 0
+    fi
+
+    # Try alternate location
+    if [ "$PLATFORM_DIR" = "pc" ]; then
+        ALT_DIR="virt"
+    else
+        ALT_DIR="pc"
+    fi
+    KERNEL_PATH="$PROJECT_ROOT/output/platform/$ALT_DIR/bin/kernel.img"
+    if [ -f "$KERNEL_PATH" ]; then
+        echo "$KERNEL_PATH"
+        return 0
+    fi
+
+    return 1
+}
+
+# Find QEMU binary
+find_qemu() {
+    detect_platform
+
+    if [ "$PLATFORM_DIR" = "pc" ] || [ "$MACHINE" = "x86_64" ]; then
+        QEMU_CMD="qemu-system-x86_64"
+    else
+        QEMU_CMD="qemu-system-aarch64"
+    fi
+
+    if command -v "$QEMU_CMD" &>/dev/null; then
+        echo "$QEMU_CMD"
+        return 0
+    fi
+
+    return 1
+}
+
+# Setup Python environment
+setup_python() {
+    detect_platform
+
+    PYTHON_CMD="python3"
+    ARCH_CMD=""
+
+    if [ "$PLATFORM" = "Darwin" ]; then
+        # macOS: prefer system Python with architecture flag
+        if [ -f "/usr/bin/python3" ]; then
+            PYTHON_CMD="/usr/bin/python3"
+            if [ "$MACHINE" = "arm64" ]; then
+                ARCH_CMD="arch -arm64"
+            fi
+        fi
+    fi
+
+    export PYTHON_CMD
+    export ARCH_CMD
+}
+
+# Setup library paths
+setup_library_paths() {
+    local libak_path="$1"
+    if [ -n "$libak_path" ]; then
+        local lib_dir=$(dirname "$libak_path")
+        export LD_LIBRARY_PATH="$lib_dir:$LD_LIBRARY_PATH"
+        export DYLD_LIBRARY_PATH="$lib_dir:$DYLD_LIBRARY_PATH"
+        export LIBAK_PATH="$libak_path"
+    fi
+}
+
+# Command: run
+cmd_run() {
+    local app="$1"
+
+    if [ -z "$app" ]; then
+        print_error "Usage: authority run <application>"
+        echo ""
+        echo "Run an application with Authority Kernel in QEMU."
+        echo ""
+        echo "Examples:"
+        echo "  authority run ./my-app"
+        echo "  authority run /path/to/application.elf"
+        exit 1
+    fi
+
+    if [ ! -f "$app" ]; then
+        print_error "Application not found: $app"
+        exit 1
+    fi
+
+    # Find kernel
+    KERNEL=$(find_kernel)
+    if [ -z "$KERNEL" ]; then
+        print_error "Kernel image not found. Build with: make -j\$(nproc)"
+        exit 1
+    fi
+
+    # Find QEMU
+    QEMU=$(find_qemu)
+    if [ -z "$QEMU" ]; then
+        print_error "QEMU not found. Install qemu-system-x86_64 or qemu-system-aarch64"
+        exit 1
+    fi
+
+    print_info "Kernel: $KERNEL"
+    print_info "QEMU: $QEMU"
+    print_info "Application: $app"
+    echo ""
+
+    # Build ops command
+    OPS="$PROJECT_ROOT/tools/ops/ops"
+    if [ ! -f "$OPS" ]; then
+        OPS=$(command -v ops 2>/dev/null || true)
+    fi
+
+    if [ -n "$OPS" ] && [ -f "$OPS" ]; then
+        print_info "Running with ops..."
+        "$OPS" run "$app" -k "$KERNEL"
+    else
+        # Direct QEMU invocation
+        print_info "Running with QEMU..."
+        detect_platform
+
+        if [ "$QEMU" = "qemu-system-x86_64" ]; then
+            "$QEMU" -kernel "$KERNEL" \
+                -append "authority.app=$app" \
+                -m 512M \
+                -nographic \
+                -no-reboot
+        else
+            "$QEMU" -M virt -cpu cortex-a57 \
+                -kernel "$KERNEL" \
+                -append "authority.app=$app" \
+                -m 512M \
+                -nographic \
+                -no-reboot
+        fi
+    fi
+}
+
+# Command: build
+cmd_build() {
+    local app="$1"
+    local output="${2:-image.img}"
+
+    if [ -z "$app" ]; then
+        print_error "Usage: authority build <application> [output.img]"
+        echo ""
+        echo "Build an application image for Authority Kernel."
+        echo ""
+        echo "Examples:"
+        echo "  authority build ./my-app"
+        echo "  authority build ./my-app custom-image.img"
+        exit 1
+    fi
+
+    if [ ! -f "$app" ]; then
+        print_error "Application not found: $app"
+        exit 1
+    fi
+
+    # Find kernel
+    KERNEL=$(find_kernel)
+    if [ -z "$KERNEL" ]; then
+        print_error "Kernel image not found. Build with: make -j\$(nproc)"
+        exit 1
+    fi
+
+    print_info "Building image for: $app"
+    print_info "Output: $output"
+
+    # Use ops if available
+    OPS="$PROJECT_ROOT/tools/ops/ops"
+    if [ ! -f "$OPS" ]; then
+        OPS=$(command -v ops 2>/dev/null || true)
+    fi
+
+    if [ -n "$OPS" ] && [ -f "$OPS" ]; then
+        "$OPS" build "$app" -k "$KERNEL" -o "$output"
+        print_success "Built image: $output"
+    else
+        print_error "ops tool not found. Install ops or build from tools/ops/"
+        exit 1
+    fi
+}
+
+# Command: policy (with subcommands)
+cmd_policy() {
+    local subcommand="$1"
+    shift || true
+
+    case "$subcommand" in
+        wizard)
+            cmd_policy_wizard "$@"
+            ;;
+        validate)
+            cmd_policy_validate "$@"
+            ;;
+        explain)
+            cmd_policy_explain "$@"
+            ;;
+        merge)
+            cmd_policy_merge "$@"
+            ;;
+        ""|--help|-h)
+            echo "Authority Nanos Policy Tools"
+            echo ""
+            echo "Usage: authority policy <subcommand> [arguments]"
+            echo ""
+            echo "Subcommands:"
+            echo "  wizard           Interactive policy generator"
+            echo "  validate <file>  Validate a policy file"
+            echo "  explain <file>   Explain what a policy allows/denies"
+            echo "  merge <f1> <f2>  Merge two policies"
+            echo ""
+            echo "Examples:"
+            echo "  authority policy wizard"
+            echo "  authority policy validate policy.json"
+            echo "  authority policy explain policy.json"
+            echo "  authority policy merge base.json override.json -o combined.json"
+            exit 0
+            ;;
+        *)
+            # For backwards compatibility, treat as a file to validate
+            if [ -f "$subcommand" ]; then
+                cmd_policy_validate "$subcommand"
+            else
+                print_error "Unknown policy subcommand: $subcommand"
+                echo ""
+                echo "Run 'authority policy --help' for usage."
+                exit 1
+            fi
+            ;;
+    esac
+}
+
+# Policy subcommand: wizard
+cmd_policy_wizard() {
+    local output="${1:-policy.json}"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -o|--output)
+                output="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    setup_python
+
+    print_info "Starting Policy Wizard..."
+    echo ""
+
+    # Add SDK to Python path and run wizard
+    export PYTHONPATH="$PROJECT_ROOT/sdk/python:$PYTHONPATH"
+
+    $ARCH_CMD $PYTHON_CMD << WIZARD_EOF
+import sys
+sys.path.insert(0, "$PROJECT_ROOT/sdk/python")
+
+from authority_nanos.policy import PolicyWizard
+
+wizard = PolicyWizard()
+try:
+    policy = wizard.run()
+    wizard.save(policy, "$output")
+    print("")
+    print("Generated policy saved to: $output")
+except (KeyboardInterrupt, EOFError):
+    print("")
+    print("Wizard cancelled.")
+    sys.exit(1)
+WIZARD_EOF
+}
+
+# Policy subcommand: validate
+cmd_policy_validate() {
+    local policy_file="$1"
+
+    if [ -z "$policy_file" ]; then
+        print_error "Usage: authority policy validate <policy-file>"
+        exit 1
+    fi
+
+    if [ ! -f "$policy_file" ]; then
+        print_error "Policy file not found: $policy_file"
+        exit 1
+    fi
+
+    setup_python
+
+    print_info "Validating policy: $policy_file"
+    echo ""
+
+    # Add SDK to Python path and run validator
+    export PYTHONPATH="$PROJECT_ROOT/sdk/python:$PYTHONPATH"
+
+    $ARCH_CMD $PYTHON_CMD << VALIDATE_EOF
+import sys
+sys.path.insert(0, "$PROJECT_ROOT/sdk/python")
+
+from authority_nanos.policy import PolicyValidator, ValidationSeverity
+
+validator = PolicyValidator()
+result = validator.validate_file("$policy_file")
+
+# Print messages
+for msg in result.messages:
+    if msg.severity == ValidationSeverity.ERROR:
+        prefix = "\033[0;31m[ERROR]\033[0m"
+    elif msg.severity == ValidationSeverity.WARNING:
+        prefix = "\033[1;33m[WARN]\033[0m"
+    else:
+        prefix = "\033[0;34m[INFO]\033[0m"
+
+    if msg.path:
+        print(f"{prefix} {msg.path}: {msg.message}")
+    else:
+        print(f"{prefix} {msg.message}")
+
+    if msg.suggestion:
+        print(f"        Suggestion: {msg.suggestion}")
+
+print("")
+
+if result.valid:
+    print("\033[0;32m[OK]\033[0m Policy validation: PASSED")
+    if result.warnings:
+        print(f"  ({len(result.warnings)} warning(s))")
+    sys.exit(0)
+else:
+    print(f"\033[0;31m[ERROR]\033[0m Policy validation: FAILED ({len(result.errors)} error(s))")
+    sys.exit(1)
+VALIDATE_EOF
+}
+
+# Policy subcommand: explain
+cmd_policy_explain() {
+    local policy_file="$1"
+
+    if [ -z "$policy_file" ]; then
+        print_error "Usage: authority policy explain <policy-file>"
+        exit 1
+    fi
+
+    if [ ! -f "$policy_file" ]; then
+        print_error "Policy file not found: $policy_file"
+        exit 1
+    fi
+
+    setup_python
+
+    # Add SDK to Python path and run explainer
+    export PYTHONPATH="$PROJECT_ROOT/sdk/python:$PYTHONPATH"
+
+    $ARCH_CMD $PYTHON_CMD << EXPLAIN_EOF
+import sys
+sys.path.insert(0, "$PROJECT_ROOT/sdk/python")
+
+from authority_nanos.policy import PolicyExplainer
+
+explainer = PolicyExplainer()
+explanation = explainer.explain_file("$policy_file")
+print(explanation)
+EXPLAIN_EOF
+}
+
+# Policy subcommand: merge
+cmd_policy_merge() {
+    local file1=""
+    local file2=""
+    local output="merged_policy.json"
+    local intersection=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -o|--output)
+                output="$2"
+                shift 2
+                ;;
+            -i|--intersection)
+                intersection=true
+                shift
+                ;;
+            *)
+                if [ -z "$file1" ]; then
+                    file1="$1"
+                elif [ -z "$file2" ]; then
+                    file2="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$file1" ] || [ -z "$file2" ]; then
+        print_error "Usage: authority policy merge <file1> <file2> [-o output.json] [-i]"
+        echo ""
+        echo "Options:"
+        echo "  -o, --output       Output file (default: merged_policy.json)"
+        echo "  -i, --intersection Use intersection mode (most restrictive)"
+        exit 1
+    fi
+
+    if [ ! -f "$file1" ]; then
+        print_error "Policy file not found: $file1"
+        exit 1
+    fi
+
+    if [ ! -f "$file2" ]; then
+        print_error "Policy file not found: $file2"
+        exit 1
+    fi
+
+    setup_python
+
+    local mode_str="union"
+    if [ "$intersection" = true ]; then
+        mode_str="intersection"
+    fi
+
+    print_info "Merging policies (mode: $mode_str)"
+
+    # Add SDK to Python path and run merger
+    export PYTHONPATH="$PROJECT_ROOT/sdk/python:$PYTHONPATH"
+
+    $ARCH_CMD $PYTHON_CMD << MERGE_EOF
+import sys
+import json
+sys.path.insert(0, "$PROJECT_ROOT/sdk/python")
+
+from authority_nanos.policy import PolicyMerger, MergeMode
+
+merger = PolicyMerger()
+mode = MergeMode.INTERSECTION if "$intersection" == "true" else MergeMode.UNION
+
+merged, conflicts = merger.merge_files(["$file1", "$file2"], mode)
+
+if conflicts:
+    print("")
+    print("\033[1;33m[WARN]\033[0m Merge conflicts/notes:")
+    for conflict in conflicts:
+        print(f"  - {conflict}")
+
+# Save merged policy
+with open("$output", "w") as f:
+    json.dump(merged, f, indent=2)
+
+print("")
+print(f"\033[0;32m[OK]\033[0m Merged policy saved to: $output")
+MERGE_EOF
+}
+
+# Command: example
+cmd_example() {
+    local num="$1"
+
+    if [ -z "$num" ]; then
+        print_error "Usage: authority example <number>"
+        echo ""
+        echo "Run one of the bundled examples."
+        echo ""
+        echo "Available examples:"
+        for f in "$PROJECT_ROOT/examples/"[0-9][0-9]_*.py; do
+            if [ -f "$f" ]; then
+                name=$(basename "$f" | sed 's/^0*//;s/_/ /g;s/.py$//')
+                printf "  %s\n" "$name"
+            fi
+        done
+        exit 1
+    fi
+
+    # Find the example file
+    EXAMPLE_NUM=$(printf "%02d" "$num")
+    EXAMPLE_FILE=$(ls "$PROJECT_ROOT/examples/"${EXAMPLE_NUM}_*.py 2>/dev/null | head -1)
+
+    if [ ! -f "$EXAMPLE_FILE" ]; then
+        print_error "Example $num not found"
+        exit 1
+    fi
+
+    # Find libak
+    LIBAK=$(find_libak)
+    if [ -z "$LIBAK" ]; then
+        print_warning "libak not found - example may fail"
+        print_info "Build with: make -j\$(nproc)"
+    else
+        setup_library_paths "$LIBAK"
+        print_info "Using libak: $LIBAK"
+    fi
+
+    setup_python
+
+    print_info "Running: $(basename "$EXAMPLE_FILE")"
+    echo ""
+
+    # Add SDK to Python path and run
+    export PYTHONPATH="$PROJECT_ROOT/sdk/python:$PYTHONPATH"
+    $ARCH_CMD $PYTHON_CMD "$EXAMPLE_FILE"
+}
+
+# Command: hello
+cmd_hello() {
+    print_info "Authority Nanos Hello World Demo"
+    echo ""
+
+    setup_python
+
+    # Run self-contained hello demo in simulation mode
+    $ARCH_CMD $PYTHON_CMD << 'HELLO_EOF'
+"""
+Authority Nanos Hello World Demo (Simulation Mode)
+
+This demo runs without the kernel, demonstrating the SDK's
+simulation capabilities for development and testing.
+"""
+
+import sys
+import json
+from datetime import datetime
+
+print("=" * 60)
+print("  Authority Nanos - Hello World Demo")
+print("  Running in SIMULATION MODE (no kernel required)")
+print("=" * 60)
+print()
+
+# Simulated typed heap
+class SimulatedHeap:
+    def __init__(self):
+        self._objects = {}
+        self._next_id = 1
+
+    def alloc(self, type_name, initial_value):
+        obj_id = self._next_id
+        self._next_id += 1
+        self._objects[obj_id] = {
+            'type': type_name,
+            'value': initial_value,
+            'version': 1,
+            'created': datetime.now().isoformat()
+        }
+        return {'id': obj_id, 'version': 1}
+
+    def read(self, handle):
+        obj_id = handle['id']
+        if obj_id not in self._objects:
+            raise KeyError(f"Object {obj_id} not found")
+        return self._objects[obj_id]['value']
+
+    def write(self, handle, patch):
+        obj_id = handle['id']
+        if obj_id not in self._objects:
+            raise KeyError(f"Object {obj_id} not found")
+
+        obj = self._objects[obj_id]
+        current = json.loads(obj['value'].decode('utf-8'))
+
+        # Apply JSON patch
+        for op in json.loads(patch.decode('utf-8')):
+            if op['op'] == 'replace':
+                path = op['path'].lstrip('/').split('/')
+                target = current
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = op['value']
+
+        obj['value'] = json.dumps(current).encode('utf-8')
+        obj['version'] += 1
+        return obj['version']
+
+    def delete(self, handle):
+        obj_id = handle['id']
+        if obj_id in self._objects:
+            del self._objects[obj_id]
+
+# Run demo
+heap = SimulatedHeap()
+
+print("[1] Allocating a counter object...")
+counter_data = json.dumps({"value": 0, "name": "hello-counter"}).encode()
+handle = heap.alloc("counter", counter_data)
+print(f"    Allocated: Handle(id={handle['id']}, version={handle['version']})")
+
+print()
+print("[2] Reading the object...")
+data = heap.read(handle)
+counter = json.loads(data.decode('utf-8'))
+print(f"    Read: {counter}")
+
+print()
+print("[3] Updating value using JSON Patch...")
+patch = json.dumps([{"op": "replace", "path": "/value", "value": 42}]).encode()
+new_version = heap.write(handle, patch)
+print(f"    Updated to version: {new_version}")
+
+print()
+print("[4] Reading updated value...")
+updated_data = heap.read(handle)
+updated_counter = json.loads(updated_data.decode('utf-8'))
+print(f"    Updated: {updated_counter}")
+
+print()
+print("[5] Deleting object...")
+heap.delete(handle)
+print(f"    Deleted handle {handle['id']}")
+
+print()
+print("=" * 60)
+print("  Demo completed successfully!")
+print()
+print("  Next steps:")
+print("    - Build the kernel:  make -j$(nproc)")
+print("    - Run real examples: authority example 1")
+print("    - Check status:      authority doctor")
+print("=" * 60)
+HELLO_EOF
+}
+
+# Command: doctor
+cmd_doctor() {
+    print_info "Authority Nanos System Check"
+    echo ""
+
+    detect_platform
+
+    echo "System Information:"
+    echo "  Platform: $PLATFORM"
+    echo "  Architecture: $MACHINE"
+    echo ""
+
+    # Check Python
+    echo "Python:"
+    if command -v python3 &>/dev/null; then
+        PYVER=$(python3 --version 2>&1)
+        print_success "  python3: $PYVER"
+    else
+        print_error "  python3: Not found"
+    fi
+
+    # Check QEMU
+    echo ""
+    echo "QEMU:"
+    if command -v qemu-system-x86_64 &>/dev/null; then
+        QVER=$(qemu-system-x86_64 --version | head -1)
+        print_success "  qemu-system-x86_64: $QVER"
+    else
+        print_warning "  qemu-system-x86_64: Not found"
+    fi
+
+    if command -v qemu-system-aarch64 &>/dev/null; then
+        QVER=$(qemu-system-aarch64 --version | head -1)
+        print_success "  qemu-system-aarch64: $QVER"
+    else
+        print_warning "  qemu-system-aarch64: Not found"
+    fi
+
+    # Check kernel
+    echo ""
+    echo "Authority Kernel:"
+    KERNEL=$(find_kernel)
+    if [ -n "$KERNEL" ]; then
+        print_success "  kernel.img: $KERNEL"
+    else
+        print_warning "  kernel.img: Not found (build with: make -j\$(nproc))"
+    fi
+
+    # Check libak
+    echo ""
+    echo "libak Library:"
+    LIBAK=$(find_libak)
+    if [ -n "$LIBAK" ]; then
+        print_success "  $LIBAK_NAME: $LIBAK"
+    else
+        print_warning "  $LIBAK_NAME: Not found (build with: make -j\$(nproc))"
+    fi
+
+    # Check Python SDK
+    echo ""
+    echo "Python SDK:"
+    SDK_PATH="$PROJECT_ROOT/sdk/python/authority_nanos"
+    if [ -d "$SDK_PATH" ]; then
+        print_success "  SDK path: $SDK_PATH"
+    else
+        print_warning "  SDK not found at $SDK_PATH"
+    fi
+
+    # Check examples
+    echo ""
+    echo "Examples:"
+    EXAMPLE_COUNT=$(ls -1 "$PROJECT_ROOT/examples/"[0-9][0-9]_*.py 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$EXAMPLE_COUNT" -gt 0 ]; then
+        print_success "  $EXAMPLE_COUNT example(s) available"
+    else
+        print_warning "  No examples found"
+    fi
+
+    # Check build tools
+    echo ""
+    echo "Build Tools:"
+    if command -v make &>/dev/null; then
+        print_success "  make: $(make --version | head -1)"
+    else
+        print_error "  make: Not found"
+    fi
+
+    if command -v gcc &>/dev/null; then
+        print_success "  gcc: $(gcc --version | head -1)"
+    else
+        print_warning "  gcc: Not found"
+    fi
+
+    if command -v clang &>/dev/null; then
+        print_success "  clang: $(clang --version | head -1)"
+    else
+        print_warning "  clang: Not found"
+    fi
+
+    # Summary
+    echo ""
+    echo "---"
+    if [ -n "$KERNEL" ] && [ -n "$LIBAK" ]; then
+        print_success "Authority Nanos is ready to use!"
+        echo ""
+        echo "Quick start:"
+        echo "  authority hello     - Run hello world demo"
+        echo "  authority example 1 - Run first example"
+    else
+        print_warning "Authority Nanos needs to be built"
+        echo ""
+        echo "Build instructions:"
+        echo "  cd $PROJECT_ROOT"
+        echo "  make -j\$(nproc)"
+    fi
+}
+
+# Command: new
+cmd_new() {
+    local project_name=""
+    local template="full"
+
+    # Parse all arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --template|-t)
+                template="$2"
+                shift 2
+                ;;
+            --help|-h)
+                echo "Usage: authority new <project-name> [--template <template>]"
+                echo ""
+                echo "Create a new agent project from a template."
+                echo ""
+                echo "Templates:"
+                echo "  minimal   - Simple agent with basic heap operations"
+                echo "  langchain - LangChain-based agent with LLM integration"
+                echo "  crewai    - CrewAI multi-agent system"
+                echo "  full      - Full-featured agent (default)"
+                echo ""
+                echo "Examples:"
+                echo "  authority new my-agent"
+                echo "  authority new my-agent --template langchain"
+                echo "  authority new my-agent --template minimal"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                exit 1
+                ;;
+            *)
+                if [ -z "$project_name" ]; then
+                    project_name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$project_name" ]; then
+        print_error "Usage: authority new <project-name> [--template <template>]"
+        echo ""
+        echo "Create a new agent project from a template."
+        echo ""
+        echo "Templates:"
+        echo "  minimal   - Simple agent with basic heap operations"
+        echo "  langchain - LangChain-based agent with LLM integration"
+        echo "  crewai    - CrewAI multi-agent system"
+        echo "  full      - Full-featured agent (default)"
+        echo ""
+        echo "Examples:"
+        echo "  authority new my-agent"
+        echo "  authority new my-agent --template langchain"
+        echo "  authority new my-agent --template minimal"
+        exit 1
+    fi
+
+    # Validate project name
+    if ! echo "$project_name" | grep -qE '^[a-zA-Z][a-zA-Z0-9_-]*$'; then
+        print_error "Invalid project name. Use letters, numbers, hyphens, and underscores."
+        print_info "Project name must start with a letter."
+        exit 1
+    fi
+
+    # Check if directory already exists
+    if [ -d "$project_name" ]; then
+        print_error "Directory already exists: $project_name"
+        exit 1
+    fi
+
+    # Validate template
+    TEMPLATES_DIR="$PROJECT_ROOT/sdk/python/authority_nanos/templates"
+    TEMPLATE_DIR="$TEMPLATES_DIR/$template"
+
+    if [ ! -d "$TEMPLATE_DIR" ]; then
+        print_error "Template '$template' not found."
+        print_info "Available templates: minimal, langchain, crewai, full"
+        exit 1
+    fi
+
+    print_info "Creating new project: $project_name"
+    print_info "Template: $template"
+    echo ""
+
+    # Get current date
+    CURRENT_DATE=$(date +%Y-%m-%d)
+    CURRENT_YEAR=$(date +%Y)
+
+    # Create project directory
+    mkdir -p "$project_name" || {
+        print_error "Failed to create directory: $project_name"
+        exit 1
+    }
+
+    # Save current directory
+    ORIG_DIR="$(pwd)"
+
+    # Copy and process template files
+    cd "$TEMPLATE_DIR" || exit 1
+    find . -type f | while read -r file; do
+        # Remove leading ./
+        rel_path="${file#./}"
+        dst_path="$ORIG_DIR/$project_name/$rel_path"
+
+        # Create parent directories
+        mkdir -p "$(dirname "$dst_path")"
+
+        # Check if file is likely text (for placeholder replacement)
+        if file "$file" | grep -q "text"; then
+            # Process text files - replace placeholders
+            sed -e "s/{{PROJECT_NAME}}/$project_name/g" \
+                -e "s/{{DATE}}/$CURRENT_DATE/g" \
+                -e "s/{{YEAR}}/$CURRENT_YEAR/g" \
+                "$file" > "$dst_path"
+        else
+            # Copy binary files as-is
+            cp "$file" "$dst_path"
+        fi
+
+        echo "  Created: $rel_path"
+    done
+    cd "$ORIG_DIR" || exit 1
+
+    echo ""
+    print_success "Project created: $project_name"
+    echo ""
+    echo "Next steps:"
+    echo "  cd $project_name"
+    echo "  pip install -r requirements.txt"
+    echo "  python agent.py"
+    echo ""
+
+    # Template-specific instructions
+    case "$template" in
+        langchain)
+            echo "For LangChain template:"
+            echo "  export OPENAI_API_KEY='your-key-here'"
+            echo ""
+            ;;
+        crewai)
+            echo "For CrewAI template:"
+            echo "  export OPENAI_API_KEY='your-key-here'"
+            echo ""
+            ;;
+        full)
+            echo "For full template:"
+            echo "  Edit config.json to customize settings"
+            echo "  Run tests: pytest tests/"
+            echo ""
+            ;;
+    esac
+
+    echo "Documentation: https://authority-systems.github.io/nanos"
+}
+
+# Command: version
+cmd_version() {
+    echo "Authority Nanos CLI v0.1.0"
+    echo ""
+    echo "Project: $PROJECT_ROOT"
+
+    # Try to get git info
+    if command -v git &>/dev/null && [ -d "$PROJECT_ROOT/.git" ]; then
+        COMMIT=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        BRANCH=$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+        echo "Git: $BRANCH @ $COMMIT"
+    fi
+}
+
+# Command: help
+cmd_help() {
+    echo "Authority Nanos CLI"
+    echo ""
+    echo "Usage: authority <command> [arguments]"
+    echo ""
+    echo "Commands:"
+    echo "  new <name>       Create a new agent project from a template"
+    echo "  run <app>        Run an application with Authority Kernel"
+    echo "  build <app>      Build an application image"
+    echo "  policy           Policy management (wizard, validate, explain, merge)"
+    echo "  example <num>    Run one of the bundled examples"
+    echo "  hello            Run a simple hello world demo"
+    echo "  doctor           Check system requirements and installation"
+    echo "  version          Show version information"
+    echo "  help             Show this help message"
+    echo ""
+    echo "Project Templates (authority new):"
+    echo "  --template minimal    Simple agent with basic heap operations"
+    echo "  --template langchain  LangChain-based agent with LLM integration"
+    echo "  --template crewai     CrewAI multi-agent system"
+    echo "  --template full       Full-featured agent (default)"
+    echo ""
+    echo "Policy Subcommands:"
+    echo "  policy wizard              Interactive policy generator"
+    echo "  policy validate <file>     Validate a policy file"
+    echo "  policy explain <file>      Explain what a policy allows/denies"
+    echo "  policy merge <f1> <f2>     Merge two policies"
+    echo ""
+    echo "Examples:"
+    echo "  authority new my-agent"
+    echo "  authority new my-agent --template langchain"
+    echo "  authority hello"
+    echo "  authority example 1"
+    echo "  authority doctor"
+    echo "  authority policy wizard"
+    echo "  authority policy validate policy.json"
+    echo "  authority run ./my-app"
+    echo ""
+    echo "For more information, see: https://authority-systems.github.io/nanos"
+}
+
+# Main entry point
+main() {
+    local command="$1"
+    shift || true
+
+    case "$command" in
+        new)
+            cmd_new "$@"
+            ;;
+        run)
+            cmd_run "$@"
+            ;;
+        build)
+            cmd_build "$@"
+            ;;
+        policy)
+            cmd_policy "$@"
+            ;;
+        example)
+            cmd_example "$@"
+            ;;
+        hello)
+            cmd_hello "$@"
+            ;;
+        doctor)
+            cmd_doctor "$@"
+            ;;
+        version|--version|-v)
+            cmd_version
+            ;;
+        help|--help|-h|"")
+            cmd_help
+            ;;
+        *)
+            print_error "Unknown command: $command"
+            echo ""
+            cmd_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

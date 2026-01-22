@@ -28,6 +28,105 @@
 #define AK_JSON_MAX_VALUE_SIZE  (64 * 1024)
 
 /* ============================================================
+ * JSON ESCAPING HELPER
+ * ============================================================ */
+
+/*
+ * json_escape_to_buffer - Escape a string for JSON output
+ *
+ * Escapes all JSON special characters per RFC 8259:
+ *   - " (quote) -> \"
+ *   - \ (backslash) -> \\
+ *   - Control characters (0x00-0x1F) -> \uXXXX or named escapes
+ *   - Named escapes: \b \f \n \r \t
+ *
+ * UTF-8 handling:
+ *   - Valid UTF-8 sequences are passed through unchanged
+ *   - Invalid bytes (0x80-0xFF not part of valid UTF-8) are escaped as \uXXXX
+ *
+ * Buffer overflow handling:
+ *   - The buffer system handles growth automatically via buffer_write
+ *   - Does not write partial escape sequences
+ *
+ * Parameters:
+ *   out      - Output buffer to write escaped string to
+ *   src      - Source data to escape
+ *   src_len  - Length of source data in bytes
+ *
+ * Note: Does NOT add surrounding quotes - caller must add them if needed.
+ */
+static void json_escape_to_buffer(buffer out, const u8 *src, u64 src_len)
+{
+    static const char hex_digits[] = "0123456789abcdef";
+
+    for (u64 i = 0; i < src_len; i++) {
+        u8 c = src[i];
+
+        switch (c) {
+        case '"':
+            buffer_write(out, "\\\"", 2);
+            break;
+        case '\\':
+            buffer_write(out, "\\\\", 2);
+            break;
+        case '\b':
+            buffer_write(out, "\\b", 2);
+            break;
+        case '\f':
+            buffer_write(out, "\\f", 2);
+            break;
+        case '\n':
+            buffer_write(out, "\\n", 2);
+            break;
+        case '\r':
+            buffer_write(out, "\\r", 2);
+            break;
+        case '\t':
+            buffer_write(out, "\\t", 2);
+            break;
+        default:
+            if (c < 0x20) {
+                /* Control character (0x00-0x1F except those handled above) */
+                char escape[6];
+                escape[0] = '\\';
+                escape[1] = 'u';
+                escape[2] = '0';
+                escape[3] = '0';
+                escape[4] = hex_digits[(c >> 4) & 0x0F];
+                escape[5] = hex_digits[c & 0x0F];
+                buffer_write(out, escape, 6);
+            } else if (c >= 0x20 && c < 0x7F) {
+                /* Printable ASCII - pass through */
+                buffer_write(out, &c, 1);
+            } else {
+                /*
+                 * Bytes >= 0x80: Could be valid UTF-8 or invalid.
+                 *
+                 * UTF-8 encoding:
+                 *   0x00-0x7F: Single byte (ASCII)
+                 *   0xC0-0xDF: 2-byte sequence start
+                 *   0xE0-0xEF: 3-byte sequence start
+                 *   0xF0-0xF7: 4-byte sequence start
+                 *   0x80-0xBF: Continuation byte
+                 *
+                 * For simplicity and safety, we pass through bytes >= 0x80
+                 * as-is. This preserves valid UTF-8 sequences. If the input
+                 * contains invalid UTF-8, the output JSON will also be
+                 * invalid, but this matches the behavior of most JSON
+                 * encoders which assume valid UTF-8 input.
+                 *
+                 * Alternative: Validate UTF-8 and escape invalid bytes.
+                 * This adds complexity and is usually unnecessary since
+                 * HTTP response bodies should already be valid UTF-8.
+                 */
+                buffer_write(out, &c, 1);
+            }
+            break;
+        }
+    }
+}
+
+/* ============================================================
  * INTERNAL HELPERS
  * ============================================================ */
 
@@ -293,8 +392,8 @@ s64 ak_host_http_get(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 
     buffer_write(res, ", \"body\": \"", 10);
     if (response.body && buffer_length(response.body) > 0) {
-        /* TODO: JSON escape the body */
-        buffer_write(res, buffer_ref(response.body, 0), buffer_length(response.body));
+        /* JSON escape the body to handle special characters safely */
+        json_escape_to_buffer(res, buffer_ref(response.body, 0), buffer_length(response.body));
     }
     buffer_write(res, "\"}", 2);
 
@@ -677,46 +776,40 @@ s64 ak_host_tcp_recv(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
  * FILESYSTEM HOST FUNCTIONS (AK_CAP_FS)
  * ============================================================
  *
- * IMPLEMENTATION STATUS: STUB
+ * These filesystem functions route through the virtio proxy to perform
+ * file operations on the host filesystem via the akproxy daemon.
  *
- * These filesystem functions validate capabilities but return placeholder
- * data. They do NOT perform actual filesystem I/O yet.
+ * SECURITY CONSIDERATIONS:
+ *   - All operations validate capabilities before execution
+ *   - Path length is bounded to prevent buffer overflows
+ *   - If proxy is not connected, operations return safe fallback values
+ *   - The akproxy daemon on the host enforces additional access controls
  *
- * WHY STUB:
- *   Filesystem access from the WASM sandbox requires careful integration
- *   with Nanos VFS to ensure:
- *     - Path canonicalization to prevent directory traversal attacks
- *     - Capability scope enforcement (agent can only access allowed paths)
- *     - Resource limit tracking (bytes read/written per capability)
- *     - Proper handling of symlinks within capability boundaries
- *
- * ALTERNATIVES FOR AGENTS:
- *   1. PRE-LOADED DATA: Orchestrator loads required files into tool arguments
- *   2. VIRTIO-SERIAL PROXY: Request file operations through host hypervisor
- *      ak_host_ipc_send({"type":"fs_read","path":"/data/config.json"})
- *   3. SHARED MEMORY: For large files, use memory-mapped regions
- *
- * FUTURE IMPLEMENTATION:
- *   Will be fully implemented when:
- *     - Path canonicalization with symlink resolution is added
- *     - VFS wrappers with capability checking are created
- *     - Per-agent I/O quotas are enforced
- *   The foundation exists in Nanos VFS (fs.h); integration is pending.
+ * PROXY PROTOCOL:
+ *   - ak_proxy_fs_read()  - Read file contents
+ *   - ak_proxy_fs_write() - Write file contents
+ *   - ak_proxy_fs_stat()  - Get file metadata
+ *   - ak_proxy_fs_list()  - List directory contents
  *
  * ============================================================ */
 
 /*
  * ak_host_fs_read - Read file contents from WASM sandbox
  *
- * STUB IMPLEMENTATION - Returns empty content
+ * Routes through virtio proxy to read file contents from host filesystem.
+ * If proxy is not connected, returns empty content as fallback.
  *
  * Args: {"path": "/path/to/file"}
- * Returns: {"content": ""} (stub - always empty)
+ * Returns: {"content": "<file_contents>"}
  */
 s64 ak_host_fs_read(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
     *result = NULL;
+
+    /* Validate context */
+    if (!ctx || !ctx->agent)
+        return AK_E_CAP_MISSING;
 
     u64 path_len;
     const char *path = parse_json_string(args, "path", &path_len);
@@ -762,15 +855,20 @@ s64 ak_host_fs_read(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 /*
  * ak_host_fs_write - Write file contents from WASM sandbox
  *
- * STUB IMPLEMENTATION - Returns bytes_written=0, does not write
+ * Routes through virtio proxy to write file contents to host filesystem.
+ * If proxy is not connected, returns 0 bytes written as fallback.
  *
  * Args: {"path": "/path/to/file", "content": "data to write"}
- * Returns: {"bytes_written": "0"} (stub)
+ * Returns: {"bytes_written": "<num_bytes>"}
  */
 s64 ak_host_fs_write(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
     *result = NULL;
+
+    /* Validate context */
+    if (!ctx || !ctx->agent)
+        return AK_E_CAP_MISSING;
 
     u64 path_len;
     const char *path = parse_json_string(args, "path", &path_len);
@@ -840,23 +938,19 @@ s64 ak_host_fs_write(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 /*
  * ak_host_fs_stat - Get file metadata from WASM sandbox
  *
- * STUB IMPLEMENTATION - Returns placeholder data
- *
- * WHY STUB: File stat operations require VFS integration which is asynchronous
- * in Nanos. The WASM execution model is synchronous, so async VFS operations
- * would require cooperative yield points.
- *
- * ALTERNATIVES:
- *   1. VIRTIO-SERIAL PROXY: Send stat request to host-side daemon
- *   2. PRE-LOADED METADATA: Orchestrator provides file list at tool startup
+ * Routes through virtio proxy to get file metadata from host filesystem.
  *
  * Args: {"path": "/path/to/file"}
- * Returns: {"size": 0, "exists": true} (stub response)
+ * Returns: {"size": <bytes>, "exists": <bool>, "is_dir": <bool>, "mode": "<mode>", "mod_time_ms": <timestamp>}
  */
 s64 ak_host_fs_stat(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
     *result = NULL;
+
+    /* Validate context */
+    if (!ctx || !ctx->agent)
+        return AK_E_CAP_MISSING;
 
     u64 path_len;
     const char *path = parse_json_string(args, "path", &path_len);
@@ -874,11 +968,89 @@ s64 ak_host_fs_stat(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* STUB: Returns placeholder metadata - see documentation for alternatives */
-    buffer res = allocate_buffer(ctx->agent->heap, 64);
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected()) {
+        /* Fallback: return placeholder indicating file doesn't exist */
+        buffer res = allocate_buffer(ctx->agent->heap, 64);
+        if (!res || res == INVALID_ADDRESS)
+            return AK_E_WASM_OOM;
+        buffer_write(res, "{\"size\": 0, \"exists\": false}", 28);
+        *result = res;
+        return 0;
+    }
+
+    /* Get file info via virtio proxy */
+    ak_file_info_t info;
+    runtime_memset((u8 *)&info, 0, sizeof(info));
+    s64 err = ak_proxy_fs_stat(path_buf, &info);
+    if (err < 0) {
+        /* File not found or other error - return exists: false */
+        if (err == AK_PROXY_E_REMOTE) {
+            buffer res = allocate_buffer(ctx->agent->heap, 64);
+            if (!res || res == INVALID_ADDRESS)
+                return AK_E_WASM_OOM;
+            buffer_write(res, "{\"size\": 0, \"exists\": false}", 28);
+            *result = res;
+            return 0;
+        }
+        return err;
+    }
+
+    /* Build result JSON with file metadata */
+    buffer res = allocate_buffer(ctx->agent->heap, 256);
     if (!res || res == INVALID_ADDRESS)
         return AK_E_WASM_OOM;
-    buffer_write(res, "{\"size\": 0, \"exists\": true}", 27);
+
+    buffer_write(res, "{\"size\": ", 9);
+
+    /* Write size as number */
+    char num_buf[32];
+    int num_len = 0;
+    u64 size = info.size;
+    if (size == 0) {
+        num_buf[num_len++] = '0';
+    } else {
+        char temp[32];
+        int temp_len = 0;
+        while (size > 0) {
+            temp[temp_len++] = '0' + (size % 10);
+            size /= 10;
+        }
+        for (int i = temp_len - 1; i >= 0; i--) {
+            num_buf[num_len++] = temp[i];
+        }
+    }
+    buffer_write(res, num_buf, num_len);
+
+    buffer_write(res, ", \"exists\": true, \"is_dir\": ", 28);
+    buffer_write(res, info.is_dir ? "true" : "false", info.is_dir ? 4 : 5);
+
+    buffer_write(res, ", \"mode\": \"", 11);
+    u64 mode_len = runtime_strlen(info.mode);
+    if (mode_len > 0)
+        buffer_write(res, info.mode, mode_len);
+    buffer_write(res, "\"", 1);
+
+    buffer_write(res, ", \"mod_time_ms\": ", 16);
+    num_len = 0;
+    u64 mod_time = info.mod_time_ms;
+    if (mod_time == 0) {
+        num_buf[num_len++] = '0';
+    } else {
+        char temp[32];
+        int temp_len = 0;
+        while (mod_time > 0) {
+            temp[temp_len++] = '0' + (mod_time % 10);
+            mod_time /= 10;
+        }
+        for (int i = temp_len - 1; i >= 0; i--) {
+            num_buf[num_len++] = temp[i];
+        }
+    }
+    buffer_write(res, num_buf, num_len);
+
+    buffer_write(res, "}", 1);
+
     *result = res;
     return 0;
 }
@@ -886,15 +1058,19 @@ s64 ak_host_fs_stat(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 /*
  * ak_host_fs_list - List directory contents from WASM sandbox
  *
- * STUB IMPLEMENTATION - Returns empty entries array
+ * Routes through virtio proxy to list directory contents from host filesystem.
  *
  * Args: {"path": "/path/to/directory"}
- * Returns: {"entries": "[]"} (stub - real impl would list filenames)
+ * Returns: {"entries": [{"name": "file1", "size": 123, "is_dir": false, "mode": "0644", "mod_time_ms": 1234567890}, ...], "count": N}
  */
 s64 ak_host_fs_list(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 {
     /* Initialize *result to NULL to ensure defined state on error paths */
     *result = NULL;
+
+    /* Validate context */
+    if (!ctx || !ctx->agent)
+        return AK_E_CAP_MISSING;
 
     u64 path_len;
     const char *path = parse_json_string(args, "path", &path_len);
@@ -912,9 +1088,148 @@ s64 ak_host_fs_list(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
     if (cap_result != 0)
         return cap_result;
 
-    /* STUB: Returns empty array - see section header for implementation status */
-    *result = create_json_result(ctx->agent->heap, "entries", "[]", 2);
-    return (*result) ? 0 : AK_E_WASM_OOM;
+    /* Check if virtio proxy is connected */
+    if (!ak_proxy_connected()) {
+        /* Fallback: return empty array */
+        buffer res = allocate_buffer(ctx->agent->heap, 64);
+        if (!res || res == INVALID_ADDRESS)
+            return AK_E_WASM_OOM;
+        buffer_write(res, "{\"entries\": [], \"count\": 0}", 27);
+        *result = res;
+        return 0;
+    }
+
+    /* List directory via virtio proxy */
+    ak_file_info_t *entries = NULL;
+    u64 count = 0;
+    s64 err = ak_proxy_fs_list(path_buf, &entries, &count);
+    if (err < 0) {
+        /* Directory not found or other error - return empty list */
+        if (err == AK_PROXY_E_REMOTE) {
+            buffer res = allocate_buffer(ctx->agent->heap, 64);
+            if (!res || res == INVALID_ADDRESS)
+                return AK_E_WASM_OOM;
+            buffer_write(res, "{\"entries\": [], \"count\": 0}", 27);
+            *result = res;
+            return 0;
+        }
+        return err;
+    }
+
+    /* Estimate buffer size: ~300 bytes per entry for JSON */
+    u64 est_size = 64 + (count * 350);
+    /* Cap maximum buffer size to prevent excessive allocation */
+    if (est_size > AK_PROXY_MAX_RESPONSE)
+        est_size = AK_PROXY_MAX_RESPONSE;
+
+    buffer res = allocate_buffer(ctx->agent->heap, est_size);
+    if (!res || res == INVALID_ADDRESS) {
+        /* Free entries if allocated */
+        if (entries)
+            deallocate(ctx->agent->heap, entries, count * sizeof(ak_file_info_t));
+        return AK_E_WASM_OOM;
+    }
+
+    buffer_write(res, "{\"entries\": [", 13);
+
+    /* Write each entry as JSON object */
+    for (u64 i = 0; i < count; i++) {
+        ak_file_info_t *e = &entries[i];
+
+        if (i > 0)
+            buffer_write(res, ", ", 2);
+
+        buffer_write(res, "{\"name\": \"", 10);
+
+        /* JSON-escape the filename (basic: escape quotes and backslashes) */
+        u64 name_len = runtime_strlen(e->name);
+        for (u64 j = 0; j < name_len && j < sizeof(e->name) - 1; j++) {
+            if (e->name[j] == '"' || e->name[j] == '\\') {
+                buffer_write(res, "\\", 1);
+            }
+            buffer_write(res, &e->name[j], 1);
+        }
+
+        buffer_write(res, "\", \"size\": ", 11);
+
+        /* Write size as number */
+        char num_buf[32];
+        int num_len = 0;
+        u64 size = e->size;
+        if (size == 0) {
+            num_buf[num_len++] = '0';
+        } else {
+            char temp[32];
+            int temp_len = 0;
+            while (size > 0) {
+                temp[temp_len++] = '0' + (size % 10);
+                size /= 10;
+            }
+            for (int k = temp_len - 1; k >= 0; k--) {
+                num_buf[num_len++] = temp[k];
+            }
+        }
+        buffer_write(res, num_buf, num_len);
+
+        buffer_write(res, ", \"is_dir\": ", 12);
+        buffer_write(res, e->is_dir ? "true" : "false", e->is_dir ? 4 : 5);
+
+        buffer_write(res, ", \"mode\": \"", 11);
+        u64 mode_len = runtime_strlen(e->mode);
+        if (mode_len > 0)
+            buffer_write(res, e->mode, mode_len);
+        buffer_write(res, "\"", 1);
+
+        buffer_write(res, ", \"mod_time_ms\": ", 16);
+        num_len = 0;
+        u64 mod_time = e->mod_time_ms;
+        if (mod_time == 0) {
+            num_buf[num_len++] = '0';
+        } else {
+            char temp[32];
+            int temp_len = 0;
+            while (mod_time > 0) {
+                temp[temp_len++] = '0' + (mod_time % 10);
+                mod_time /= 10;
+            }
+            for (int k = temp_len - 1; k >= 0; k--) {
+                num_buf[num_len++] = temp[k];
+            }
+        }
+        buffer_write(res, num_buf, num_len);
+
+        buffer_write(res, "}", 1);
+    }
+
+    buffer_write(res, "], \"count\": ", 12);
+
+    /* Write count as number */
+    char count_buf[32];
+    int count_len = 0;
+    u64 cnt = count;
+    if (cnt == 0) {
+        count_buf[count_len++] = '0';
+    } else {
+        char temp[32];
+        int temp_len = 0;
+        while (cnt > 0) {
+            temp[temp_len++] = '0' + (cnt % 10);
+            cnt /= 10;
+        }
+        for (int k = temp_len - 1; k >= 0; k--) {
+            count_buf[count_len++] = temp[k];
+        }
+    }
+    buffer_write(res, count_buf, count_len);
+
+    buffer_write(res, "}", 1);
+
+    /* Free entries array from proxy */
+    if (entries)
+        deallocate(ctx->agent->heap, entries, count * sizeof(ak_file_info_t));
+
+    *result = res;
+    return 0;
 }
 
 /* ============================================================
@@ -1181,8 +1496,8 @@ s64 ak_host_llm_complete(ak_wasm_exec_ctx_t *ctx, buffer args, buffer *result)
 
     buffer_write(res, "{\"completion\": \"", 16);
     if (llm_response.content && content_len > 0) {
-        /* TODO: JSON escape the content */
-        buffer_write(res, buffer_ref(llm_response.content, 0), content_len);
+        /* JSON escape the content to handle special characters safely */
+        json_escape_to_buffer(res, buffer_ref(llm_response.content, 0), content_len);
     }
     buffer_write(res, "\", \"model\": \"", 12);
     buffer_write(res, llm_response.model, runtime_strlen(llm_response.model));

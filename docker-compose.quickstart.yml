@@ -1,0 +1,136 @@
+# Authority Nanos Quickstart - Docker Compose Configuration
+#
+# This configuration provides a ready-to-use development environment
+# with live editing support and persistence.
+#
+# Usage:
+#   docker-compose -f docker-compose.quickstart.yml up -d
+#   docker-compose -f docker-compose.quickstart.yml exec authority-nanos bash
+#   docker-compose -f docker-compose.quickstart.yml down
+#
+# ============================================================================
+
+version: "3.8"
+
+services:
+  # =========================================================================
+  # Authority Nanos Development Environment
+  # =========================================================================
+  authority-nanos:
+    build:
+      context: .
+      dockerfile: Dockerfile.quickstart
+    image: authority-nanos-quickstart:latest
+    container_name: authority-nanos-dev
+
+    # Interactive terminal
+    stdin_open: true
+    tty: true
+
+    # Volume mounts for development
+    volumes:
+      # Mount local examples for live editing
+      - ./examples:/opt/authority-nanos/examples:rw
+
+      # Mount local SDK for development
+      - ./sdk/python:/opt/authority-nanos/sdk/python:rw
+
+      # Mount workspace for user scripts
+      - ./workspace:/workspace:rw
+
+      # Persist Python cache and pip packages
+      - authority-nanos-pip-cache:/root/.cache/pip
+
+      # Mount local policies (if any)
+      - ./policies:/opt/authority-nanos/policies:ro
+
+    # Environment variables
+    environment:
+      # Authority Nanos configuration
+      - AUTHORITY_NANOS_HOME=/opt/authority-nanos
+      - AUTHORITY_NANOS_KERNEL=/opt/authority-nanos/bin/kernel.img
+      - AUTHORITY_NANOS_LIBAK=/opt/authority-nanos/lib/libak.so
+
+      # Python configuration
+      - PYTHONPATH=/opt/authority-nanos/sdk/python
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+
+      # Library path
+      - LD_LIBRARY_PATH=/opt/authority-nanos/lib
+
+      # Development mode
+      - AUTHORITY_NANOS_DEV=1
+
+      # Optional: API keys for LLM examples (set in .env file)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+    # Expose ports for potential web interfaces or APIs
+    ports:
+      # HTTP server for examples
+      - "8080:8080"
+      # HTTPS server
+      - "8443:8443"
+      # Debug port
+      - "5678:5678"
+
+    # Working directory
+    working_dir: /workspace
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 512M
+
+    # Security options for QEMU
+    security_opt:
+      - seccomp:unconfined
+
+    # Capabilities needed for QEMU/KVM
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+
+    # Device access for KVM acceleration (if available)
+    devices:
+      - /dev/kvm:/dev/kvm
+
+    # Network configuration
+    networks:
+      - authority-net
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import authority_nanos; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Restart policy
+    restart: unless-stopped
+
+# ============================================================================
+# Named volumes for persistence
+# ============================================================================
+volumes:
+  authority-nanos-pip-cache:
+    name: authority-nanos-pip-cache
+    driver: local
+
+# ============================================================================
+# Network configuration
+# ============================================================================
+networks:
+  authority-net:
+    name: authority-nanos-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

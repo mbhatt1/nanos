@@ -1,0 +1,25 @@
+(
+    children:(
+        # Test program binary
+        test_basic:(contents:(host:BINARY_PATH))
+        # Test policy
+        policy.json:(contents:(host:POLICY_PATH))
+        # System directories (minimal)
+        tmp:(children:())
+        proc:(children:(
+            self:(children:(
+                status:(contents:"")
+            ))
+        ))
+    )
+    # Program to run
+    program:/test_basic
+    # Enable debug exit for QEMU
+    debug_exit:t
+    # Fault handling
+    fault:t
+    # Arguments
+    arguments:[test_basic e2e_test]
+    # Environment
+    environment:(USER:e2e_test PWD:/)
+)

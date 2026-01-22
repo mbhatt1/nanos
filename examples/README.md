@@ -2,7 +2,62 @@
 
 This directory contains example scripts demonstrating the Authority Nanos Python SDK capabilities.
 
+## Quick Start
+
+All examples run in **simulation mode by default** - no kernel build or setup required!
+
+```bash
+# Install the SDK
+pip install authority-nanos
+
+# Run any example immediately
+python3 examples/00_hello_world.py
+python3 examples/01_heap_operations.py
+```
+
+## Simulation Mode vs Real Kernel
+
+### Simulation Mode (Default)
+
+Examples run in simulation mode by default, which:
+
+- **Works out of the box** - No kernel build, no configuration
+- **Full API coverage** - All SDK methods work correctly
+- **In-memory implementation** - Heap, audit logs, authorization all simulated
+- **Great for learning** - Understand the API without infrastructure setup
+- **CI/CD friendly** - Tests run anywhere Python runs
+
+```bash
+# These run in simulation mode
+python3 examples/00_hello_world.py
+python3 examples/01_heap_operations.py
+```
+
+### Real Kernel Mode
+
+To run against the actual Authority Kernel, use the `--real` or `--kernel` flag:
+
+```bash
+# Run with real kernel
+python3 examples/01_heap_operations.py --real
+python3 examples/02_authorization.py --kernel
+```
+
+Requirements for real kernel mode:
+- Built Authority Kernel (`make -j$(nproc)`)
+- libak.so available in library path
+- Kernel running or accessible
+
 ## Examples
+
+### 0. Hello World (`00_hello_world.py`)
+
+The simplest possible example - allocates one object, reads it, prints success.
+Under 30 lines of code with clear comments.
+
+```bash
+python3 examples/00_hello_world.py
+```
 
 ### 1. Basic Heap Operations (`01_heap_operations.py`)
 
@@ -13,7 +68,6 @@ Demonstrates typed memory management with allocation, reading, and modification:
 - **Write**: Modify objects using JSON Patch (RFC 6902)
 - **Delete**: Clean up allocated objects
 
-Usage:
 ```bash
 python3 examples/01_heap_operations.py
 ```
@@ -25,9 +79,8 @@ Demonstrates capability-based authorization checks:
 - **Check authorization** for protected operations
 - **File I/O** with policy enforcement
 - **HTTP requests** with policy control
-- **Error handling** for denied operations
+- **Simulate denials** for testing
 
-Usage:
 ```bash
 python3 examples/02_authorization.py
 ```
@@ -39,9 +92,8 @@ Demonstrates sandboxed execution of WASM tools:
 - **Execute WASM tools** in isolated sandbox
 - **Pass arguments** to tools via JSON
 - **Receive results** with capability-based access control
-- **Error handling** for tool failures
+- Built-in simulated tools: `add`, `concat`
 
-Usage:
 ```bash
 python3 examples/03_tool_execution.py
 ```
@@ -52,10 +104,8 @@ Demonstrates policy-controlled LLM inference:
 
 - **Send inference requests** to configured LLM
 - **Policy enforcement** on model access
-- **Token budgeting** and rate limiting
-- **Response handling** with streaming support
+- **Simulated responses** in simulation mode
 
-Usage:
 ```bash
 python3 examples/04_inference.py
 ```
@@ -66,67 +116,101 @@ Demonstrates tamper-proof audit logging:
 
 - **Read audit logs** - Append-only, hash-chained entries
 - **Query logs** - Filter by event type, actor, timestamp
-- **Verify integrity** - Hash chain ensures tampering detection
-- **Compliance** - Non-repudiation for security events
+- **Custom events** - Log application-specific events
+- Fully functional in simulation mode
 
-Usage:
 ```bash
 python3 examples/05_audit_logging.py
+```
+
+## What Simulation Mode Does
+
+In simulation mode, the SDK uses an in-memory implementation that:
+
+| Feature | Simulation Behavior |
+|---------|---------------------|
+| Heap (alloc/read/write/delete) | Full implementation with versioning |
+| Authorization | Default allow-all, configurable denials |
+| Tool calls | Simulated `add` and `concat` tools |
+| Inference | Returns simulated responses |
+| Audit logs | In-memory, queryable log |
+| File I/O | Passes through to real filesystem |
+
+### Configuring Simulation Behavior
+
+In simulation mode, you can test policy denials:
+
+```python
+with AuthorityKernel(simulate=True) as ak:
+    # Deny specific operations
+    ak.deny_operation("write")
+    ak.deny_target("/etc/shadow")
+
+    # Check authorization (will fail)
+    if not ak.authorize("read", "/etc/shadow"):
+        print("Access denied as expected")
+
+    # Reset to allow all
+    ak.allow_all()
 ```
 
 ## Running Examples
 
-### Prerequisites
+### Using run_example.sh
 
-1. **Python 3.8+** installed
-2. **Authority Nanos SDK** installed:
-   ```bash
-   pip install -e sdk/python/
-   ```
-3. **Authority Kernel** running (kernel process or Docker container)
-
-### Setting up the Kernel
-
-The examples require a running Authority Kernel. This can be:
-
-- **Native**: Built locally and run as a process
-- **Docker**: Use the provided Dockerfile for containerized kernel
-- **Remote**: Connect to a remote kernel instance
-
-### Running Individual Examples
+The helper script runs examples with proper setup:
 
 ```bash
-# Heap operations
-python3 examples/01_heap_operations.py
+# Run in simulation mode (default)
+./examples/run_example.sh 0
+./examples/run_example.sh 1
 
-# Authorization checks
-python3 examples/02_authorization.py
+# Run all examples
+./examples/run_example.sh all
 
-# Tool execution
-python3 examples/03_tool_execution.py
-
-# LLM inference
-python3 examples/04_inference.py
-
-# Audit logging
-python3 examples/05_audit_logging.py
+# Run with real kernel
+./examples/run_example.sh 1 --real
 ```
 
-### Expected Output
+### Direct Python Execution
 
-When the kernel is running, examples will show:
-- ✅ Success indicators for completed operations
-- ℹ️  Informational messages for expected errors (e.g., unconfigured features)
-- ❌ Error indicators for unexpected failures
+```bash
+# Install SDK first
+pip install authority-nanos
 
-Example output from `01_heap_operations.py`:
+# Or install from source
+pip install -e sdk/python/
+
+# Run examples
+python3 examples/00_hello_world.py
+python3 examples/01_heap_operations.py --real  # For real kernel
 ```
-✅ Connected to Authority Kernel
-✅ Allocated counter with handle: 0x...
-✅ Read counter: {'value': 0, 'name': 'counter'}
-✅ Updated counter to version: 1
-✅ Updated counter: {'value': 42, 'name': 'counter'}
-✅ Deleted counter handle
+
+## Expected Output
+
+### Simulation Mode Output
+
+```
+=== Heap Operations Example (SIMULATION mode) ===
+
+[+] Connected to Authority Kernel
+[+] Allocated counter with handle: Handle(id=1, version=0)
+[+] Read counter: {'value': 0, 'name': 'counter'}
+[+] Updated counter to version: 1
+[+] Updated counter: {'value': 42, 'name': 'counter'}
+[+] Deleted counter handle
+
+[+] All heap operations completed successfully!
+```
+
+### Real Kernel Output
+
+```
+=== Heap Operations Example (REAL KERNEL mode) ===
+
+[+] Connected to Authority Kernel
+[+] Allocated counter with handle: Handle(id=0x7f2a8c0000, version=0)
+...
 ```
 
 ## Error Handling
@@ -135,74 +219,31 @@ Examples demonstrate proper error handling patterns:
 
 - **AuthorityKernelError**: Base exception for kernel errors
 - **OperationDeniedError**: Policy denied the operation
-- **CapabilityError**: Invalid or expired capability
-- **InvalidArgumentError**: Bad argument to syscall
 - **NotFoundError**: Resource not found
-- **BufferOverflowError**: Buffer too small
-- **TimeoutError**: Operation timed out
-- **OutOfMemoryError**: Kernel out of memory
-- **LibakError**: Low-level libak error
+- **InvalidArgumentError**: Bad argument to syscall
 
-## Advanced Usage
+## Troubleshooting
 
-### Custom Policy Configuration
+### "ModuleNotFoundError: No module named 'authority_nanos'"
 
-Create a `policy.toml` file:
-```toml
-[[capability]]
-name = "example_tool"
-resource = "*"
-methods = ["execute"]
-expires_minutes = 60
+Install the SDK:
+```bash
+pip install authority-nanos
+# or
+pip install -e sdk/python/
 ```
 
-Load in your code:
-```python
-from authority_nanos import AuthorityKernel
+### "libak.so not found" (Real Kernel Mode Only)
 
-with AuthorityKernel() as ak:
-    ak.load_policy("policy.toml")
-    # Use policy-controlled operations
+Build the kernel and set library path:
+```bash
+make -j$(nproc)
+export LD_LIBRARY_PATH=output/platform/pc/lib:$LD_LIBRARY_PATH
 ```
 
-### Batch Operations
+### "Operation denied" (Real Kernel Mode)
 
-Process multiple operations efficiently:
-```python
-with AuthorityKernel() as ak:
-    handles = []
-
-    # Allocate many objects
-    for i in range(100):
-        handle = ak.alloc(f"item_{i}", json.dumps({"id": i}).encode())
-        handles.append(handle)
-
-    # Process in batches
-    for handle in handles:
-        data = ak.read(handle)
-        # Process...
-        ak.delete(handle)
-```
-
-### Resource Budgeting
-
-Monitor and enforce resource budgets:
-```python
-with AuthorityKernel() as ak:
-    try:
-        # Set memory budget
-        ak.set_budget("memory", 10_000_000)  # 10MB
-
-        # Set compute budget
-        ak.set_budget("compute", 1_000_000)  # 1M operations
-
-        # Operations are tracked and limited
-        for i in range(1000):
-            handle = ak.alloc(f"obj_{i}", b"data")
-
-    except BudgetExceededError:
-        print("Budget exceeded - operation denied")
-```
+Check policy configuration and capability grants.
 
 ## Documentation
 
@@ -211,37 +252,6 @@ For more details, see:
 - [API Reference](../docs/api/index.md)
 - [Architecture Guide](../docs/architecture/index.md)
 - [Security Model](../docs/security/index.md)
-
-## Troubleshooting
-
-### "Kernel connection failed"
-- Ensure Authority Kernel is running
-- Check kernel logs for errors
-- Verify network connectivity (if remote)
-
-### "libak.so not found"
-- Install SDK: `pip install -e sdk/python/`
-- Build kernel: `make -j$(nproc)`
-- Set library path: `export LD_LIBRARY_PATH=output/platform/pc/lib:$LD_LIBRARY_PATH`
-
-### "Authorization denied"
-- Check policy configuration
-- Verify capabilities are granted
-- Review audit logs for denial reasons
-
-### "Buffer overflow"
-- Increase buffer size in example code
-- Reduce data size being read/written
-- Check data format expectations
-
-## Contributing
-
-To add new examples:
-1. Create `NN_example_name.py` in this directory
-2. Include docstring explaining functionality
-3. Add error handling for expected failures
-4. Update this README with new example
-5. Test with and without kernel running
 
 ## License
 

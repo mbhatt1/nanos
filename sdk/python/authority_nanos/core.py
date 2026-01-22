@@ -13,6 +13,14 @@ It implements the foundation for all Authority Kernel operations including:
 - Audit logging
 
 Production-ready with comprehensive error handling, resource management, and validation.
+
+Simulation Mode:
+    When simulate=True, the SDK provides a fully functional in-memory simulation
+    of the Authority Kernel. This is useful for:
+    - Testing and development without building the kernel
+    - Quick prototyping and experimentation
+    - CI/CD pipelines where kernel isn't available
+    - Learning the API without infrastructure setup
 """
 
 import ctypes
@@ -20,13 +28,14 @@ import json
 import logging
 import os
 import platform
+import time
 from ctypes import (
     CDLL, POINTER, Structure, c_char, c_char_p, c_uint8, c_uint16, c_uint32,
     c_uint64, c_int64, c_bool, c_void_p, byref, create_string_buffer, sizeof, cast
 )
 from pathlib import Path
 from typing import Optional, Dict, Tuple, Any, Union, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 
 logger = logging.getLogger(__name__)
@@ -449,6 +458,382 @@ class AuthorizationDetails:
 
 
 # ============================================================================
+# SIMULATED KERNEL (In-Memory Implementation)
+# ============================================================================
+
+@dataclass
+class SimulatedObject:
+    """An object in the simulated heap."""
+    type_name: str
+    data: bytes
+    version: int = 0
+    deleted: bool = False
+    created_at: float = field(default_factory=time.time)
+
+
+class SimulatedKernel:
+    """In-memory simulation of Authority Kernel for testing and development.
+
+    Provides a fully functional mock implementation that behaves like the real
+    kernel but runs entirely in Python. Useful for:
+    - Testing without building the kernel
+    - Development and prototyping
+    - CI/CD pipelines
+    - Learning the API
+
+    All operations are simulated with realistic behavior:
+    - Heap operations: Full alloc/read/write/delete with versioning
+    - Authorization: Configurable allow/deny policies
+    - Audit logging: In-memory audit trail
+    - Tool calls: Simulated tool execution
+    """
+
+    def __init__(self, debug: bool = False):
+        """Initialize simulated kernel.
+
+        Args:
+            debug: Enable debug logging
+        """
+        self.debug = debug
+        self._heap: Dict[int, SimulatedObject] = {}
+        self._next_id = 1
+        self._audit_log: List[dict] = []
+        self._initialized = False
+        self._last_denial: Optional[DenialInfo] = None
+        # Default: allow all operations
+        self._denied_operations: set = set()
+        self._denied_targets: set = set()
+
+    def init(self) -> None:
+        """Initialize simulated kernel."""
+        self._initialized = True
+        self._log_audit("init", {"status": "success"})
+        logger.info("Simulated Authority Kernel initialized")
+
+    def shutdown(self) -> None:
+        """Shutdown simulated kernel."""
+        self._initialized = False
+        self._log_audit("shutdown", {"status": "success"})
+        logger.info("Simulated Authority Kernel shut down")
+
+    def alloc(self, type_name: str, initial_value: bytes = b"") -> Handle:
+        """Allocate object in simulated heap."""
+        if not isinstance(initial_value, bytes):
+            raise InvalidArgumentError(-7, "initial_value must be bytes")
+
+        if len(initial_value) > 1024:
+            raise BufferOverflowError(-9, f"initial_value exceeds 1024 bytes")
+
+        obj_id = self._next_id
+        self._next_id += 1
+
+        self._heap[obj_id] = SimulatedObject(
+            type_name=type_name,
+            data=initial_value,
+            version=0
+        )
+
+        handle = Handle()
+        handle.id = obj_id
+        handle.version = 0
+
+        self._log_audit("alloc", {
+            "type": type_name,
+            "handle_id": obj_id,
+            "size": len(initial_value)
+        })
+
+        logger.debug(f"[SIM] Allocated {type_name}: handle={obj_id}")
+        return handle
+
+    def read(self, handle: Handle) -> bytes:
+        """Read object from simulated heap."""
+        obj = self._heap.get(handle.id)
+        if obj is None or obj.deleted:
+            raise NotFoundError(-8, f"Object {handle.id} not found")
+
+        self._log_audit("read", {"handle_id": handle.id})
+        logger.debug(f"[SIM] Read handle={handle.id}: {len(obj.data)} bytes")
+        return obj.data
+
+    def write(self, handle: Handle, patch: bytes, expected_version: int = 0) -> int:
+        """Update object in simulated heap with JSON Patch."""
+        if not isinstance(patch, bytes):
+            raise InvalidArgumentError(-7, "patch must be bytes")
+
+        obj = self._heap.get(handle.id)
+        if obj is None or obj.deleted:
+            raise NotFoundError(-8, f"Object {handle.id} not found")
+
+        # CAS check if expected_version > 0
+        if expected_version > 0 and obj.version != expected_version:
+            raise InvalidArgumentError(-7, f"Version mismatch: expected {expected_version}, got {obj.version}")
+
+        # Apply JSON Patch
+        try:
+            current_data = json.loads(obj.data.decode('utf-8')) if obj.data else {}
+            patch_ops = json.loads(patch.decode('utf-8'))
+
+            for op in patch_ops:
+                if op["op"] == "replace":
+                    path = op["path"].strip("/").split("/")
+                    target = current_data
+                    for part in path[:-1]:
+                        if part.isdigit():
+                            target = target[int(part)]
+                        else:
+                            target = target[part]
+                    key = path[-1]
+                    if key.isdigit():
+                        target[int(key)] = op["value"]
+                    else:
+                        target[key] = op["value"]
+                elif op["op"] == "add":
+                    path = op["path"].strip("/").split("/")
+                    target = current_data
+                    for part in path[:-1]:
+                        if part.isdigit():
+                            target = target[int(part)]
+                        else:
+                            target = target[part]
+                    key = path[-1]
+                    if key.isdigit():
+                        target.insert(int(key), op["value"])
+                    else:
+                        target[key] = op["value"]
+                elif op["op"] == "remove":
+                    path = op["path"].strip("/").split("/")
+                    target = current_data
+                    for part in path[:-1]:
+                        if part.isdigit():
+                            target = target[int(part)]
+                        else:
+                            target = target[part]
+                    key = path[-1]
+                    if key.isdigit():
+                        del target[int(key)]
+                    else:
+                        del target[key]
+
+            obj.data = json.dumps(current_data).encode('utf-8')
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            raise InvalidArgumentError(-7, f"Patch error: {e}")
+
+        obj.version += 1
+        new_version = obj.version
+
+        self._log_audit("write", {
+            "handle_id": handle.id,
+            "new_version": new_version
+        })
+
+        logger.debug(f"[SIM] Write handle={handle.id}: version={new_version}")
+        return new_version
+
+    def delete(self, handle: Handle) -> None:
+        """Delete object from simulated heap (soft delete)."""
+        obj = self._heap.get(handle.id)
+        if obj is None:
+            raise NotFoundError(-8, f"Object {handle.id} not found")
+
+        obj.deleted = True
+
+        self._log_audit("delete", {"handle_id": handle.id})
+        logger.debug(f"[SIM] Deleted handle={handle.id}")
+
+    def authorize(self, operation: str, target: str) -> bool:
+        """Check authorization in simulation (default: allow all)."""
+        # Check if operation or target is explicitly denied
+        if operation in self._denied_operations:
+            self._last_denial = DenialInfo(
+                reason=f"Operation '{operation}' denied by simulation policy",
+                operation=operation,
+                target=target
+            )
+            self._log_audit("authorize_denied", {
+                "operation": operation,
+                "target": target
+            })
+            return False
+
+        if target in self._denied_targets:
+            self._last_denial = DenialInfo(
+                reason=f"Target '{target}' denied by simulation policy",
+                operation=operation,
+                target=target
+            )
+            self._log_audit("authorize_denied", {
+                "operation": operation,
+                "target": target
+            })
+            return False
+
+        self._log_audit("authorize_granted", {
+            "operation": operation,
+            "target": target
+        })
+        return True
+
+    def tool_call(self, tool_name: str, args: Union[dict, bytes]) -> bytes:
+        """Simulate tool execution."""
+        if isinstance(args, dict):
+            args_json = json.dumps(args).encode('utf-8')
+        else:
+            args_json = args
+
+        self._log_audit("tool_call", {
+            "tool": tool_name,
+            "args_size": len(args_json)
+        })
+
+        # Simulate some basic tools
+        try:
+            args_dict = json.loads(args_json.decode('utf-8'))
+        except:
+            args_dict = {}
+
+        if tool_name == "add":
+            a = args_dict.get("a", 0)
+            b = args_dict.get("b", 0)
+            return json.dumps({"result": a + b}).encode('utf-8')
+        elif tool_name == "concat":
+            str1 = args_dict.get("str1", "")
+            str2 = args_dict.get("str2", "")
+            return json.dumps({"result": str1 + str2}).encode('utf-8')
+        else:
+            # Return success for unknown tools in simulation
+            return json.dumps({
+                "status": "simulated",
+                "tool": tool_name,
+                "message": f"Tool '{tool_name}' executed in simulation mode"
+            }).encode('utf-8')
+
+    def inference(self, request: Union[bytes, str], prompt: str = None, max_tokens: int = 1000) -> bytes:
+        """Simulate LLM inference."""
+        if isinstance(request, bytes):
+            try:
+                req_data = json.loads(request.decode('utf-8'))
+            except:
+                req_data = {}
+        else:
+            req_data = {"model": request, "prompt": prompt}
+
+        model = req_data.get("model", "simulated")
+        prompt_text = req_data.get("prompt", req_data.get("messages", [{}])[-1].get("content", ""))
+
+        self._log_audit("inference", {
+            "model": model,
+            "prompt_length": len(str(prompt_text))
+        })
+
+        # Return simulated response
+        response = {
+            "model": model,
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": f"[SIMULATED] This is a simulated response to: '{prompt_text[:50]}...'"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": len(str(prompt_text).split()),
+                "completion_tokens": 20,
+                "total_tokens": len(str(prompt_text).split()) + 20
+            },
+            "simulated": True
+        }
+        return json.dumps(response).encode('utf-8')
+
+    def file_read(self, path: str, max_size: int = 10 * 1024 * 1024) -> bytes:
+        """Simulate file read (actually reads file if it exists)."""
+        if not self.authorize("read", path):
+            raise OperationDeniedError(-1, f"Policy denies file read: {path}")
+
+        self._log_audit("file_read", {"path": path})
+
+        # In simulation, try to actually read the file
+        try:
+            with open(path, "rb") as f:
+                return f.read(max_size)
+        except FileNotFoundError:
+            raise NotFoundError(-8, f"File not found: {path}")
+        except OSError as e:
+            raise LibakError(-1, f"File read error: {e}")
+
+    def file_write(self, path: str, data: bytes) -> None:
+        """Simulate file write (actually writes file)."""
+        if not self.authorize("write", path):
+            raise OperationDeniedError(-1, f"Policy denies file write: {path}")
+
+        self._log_audit("file_write", {"path": path, "size": len(data)})
+
+        # In simulation, try to actually write the file
+        try:
+            with open(path, "wb") as f:
+                f.write(data)
+        except OSError as e:
+            raise LibakError(-1, f"File write error: {e}")
+
+    def audit_log(self, event_type: str, details: dict = None) -> None:
+        """Log an audit event."""
+        self._log_audit(event_type, details or {})
+
+    def audit_logs(self) -> List[bytes]:
+        """Get all audit logs."""
+        return [json.dumps(entry).encode('utf-8') for entry in self._audit_log]
+
+    def audit_query(self, query: Union[bytes, dict] = None, **kwargs) -> List[bytes]:
+        """Query audit logs."""
+        if query:
+            if isinstance(query, bytes):
+                query = json.loads(query.decode('utf-8'))
+        else:
+            query = kwargs
+
+        event_type = query.get("event_type")
+        limit = query.get("limit", 100)
+
+        results = []
+        for entry in reversed(self._audit_log):
+            if event_type and entry.get("event") != event_type:
+                continue
+            results.append(json.dumps(entry).encode('utf-8'))
+            if len(results) >= limit:
+                break
+
+        return results
+
+    def get_last_denial(self) -> Optional[DenialInfo]:
+        """Get last denial info."""
+        return self._last_denial
+
+    def _log_audit(self, event: str, details: dict) -> None:
+        """Internal: log audit event."""
+        entry = {
+            "timestamp": time.time(),
+            "event": event,
+            "actor": "simulation",
+            **details
+        }
+        self._audit_log.append(entry)
+
+    # Simulation-specific methods
+    def deny_operation(self, operation: str) -> None:
+        """Add operation to deny list."""
+        self._denied_operations.add(operation)
+
+    def deny_target(self, target: str) -> None:
+        """Add target to deny list."""
+        self._denied_targets.add(target)
+
+    def allow_all(self) -> None:
+        """Reset to allow all operations."""
+        self._denied_operations.clear()
+        self._denied_targets.clear()
+
+
+# ============================================================================
 # AUTHORITY KERNEL CONTEXT MANAGER
 # ============================================================================
 
@@ -458,14 +843,24 @@ class AuthorityKernel:
     Provides low-level syscall wrappers and high-level convenience methods
     for interacting with the Authority Kernel through libak.
 
-    Usage:
+    Usage (real kernel):
         with AuthorityKernel() as ak:
             handle = ak.alloc("counter", b'{"value": 0}')
             data = ak.read(handle)
-            ak.write(handle, b'[{"op": "replace", "path": "/value", "value": 1}]')
+
+    Usage (simulation mode - default for examples):
+        with AuthorityKernel(simulate=True) as ak:
+            handle = ak.alloc("counter", b'{"value": 0}')
+            data = ak.read(handle)
+
+    Args:
+        simulate: If True, use in-memory simulation instead of real kernel.
+                  This allows testing without building/running the kernel.
+        libak_path: Explicit path to libak.so (ignored in simulate mode)
+        debug: Enable debug logging
 
     Raises:
-        LibakError: If libak.so cannot be loaded
+        LibakError: If libak.so cannot be loaded (only in non-simulate mode)
     """
 
     # Default maximum sizes for operations
@@ -474,23 +869,34 @@ class AuthorityKernel:
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
     MAX_HTTP_RESPONSE = 10 * 1024 * 1024  # 10 MB
 
-    def __init__(self, libak_path: Optional[str] = None, debug: bool = False):
+    def __init__(self, libak_path: Optional[str] = None, debug: bool = False,
+                 simulate: bool = False):
         """Initialize Authority Kernel context.
 
         Args:
             libak_path: Explicit path to libak.so, or None to search defaults
             debug: Enable debug logging
+            simulate: Use in-memory simulation instead of real kernel
 
         Raises:
-            LibakError: If libak.so cannot be loaded
+            LibakError: If libak.so cannot be loaded (only if simulate=False)
         """
-        self.libak = LibakLoader.load(libak_path)
         self.debug = debug
+        self.simulate = simulate
         self._initialized = False
         self._last_denial: Optional[DenialInfo] = None
 
-        # Setup function signatures
-        self._setup_function_signatures()
+        if simulate:
+            # Use simulated kernel
+            self._sim = SimulatedKernel(debug=debug)
+            self.libak = None
+            logger.info("Authority Kernel running in SIMULATION mode")
+        else:
+            # Use real kernel
+            self._sim = None
+            self.libak = LibakLoader.load(libak_path)
+            # Setup function signatures
+            self._setup_function_signatures()
 
     def __enter__(self) -> "AuthorityKernel":
         """Enter context manager."""
@@ -572,6 +978,11 @@ class AuthorityKernel:
             logger.debug("Authority Kernel already initialized")
             return
 
+        if self.simulate:
+            self._sim.init()
+            self._initialized = True
+            return
+
         err = self.libak.ak_init()
         self._check_error(err, "ak_init")
         self._initialized = True
@@ -583,6 +994,11 @@ class AuthorityKernel:
         Called automatically when exiting context manager.
         """
         if not self._initialized:
+            return
+
+        if self.simulate:
+            self._sim.shutdown()
+            self._initialized = False
             return
 
         try:
@@ -646,6 +1062,10 @@ class AuthorityKernel:
         Example:
             handle = ak.alloc("counter", b'{"value": 0}')
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.alloc(type_name, initial_value)
+
         if not isinstance(initial_value, bytes):
             raise InvalidArgumentError(-7, "initial_value must be bytes")
 
@@ -691,6 +1111,10 @@ class AuthorityKernel:
             data = ak.read(handle)
             obj = json.loads(data.decode('utf-8'))
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.read(handle)
+
         # Prepare output buffer
         max_len = 4096
         out_value = (c_uint8 * max_len)()
@@ -733,6 +1157,10 @@ class AuthorityKernel:
             patch = b'[{"op": "replace", "path": "/value", "value": 42}]'
             new_version = ak.write(handle, patch)
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.write(handle, patch, expected_version)
+
         if not isinstance(patch, bytes):
             raise InvalidArgumentError(-7, "patch must be bytes")
 
@@ -770,6 +1198,10 @@ class AuthorityKernel:
         Example:
             ak.delete(handle)
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.delete(handle)
+
         # Call ak_delete
         err = self.libak.ak_delete(handle)
 
@@ -793,6 +1225,10 @@ class AuthorityKernel:
         Raises:
             AuthorityKernelError: If tool execution fails
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.tool_call(tool_name, args)
+
         # Prepare tool call structure
         tool_call_struct = ToolCall()
         tool_name_bytes = tool_name.encode('utf-8')[:63]
@@ -855,6 +1291,10 @@ class AuthorityKernel:
         Example (legacy API):
             response = ak.inference("gpt-4", "What is 2+2?", max_tokens=100)
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.inference(request, prompt, max_tokens)
+
         # Handle bytes input (new API)
         if isinstance(request, bytes):
             request_json = request
@@ -921,6 +1361,10 @@ class AuthorityKernel:
             event_type: Event type identifier
             details: Optional event details as dictionary
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.audit_log(event_type, details)
+
         event_bytes = event_type.encode('utf-8')
         details_bytes = json.dumps(details).encode('utf-8') if details else None
         details_buf = (c_uint8 * len(details_bytes))(*details_bytes) if details_bytes else None
@@ -940,6 +1384,10 @@ class AuthorityKernel:
         Returns:
             List of audit log entries
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.audit_logs()
+
         # Audit logs query not implemented in kernel
         return []
 
@@ -959,6 +1407,10 @@ class AuthorityKernel:
             query = json.dumps({"event_type": "alloc", "limit": 10}).encode()
             results = ak.audit_query(query)
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.audit_query(query, **kwargs)
+
         # Audit query not implemented in kernel yet
         # Just return empty list for now
         return []
@@ -984,6 +1436,10 @@ class AuthorityKernel:
             if ak.authorize("read", "/etc/passwd"):
                 data = ak.file_read("/etc/passwd")
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.authorize(operation, target)
+
         try:
             # Map operation names to syscall numbers
             op_map = {
@@ -1243,11 +1699,19 @@ class AuthorityKernel:
                 print(f"Denied: {denial.reason}")
                 print(f"Suggestion: {denial.suggestion}")
         """
+        # Delegate to simulator in simulation mode
+        if self.simulate:
+            return self._sim.get_last_denial()
+
         self._update_denial_info()
         return self._last_denial
 
     def _update_denial_info(self) -> None:
         """Fetch and update last denial information."""
+        # Skip in simulation mode
+        if self.simulate:
+            return
+
         try:
             max_len = 2048
             resp_buf = (c_uint8 * max_len)()
@@ -1343,6 +1807,54 @@ class AuthorityKernel:
         else:
             raise LibakError(err_code, f"{context}: {error_msg}")
 
+    # ========================================================================
+    # SIMULATION-SPECIFIC METHODS
+    # ========================================================================
+
+    def deny_operation(self, operation: str) -> None:
+        """Add operation to deny list (simulation mode only).
+
+        Args:
+            operation: Operation to deny
+
+        Raises:
+            RuntimeError: If not in simulation mode
+        """
+        if not self.simulate:
+            raise RuntimeError("deny_operation() only available in simulation mode")
+        self._sim.deny_operation(operation)
+
+    def deny_target(self, target: str) -> None:
+        """Add target to deny list (simulation mode only).
+
+        Args:
+            target: Target resource to deny
+
+        Raises:
+            RuntimeError: If not in simulation mode
+        """
+        if not self.simulate:
+            raise RuntimeError("deny_target() only available in simulation mode")
+        self._sim.deny_target(target)
+
+    def allow_all(self) -> None:
+        """Reset to allow all operations (simulation mode only).
+
+        Raises:
+            RuntimeError: If not in simulation mode
+        """
+        if not self.simulate:
+            raise RuntimeError("allow_all() only available in simulation mode")
+        self._sim.allow_all()
+
+    def is_simulated(self) -> bool:
+        """Check if running in simulation mode.
+
+        Returns:
+            True if in simulation mode, False if using real kernel
+        """
+        return self.simulate
+
 
 # ============================================================================
 # MODULE INITIALIZATION
@@ -1351,6 +1863,7 @@ class AuthorityKernel:
 __all__ = [
     # Classes
     "AuthorityKernel",
+    "SimulatedKernel",
     "LibakLoader",
     "Handle",
     "ToolCall",

@@ -258,6 +258,13 @@ setup(
         ],
     },
     keywords="authorization security kernel access-control",
+    # Console script entry points for CLI
+    entry_points={
+        'console_scripts': [
+            'authority-nanos=authority_nanos.cli:main',
+            'authority-hello=authority_nanos.cli:hello',
+        ],
+    },
     # Mark as platform-specific to ensure correct wheel tagging
     zip_safe=False,
 )

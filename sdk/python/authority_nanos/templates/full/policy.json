@@ -1,0 +1,99 @@
+{
+  "policy": {
+    "version": "1.0",
+    "name": "{{PROJECT_NAME}}",
+    "description": "Comprehensive policy for full-featured agent"
+  },
+  "capabilities": {
+    "heap": {
+      "enabled": true,
+      "max_objects": 10000,
+      "max_size_bytes": 104857600,
+      "types": ["agent_state", "task:*", "config", "cache:*"]
+    },
+    "network": {
+      "enabled": true,
+      "allowed_hosts": [
+        "api.openai.com",
+        "api.anthropic.com",
+        "*.googleapis.com"
+      ],
+      "allowed_ports": [443, 8080],
+      "protocols": ["https"],
+      "max_connections": 20,
+      "timeout_seconds": 30
+    },
+    "filesystem": {
+      "enabled": true,
+      "allowed_paths": [
+        "./config.json",
+        "./data/*",
+        "./logs/*"
+      ],
+      "operations": ["read", "write", "list"],
+      "max_file_size_bytes": 10485760
+    },
+    "environment": {
+      "allowed_vars": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "LOG_LEVEL",
+        "CONFIG_PATH"
+      ]
+    },
+    "logging": {
+      "enabled": true,
+      "max_entries": 10000,
+      "levels": ["DEBUG", "INFO", "WARNING", "ERROR"]
+    }
+  },
+  "rules": [
+    {
+      "name": "allow-heap-operations",
+      "effect": "allow",
+      "actions": ["heap:alloc", "heap:read", "heap:write", "heap:delete"],
+      "resources": ["*"]
+    },
+    {
+      "name": "allow-config-read",
+      "effect": "allow",
+      "actions": ["fs:read"],
+      "resources": ["./config.json"]
+    },
+    {
+      "name": "allow-data-directory",
+      "effect": "allow",
+      "actions": ["fs:read", "fs:write", "fs:list"],
+      "resources": ["./data/*"]
+    },
+    {
+      "name": "allow-log-directory",
+      "effect": "allow",
+      "actions": ["fs:write", "fs:list"],
+      "resources": ["./logs/*"]
+    },
+    {
+      "name": "allow-llm-api",
+      "effect": "allow",
+      "actions": ["network:connect", "network:send", "network:receive"],
+      "resources": ["https://api.openai.com/*", "https://api.anthropic.com/*"]
+    },
+    {
+      "name": "allow-env-vars",
+      "effect": "allow",
+      "actions": ["env:read"],
+      "resources": ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "LOG_LEVEL", "CONFIG_PATH"]
+    },
+    {
+      "name": "allow-logging",
+      "effect": "allow",
+      "actions": ["log:write"],
+      "resources": ["*"]
+    }
+  ],
+  "audit": {
+    "enabled": true,
+    "log_all_access": true,
+    "log_denials": true
+  }
+}

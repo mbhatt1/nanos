@@ -1,0 +1,692 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ============================================================================
+  # Linux x86_64 Build
+  # ============================================================================
+  build-linux-x86_64:
+    name: Build Linux x86_64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/apt
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-x86_64-release-${{ hashFiles('**/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-x86_64-release-
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm build-essential qemu-system-x86 wget
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build kernel, libak, and tools
+        run: |
+          make clean
+          make -j$(nproc) PLATFORM=pc all-binaries
+          make -j$(nproc) -C tools mkfs
+
+          # Build minops if it exists
+          if [ -d tools/minops ]; then
+            cd tools/minops
+            go build -o minops .
+            cd ../..
+          fi
+
+          echo "Build artifacts:"
+          ls -lh output/platform/pc/bin/kernel.img
+          ls -lh output/platform/pc/lib/libak.so || true
+          ls -lh output/tools/bin/mkfs || true
+          ls -lh tools/minops/minops || true
+
+      - name: Create distribution package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DIST_DIR="authority-nanos-${VERSION}-linux-x86_64"
+
+          mkdir -p "$DIST_DIR/bin"
+          mkdir -p "$DIST_DIR/lib"
+
+          # Copy kernel
+          cp output/platform/pc/bin/kernel.img "$DIST_DIR/"
+
+          # Copy boot.img if exists
+          if [ -f output/platform/pc/boot/boot.img ]; then
+            cp output/platform/pc/boot/boot.img "$DIST_DIR/"
+          fi
+
+          # Copy libak.so
+          if [ -f output/platform/pc/lib/libak.so ]; then
+            cp output/platform/pc/lib/libak.so "$DIST_DIR/lib/"
+          fi
+
+          # Copy mkfs
+          if [ -f output/tools/bin/mkfs ]; then
+            cp output/tools/bin/mkfs "$DIST_DIR/bin/"
+          fi
+
+          # Copy minops
+          if [ -f tools/minops/minops ]; then
+            cp tools/minops/minops "$DIST_DIR/bin/"
+          fi
+
+          # Copy klibs if they exist
+          if [ -d output/platform/pc/bin ] && ls output/platform/pc/bin/*.klib 2>/dev/null; then
+            mkdir -p "$DIST_DIR/klibs"
+            cp output/platform/pc/bin/*.klib "$DIST_DIR/klibs/" 2>/dev/null || true
+          fi
+
+          # Copy docs
+          cp README.md "$DIST_DIR/"
+          cp LICENSE "$DIST_DIR/"
+
+          # Create tarball
+          tar -czvf "authority-nanos-${VERSION}-linux-x86_64.tar.gz" "$DIST_DIR/"
+
+          echo "Package contents:"
+          tar -tzvf "authority-nanos-${VERSION}-linux-x86_64.tar.gz"
+
+      - name: Generate checksum
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sha256sum "authority-nanos-${VERSION}-linux-x86_64.tar.gz" > "authority-nanos-${VERSION}-linux-x86_64.tar.gz.sha256"
+          cat "authority-nanos-${VERSION}-linux-x86_64.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: |
+            authority-nanos-*-linux-x86_64.tar.gz
+            authority-nanos-*-linux-x86_64.tar.gz.sha256
+          retention-days: 7
+
+  # ============================================================================
+  # Linux ARM64 Build (cross-compile)
+  # ============================================================================
+  build-linux-arm64:
+    name: Build Linux ARM64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/apt
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-arm64-release-${{ hashFiles('**/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-arm64-release-
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm build-essential gcc-aarch64-linux-gnu qemu-system-arm wget
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build kernel, libak, and tools
+        run: |
+          make clean
+          make -j$(nproc) PLATFORM=virt all-binaries
+
+          # Build mkfs for host (x86_64) to create images
+          make -j$(nproc) -C tools mkfs
+
+          # Build minops for ARM64 if it exists
+          if [ -d tools/minops ]; then
+            cd tools/minops
+            GOOS=linux GOARCH=arm64 go build -o minops .
+            cd ../..
+          fi
+
+          echo "Build artifacts:"
+          ls -lh output/platform/virt/bin/kernel.img
+          ls -lh output/platform/virt/lib/libak.so || true
+          ls -lh output/tools/bin/mkfs || true
+          ls -lh tools/minops/minops || true
+
+      - name: Create distribution package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DIST_DIR="authority-nanos-${VERSION}-linux-arm64"
+
+          mkdir -p "$DIST_DIR/bin"
+          mkdir -p "$DIST_DIR/lib"
+
+          # Copy kernel
+          cp output/platform/virt/bin/kernel.img "$DIST_DIR/"
+
+          # Copy boot.img if exists
+          if [ -f output/platform/virt/boot/boot.img ]; then
+            cp output/platform/virt/boot/boot.img "$DIST_DIR/"
+          fi
+
+          # Copy libak.so
+          if [ -f output/platform/virt/lib/libak.so ]; then
+            cp output/platform/virt/lib/libak.so "$DIST_DIR/lib/"
+          fi
+
+          # Copy mkfs (host tool)
+          if [ -f output/tools/bin/mkfs ]; then
+            cp output/tools/bin/mkfs "$DIST_DIR/bin/"
+          fi
+
+          # Copy minops (ARM64)
+          if [ -f tools/minops/minops ]; then
+            cp tools/minops/minops "$DIST_DIR/bin/"
+          fi
+
+          # Copy klibs if they exist
+          if [ -d output/platform/virt/bin ] && ls output/platform/virt/bin/*.klib 2>/dev/null; then
+            mkdir -p "$DIST_DIR/klibs"
+            cp output/platform/virt/bin/*.klib "$DIST_DIR/klibs/" 2>/dev/null || true
+          fi
+
+          # Copy docs
+          cp README.md "$DIST_DIR/"
+          cp LICENSE "$DIST_DIR/"
+
+          # Create tarball
+          tar -czvf "authority-nanos-${VERSION}-linux-arm64.tar.gz" "$DIST_DIR/"
+
+          echo "Package contents:"
+          tar -tzvf "authority-nanos-${VERSION}-linux-arm64.tar.gz"
+
+      - name: Generate checksum
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sha256sum "authority-nanos-${VERSION}-linux-arm64.tar.gz" > "authority-nanos-${VERSION}-linux-arm64.tar.gz.sha256"
+          cat "authority-nanos-${VERSION}-linux-arm64.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          path: |
+            authority-nanos-*-linux-arm64.tar.gz
+            authority-nanos-*-linux-arm64.tar.gz.sha256
+          retention-days: 7
+
+  # ============================================================================
+  # macOS x86_64 Build
+  # ============================================================================
+  build-macos-x86_64:
+    name: Build macOS x86_64
+    runs-on: macos-13
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-x86_64-release-${{ hashFiles('**/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-x86_64-release-
+
+      - name: Install dependencies
+        run: |
+          brew install nasm wget qemu
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build kernel, libak, and tools
+        run: |
+          make clean
+          make -j$(sysctl -n hw.ncpu) PLATFORM=pc all-binaries
+          make -j$(sysctl -n hw.ncpu) -C tools mkfs
+
+          # Build minops if it exists
+          if [ -d tools/minops ]; then
+            cd tools/minops
+            go build -o minops .
+            cd ../..
+          fi
+
+          echo "Build artifacts:"
+          ls -lh output/platform/pc/bin/kernel.img
+          ls -lh output/platform/pc/lib/libak.dylib || true
+          ls -lh output/tools/bin/mkfs || true
+          ls -lh tools/minops/minops || true
+
+      - name: Create distribution package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DIST_DIR="authority-nanos-${VERSION}-darwin-x86_64"
+
+          mkdir -p "$DIST_DIR/bin"
+          mkdir -p "$DIST_DIR/lib"
+
+          # Copy kernel
+          cp output/platform/pc/bin/kernel.img "$DIST_DIR/"
+
+          # Copy boot.img if exists
+          if [ -f output/platform/pc/boot/boot.img ]; then
+            cp output/platform/pc/boot/boot.img "$DIST_DIR/"
+          fi
+
+          # Copy libak.dylib
+          if [ -f output/platform/pc/lib/libak.dylib ]; then
+            cp output/platform/pc/lib/libak.dylib "$DIST_DIR/lib/"
+          fi
+
+          # Copy mkfs
+          if [ -f output/tools/bin/mkfs ]; then
+            cp output/tools/bin/mkfs "$DIST_DIR/bin/"
+          fi
+
+          # Copy minops
+          if [ -f tools/minops/minops ]; then
+            cp tools/minops/minops "$DIST_DIR/bin/"
+          fi
+
+          # Copy klibs if they exist
+          if [ -d output/platform/pc/bin ] && ls output/platform/pc/bin/*.klib 2>/dev/null; then
+            mkdir -p "$DIST_DIR/klibs"
+            cp output/platform/pc/bin/*.klib "$DIST_DIR/klibs/" 2>/dev/null || true
+          fi
+
+          # Copy docs
+          cp README.md "$DIST_DIR/"
+          cp LICENSE "$DIST_DIR/"
+
+          # Create tarball
+          tar -czvf "authority-nanos-${VERSION}-darwin-x86_64.tar.gz" "$DIST_DIR/"
+
+          echo "Package contents:"
+          tar -tzvf "authority-nanos-${VERSION}-darwin-x86_64.tar.gz"
+
+      - name: Generate checksum
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          shasum -a 256 "authority-nanos-${VERSION}-darwin-x86_64.tar.gz" > "authority-nanos-${VERSION}-darwin-x86_64.tar.gz.sha256"
+          cat "authority-nanos-${VERSION}-darwin-x86_64.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-x86_64
+          path: |
+            authority-nanos-*-darwin-x86_64.tar.gz
+            authority-nanos-*-darwin-x86_64.tar.gz.sha256
+          retention-days: 7
+
+  # ============================================================================
+  # macOS ARM64 Build
+  # ============================================================================
+  build-macos-arm64:
+    name: Build macOS ARM64
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-arm64-release-${{ hashFiles('**/Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-arm64-release-
+
+      - name: Install dependencies
+        run: |
+          brew install nasm wget qemu aarch64-elf-binutils
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build kernel, libak, and tools
+        run: |
+          make clean
+          make -j$(sysctl -n hw.ncpu) PLATFORM=virt all-binaries
+          make -j$(sysctl -n hw.ncpu) -C tools mkfs
+
+          # Build minops if it exists
+          if [ -d tools/minops ]; then
+            cd tools/minops
+            go build -o minops .
+            cd ../..
+          fi
+
+          echo "Build artifacts:"
+          ls -lh output/platform/virt/bin/kernel.img
+          ls -lh output/platform/virt/lib/libak.dylib || true
+          ls -lh output/tools/bin/mkfs || true
+          ls -lh tools/minops/minops || true
+
+      - name: Create distribution package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DIST_DIR="authority-nanos-${VERSION}-darwin-arm64"
+
+          mkdir -p "$DIST_DIR/bin"
+          mkdir -p "$DIST_DIR/lib"
+
+          # Copy kernel
+          cp output/platform/virt/bin/kernel.img "$DIST_DIR/"
+
+          # Copy boot.img if exists
+          if [ -f output/platform/virt/boot/boot.img ]; then
+            cp output/platform/virt/boot/boot.img "$DIST_DIR/"
+          fi
+
+          # Copy libak.dylib
+          if [ -f output/platform/virt/lib/libak.dylib ]; then
+            cp output/platform/virt/lib/libak.dylib "$DIST_DIR/lib/"
+          fi
+
+          # Copy mkfs
+          if [ -f output/tools/bin/mkfs ]; then
+            cp output/tools/bin/mkfs "$DIST_DIR/bin/"
+          fi
+
+          # Copy minops
+          if [ -f tools/minops/minops ]; then
+            cp tools/minops/minops "$DIST_DIR/bin/"
+          fi
+
+          # Copy klibs if they exist
+          if [ -d output/platform/virt/bin ] && ls output/platform/virt/bin/*.klib 2>/dev/null; then
+            mkdir -p "$DIST_DIR/klibs"
+            cp output/platform/virt/bin/*.klib "$DIST_DIR/klibs/" 2>/dev/null || true
+          fi
+
+          # Copy docs
+          cp README.md "$DIST_DIR/"
+          cp LICENSE "$DIST_DIR/"
+
+          # Create tarball
+          tar -czvf "authority-nanos-${VERSION}-darwin-arm64.tar.gz" "$DIST_DIR/"
+
+          echo "Package contents:"
+          tar -tzvf "authority-nanos-${VERSION}-darwin-arm64.tar.gz"
+
+      - name: Generate checksum
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          shasum -a 256 "authority-nanos-${VERSION}-darwin-arm64.tar.gz" > "authority-nanos-${VERSION}-darwin-arm64.tar.gz.sha256"
+          cat "authority-nanos-${VERSION}-darwin-arm64.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-arm64
+          path: |
+            authority-nanos-*-darwin-arm64.tar.gz
+            authority-nanos-*-darwin-arm64.tar.gz.sha256
+          retention-days: 7
+
+  # ============================================================================
+  # Create GitHub Release
+  # ============================================================================
+  create-release:
+    name: Create GitHub Release
+    needs:
+      - build-linux-x86_64
+      - build-linux-arm64
+      - build-macos-x86_64
+      - build-macos-arm64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display artifact structure
+        run: |
+          echo "Downloaded artifacts:"
+          find artifacts -type f | head -50
+          echo "---"
+          find artifacts -type f -exec ls -lh {} \;
+
+      - name: Collect all release assets
+        run: |
+          mkdir -p release-assets
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Copy all tarballs and checksums to release directory
+          find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
+          find artifacts -name "*.sha256" -exec cp {} release-assets/ \;
+
+          echo "Release assets:"
+          ls -lh release-assets/
+
+      - name: Generate combined checksums file
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          cd release-assets
+
+          # Combine all individual checksums into one file
+          echo "# SHA256 Checksums for Authority Nanos v${VERSION}" > checksums.txt
+          echo "# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> checksums.txt
+          echo "" >> checksums.txt
+
+          for f in *.sha256; do
+            if [ -f "$f" ]; then
+              cat "$f" >> checksums.txt
+            fi
+          done
+
+          echo ""
+          echo "Combined checksums:"
+          cat checksums.txt
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          cat > release-notes.md << 'NOTES_HEADER'
+          ## Authority Nanos v${VERSION}
+
+          ### Installation
+
+          #### Quick Install (recommended)
+          ```bash
+          curl -sSfL https://authority.dev/get.sh | sh
+          ```
+
+          #### Manual Download
+          Download the appropriate archive for your platform:
+
+          | Platform | Architecture | Download |
+          |----------|-------------|----------|
+          | Linux | x86_64 | `authority-nanos-${VERSION}-linux-x86_64.tar.gz` |
+          | Linux | ARM64 | `authority-nanos-${VERSION}-linux-arm64.tar.gz` |
+          | macOS | x86_64 (Intel) | `authority-nanos-${VERSION}-darwin-x86_64.tar.gz` |
+          | macOS | ARM64 (Apple Silicon) | `authority-nanos-${VERSION}-darwin-arm64.tar.gz` |
+
+          ### Verifying Downloads
+
+          Verify the integrity of downloaded files using the SHA256 checksums:
+
+          ```bash
+          # Linux
+          sha256sum -c checksums.txt
+
+          # macOS
+          shasum -a 256 -c checksums.txt
+          ```
+
+          ### Package Contents
+
+          Each release archive contains:
+          - `kernel.img` - Authority Nanos unikernel
+          - `boot.img` - Bootloader (if applicable)
+          - `lib/libak.so` or `lib/libak.dylib` - Authority Kernel library
+          - `bin/mkfs` - Filesystem creation tool
+          - `bin/minops` - CLI tool for running unikernels
+          - `klibs/` - Kernel libraries (if applicable)
+          - `README.md` - Documentation
+          - `LICENSE` - License file
+
+          NOTES_HEADER
+
+          # Replace version placeholder
+          sed -i "s/\${VERSION}/${VERSION}/g" release-notes.md
+
+          # Add changelog if we have a previous tag
+          if [ -n "$LAST_TAG" ]; then
+            echo "" >> release-notes.md
+            echo "### Changes since ${LAST_TAG}" >> release-notes.md
+            echo "" >> release-notes.md
+            git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges >> release-notes.md
+            echo "" >> release-notes.md
+          fi
+
+          echo ""
+          echo "Release notes:"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref_name }}
+          name: Authority Nanos v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'rc') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'alpha') }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/checksums.txt
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release summary
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo ""
+          echo "============================================"
+          echo "Release v${VERSION} created successfully!"
+          echo "============================================"
+          echo ""
+          echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/v${VERSION}"
+          echo ""
+          echo "Download URLs:"
+          echo "  - https://github.com/${{ github.repository }}/releases/download/v${VERSION}/authority-nanos-${VERSION}-linux-x86_64.tar.gz"
+          echo "  - https://github.com/${{ github.repository }}/releases/download/v${VERSION}/authority-nanos-${VERSION}-linux-arm64.tar.gz"
+          echo "  - https://github.com/${{ github.repository }}/releases/download/v${VERSION}/authority-nanos-${VERSION}-darwin-x86_64.tar.gz"
+          echo "  - https://github.com/${{ github.repository }}/releases/download/v${VERSION}/authority-nanos-${VERSION}-darwin-arm64.tar.gz"

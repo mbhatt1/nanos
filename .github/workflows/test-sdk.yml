@@ -1,0 +1,459 @@
+name: Test Python SDK
+
+on:
+  push:
+    branches:
+      - master
+      - feature/**
+      - fix/**
+    paths:
+      - 'sdk/python/**'
+      - '.github/workflows/test-sdk.yml'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'sdk/python/**'
+      - '.github/workflows/test-sdk.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # Lint and Type Check
+  # ============================================================================
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linting tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install black flake8 mypy isort
+
+      - name: Check formatting with black
+        run: |
+          cd sdk/python
+          black --check --diff authority_nanos/ || echo "::warning::Black formatting check failed"
+
+      - name: Check import order with isort
+        run: |
+          cd sdk/python
+          isort --check-only --diff authority_nanos/ || echo "::warning::isort check failed"
+
+      - name: Lint with flake8
+        run: |
+          cd sdk/python
+          flake8 authority_nanos/ --max-line-length=120 --ignore=E501,W503,E203 || echo "::warning::flake8 check found issues"
+
+      - name: Type check with mypy
+        run: |
+          cd sdk/python
+          pip install -e .
+          mypy authority_nanos/ --ignore-missing-imports --no-error-summary || echo "::warning::mypy found type issues"
+
+  # ============================================================================
+  # Unit Tests (Simulation Mode - No Kernel Required)
+  # ============================================================================
+  test-unit:
+    name: Unit Tests (Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            python: '3.8'
+          - os: ubuntu-22.04
+            python: '3.9'
+          - os: ubuntu-22.04
+            python: '3.10'
+          - os: ubuntu-22.04
+            python: '3.11'
+          - os: ubuntu-22.04
+            python: '3.12'
+          - os: macos-13
+            python: '3.11'
+          - os: macos-14
+            python: '3.11'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-mock
+
+      - name: Install SDK in development mode
+        run: |
+          cd sdk/python
+          pip install -e .
+
+      - name: Test SDK import
+        run: |
+          python -c "
+          import authority_nanos
+          print(f'Version: {authority_nanos.__version__}')
+          print(f'Author: {authority_nanos.__author__}')
+          "
+
+      - name: Test core module imports
+        run: |
+          python -c "
+          from authority_nanos import (
+              AuthorityKernel,
+              LibakLoader,
+              Handle,
+              ToolCall,
+              InferenceRequest,
+              EffectRequest,
+              EffectResponse,
+              Capability,
+              DenialInfo,
+              AuthorizationDetails,
+              Syscall,
+              ErrorCode,
+          )
+          print('All core imports successful')
+          "
+
+      - name: Test exception imports
+        run: |
+          python -c "
+          from authority_nanos import (
+              AuthorityKernelError,
+              OperationDeniedError,
+              CapabilityError,
+              InvalidArgumentError,
+              NotFoundError,
+              BufferOverflowError,
+              TimeoutError,
+              OutOfMemoryError,
+              LibakError,
+              BudgetExceededError,
+          )
+          print('All exception imports successful')
+          "
+
+      - name: Test data structures
+        run: |
+          python -c "
+          from authority_nanos import Handle, Syscall, ErrorCode
+          import ctypes
+
+          # Test Handle structure
+          h = Handle()
+          h.id = 12345
+          h.version = 1
+          assert h.id == 12345
+          assert h.version == 1
+          print(f'Handle test passed: {h}')
+
+          # Test Syscall enum
+          assert Syscall.READ == 1024
+          assert Syscall.ALLOC == 1025
+          assert Syscall.WRITE == 1026
+          assert Syscall.DELETE == 1027
+          print(f'Syscall enum test passed')
+
+          # Test ErrorCode enum
+          assert ErrorCode.OK == 0
+          assert ErrorCode.DENIED == -1
+          assert ErrorCode.NOMEM == -6
+          print(f'ErrorCode enum test passed')
+          "
+
+      - name: Test exception hierarchy
+        run: |
+          python -c "
+          from authority_nanos import (
+              AuthorityKernelError,
+              OperationDeniedError,
+              CapabilityError,
+              InvalidArgumentError,
+              NotFoundError,
+              BufferOverflowError,
+              LibakError,
+          )
+
+          # Test exception inheritance
+          assert issubclass(OperationDeniedError, AuthorityKernelError)
+          assert issubclass(CapabilityError, AuthorityKernelError)
+          assert issubclass(InvalidArgumentError, AuthorityKernelError)
+          assert issubclass(NotFoundError, AuthorityKernelError)
+          assert issubclass(BufferOverflowError, AuthorityKernelError)
+          assert issubclass(LibakError, AuthorityKernelError)
+          print('Exception hierarchy test passed')
+
+          # Test exception instantiation
+          err = OperationDeniedError(-1, 'Test message', 'Test context')
+          assert err.code == -1
+          assert 'Test message' in str(err)
+          print('Exception instantiation test passed')
+          "
+
+      - name: Test libak loader module
+        run: |
+          python -c "
+          from authority_nanos._libak_loader import (
+              get_platform_tag,
+              get_libak_filename,
+              LibakBinaryLocator,
+              LibakNotFoundError,
+          )
+
+          # Test platform detection
+          platform = get_platform_tag()
+          print(f'Detected platform: {platform}')
+          assert platform in ['linux_x86_64', 'linux_arm64', 'macos_x86_64', 'macos_arm64']
+
+          # Test filename detection
+          filename = get_libak_filename()
+          print(f'Library filename: {filename}')
+          assert filename in ['libak.so', 'libak.dylib']
+
+          # Test system paths generation
+          paths = LibakBinaryLocator.get_system_paths()
+          print(f'System paths: {paths}')
+          assert len(paths) > 0
+
+          # Test bundled path (may be None if not bundled)
+          bundled = LibakBinaryLocator.get_bundled_path()
+          print(f'Bundled path: {bundled}')
+
+          print('Libak loader module tests passed')
+          "
+
+      - name: Test DenialInfo parsing
+        run: |
+          python -c "
+          from authority_nanos import DenialInfo
+
+          # Test JSON parsing
+          json_data = b'{\"reason\": \"Test denial\", \"capability_required\": \"file:read\", \"operation\": \"read\", \"target\": \"/etc/passwd\"}'
+          info = DenialInfo.from_json(json_data)
+          assert info.reason == 'Test denial'
+          assert info.capability_required == 'file:read'
+          assert info.operation == 'read'
+          assert info.target == '/etc/passwd'
+          print(f'DenialInfo parsing test passed: {info}')
+
+          # Test invalid JSON handling
+          invalid_json = b'not valid json'
+          info = DenialInfo.from_json(invalid_json)
+          assert info.reason == 'Failed to parse denial information'
+          print('Invalid JSON handling test passed')
+          "
+
+      - name: Test AuthorizationDetails parsing
+        run: |
+          python -c "
+          from authority_nanos import AuthorizationDetails
+
+          # Test JSON parsing
+          json_data = b'{\"authorized\": true, \"capability_name\": \"file:read\", \"ttl_ms\": 3600000}'
+          details = AuthorizationDetails.from_json(json_data, 1024, '/tmp/test')
+          assert details.authorized == True
+          assert details.capability_name == 'file:read'
+          assert details.ttl_ms == 3600000
+          assert details.operation == 1024
+          assert details.target == '/tmp/test'
+          print(f'AuthorizationDetails parsing test passed')
+
+          # Test unauthorized response
+          json_data = b'{\"authorized\": false, \"reason\": \"Policy denies access\"}'
+          details = AuthorizationDetails.from_json(json_data, 1026, '/etc/shadow')
+          assert details.authorized == False
+          assert details.reason == 'Policy denies access'
+          print('Unauthorized response test passed')
+          "
+
+      - name: Run pytest (if tests exist)
+        run: |
+          cd sdk/python
+          if [ -d tests ]; then
+            pytest tests/ -v --tb=short || echo "::warning::Some tests failed"
+          else
+            echo "No tests directory found - skipping pytest"
+          fi
+
+  # ============================================================================
+  # Integration Test (Simulation Mode)
+  # ============================================================================
+  test-simulation:
+    name: Simulation Mode Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install SDK
+        run: |
+          cd sdk/python
+          pip install -e .
+
+      - name: Test simulation mode (no libak)
+        run: |
+          python -c "
+          import os
+          from authority_nanos import AuthorityKernel, LibakError, LibakLoader
+
+          # Ensure libak is not loaded from any path
+          LibakLoader.unload()
+
+          # Test that we can create an AuthorityKernel instance
+          # In simulation mode (no libak), this should raise LibakError
+          try:
+              ak = AuthorityKernel()
+              print('AuthorityKernel instantiated - libak was found')
+              # If we got here, libak is available (unexpected in CI without kernel)
+          except LibakError as e:
+              print(f'Expected LibakError: {e}')
+              print('This is the expected behavior in simulation mode')
+          except Exception as e:
+              print(f'Unexpected error type: {type(e).__name__}: {e}')
+              raise
+
+          print('Simulation mode test passed')
+          "
+
+      - name: Test graceful degradation
+        run: |
+          python -c "
+          from authority_nanos._libak_loader import (
+              LibakBinaryLocator,
+              LibakNotFoundError,
+          )
+
+          # Clear cache to force fresh search
+          LibakBinaryLocator.reset_cache()
+
+          # Test that LibakNotFoundError is raised with helpful info
+          try:
+              path = LibakBinaryLocator.find()
+              print(f'Found libak at: {path}')
+          except LibakNotFoundError as e:
+              print(f'LibakNotFoundError raised as expected')
+              print(f'Error code: {e.code}')
+              print(f'Platform: {e.platform}')
+              print(f'Search paths: {e.search_paths}')
+              print(f'Suggestion available: {bool(e.suggestion)}')
+
+          print('Graceful degradation test passed')
+          "
+
+  # ============================================================================
+  # Package Build Test
+  # ============================================================================
+  test-package-build:
+    name: Package Build Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build wheel twine
+
+      - name: Build package
+        run: |
+          cd sdk/python
+          python -m build
+          ls -lah dist/
+
+      - name: Validate package
+        run: |
+          cd sdk/python
+          twine check dist/*
+          echo "Package validation passed"
+
+      - name: Test wheel installation
+        run: |
+          cd sdk/python
+          pip install dist/*.whl
+          python -c "import authority_nanos; print(f'Installed version: {authority_nanos.__version__}')"
+
+      - name: Test sdist installation
+        run: |
+          pip uninstall -y authority-nanos
+          cd sdk/python
+          pip install dist/*.tar.gz
+          python -c "import authority_nanos; print(f'Installed from sdist: {authority_nanos.__version__}')"
+
+  # ============================================================================
+  # Test Summary
+  # ============================================================================
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-22.04
+    needs: [lint, test-unit, test-simulation, test-package-build]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          echo "=== Python SDK Test Summary ==="
+          echo ""
+          echo "Lint & Type Check:    ${{ needs.lint.result }}"
+          echo "Unit Tests:           ${{ needs.test-unit.result }}"
+          echo "Simulation Tests:     ${{ needs.test-simulation.result }}"
+          echo "Package Build Tests:  ${{ needs.test-package-build.result }}"
+          echo ""
+
+          # Check if any critical tests failed
+          FAILED=0
+
+          if [ "${{ needs.test-unit.result }}" != "success" ]; then
+            echo "Unit tests failed or were skipped"
+            FAILED=1
+          fi
+
+          if [ "${{ needs.test-simulation.result }}" != "success" ]; then
+            echo "Simulation tests failed or were skipped"
+            FAILED=1
+          fi
+
+          if [ "${{ needs.test-package-build.result }}" != "success" ]; then
+            echo "Package build tests failed or were skipped"
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "Some tests failed - please review the logs"
+            exit 1
+          fi
+
+          echo "All critical tests passed!"

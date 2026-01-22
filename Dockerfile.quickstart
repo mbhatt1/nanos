@@ -1,0 +1,265 @@
+# Authority Nanos Quickstart Docker Image
+#
+# Provides a ready-to-use environment for exploring Authority Nanos
+# with pre-built kernel, libak, and Python SDK.
+#
+# Build:   docker build -f Dockerfile.quickstart -t authority-nanos-quickstart .
+# Run:     docker run -it authority-nanos-quickstart
+#
+# For development with live editing:
+#   docker-compose -f docker-compose.quickstart.yml up
+#
+# ============================================================================
+
+FROM --platform=linux/amd64 ubuntu:22.04
+
+LABEL maintainer="Authority Systems <sdk@authority.systems>"
+LABEL description="Authority Nanos quickstart environment with Python SDK"
+LABEL version="0.1.0"
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ============================================================================
+# Install system dependencies
+# ============================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Python 3.11 and pip
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    # QEMU for running Nanos unikernels
+    qemu-system-x86 \
+    # Build tools (for compiling libak if needed)
+    build-essential \
+    gcc \
+    # Useful utilities
+    curl \
+    wget \
+    git \
+    vim \
+    less \
+    # Networking tools
+    iproute2 \
+    iputils-ping \
+    net-tools \
+    # CA certificates for HTTPS
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Set Python 3.11 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+# Upgrade pip
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# ============================================================================
+# Create directory structure
+# ============================================================================
+RUN mkdir -p /opt/authority-nanos/bin \
+             /opt/authority-nanos/lib \
+             /opt/authority-nanos/sdk \
+             /opt/authority-nanos/examples \
+             /opt/authority-nanos/tools \
+             /workspace
+
+WORKDIR /opt/authority-nanos
+
+# ============================================================================
+# Copy pre-built binaries
+# ============================================================================
+
+# Copy kernel binary (x86_64)
+COPY output/platform/pc/bin/kernel.img /opt/authority-nanos/bin/kernel.img
+
+# Copy libak shared library
+# Note: For Linux, we need to build libak.so. The Dockerfile.build handles this.
+# For quickstart, we copy from the build output or compile from source.
+COPY src/agentic/libak.c /tmp/libak.c
+COPY src/agentic/libak.h /tmp/libak.h
+
+# Compile libak.so for Linux
+RUN cd /tmp && \
+    gcc -shared -fPIC -o /opt/authority-nanos/lib/libak.so libak.c -DLIBAK_STANDALONE && \
+    rm -f /tmp/libak.c /tmp/libak.h && \
+    chmod 755 /opt/authority-nanos/lib/libak.so
+
+# Copy tools
+COPY tools/minops/minops /opt/authority-nanos/tools/minops
+COPY output/tools/bin/mkfs /opt/authority-nanos/tools/mkfs
+RUN chmod +x /opt/authority-nanos/tools/minops /opt/authority-nanos/tools/mkfs
+
+# ============================================================================
+# Install Python SDK
+# ============================================================================
+
+# Copy SDK source
+COPY sdk/python /opt/authority-nanos/sdk/python
+
+# Install the SDK in development mode
+RUN cd /opt/authority-nanos/sdk/python && \
+    pip3 install --no-cache-dir -e . && \
+    pip3 install --no-cache-dir pytest
+
+# ============================================================================
+# Copy examples
+# ============================================================================
+COPY examples /opt/authority-nanos/examples
+
+# ============================================================================
+# Environment configuration
+# ============================================================================
+
+# Library path for libak
+ENV LD_LIBRARY_PATH="/opt/authority-nanos/lib:${LD_LIBRARY_PATH}"
+
+# Python path for SDK
+ENV PYTHONPATH="/opt/authority-nanos/sdk/python:${PYTHONPATH}"
+
+# Add tools to PATH
+ENV PATH="/opt/authority-nanos/tools:/opt/authority-nanos/bin:${PATH}"
+
+# Authority Nanos specific environment variables
+ENV AUTHORITY_NANOS_HOME="/opt/authority-nanos"
+ENV AUTHORITY_NANOS_KERNEL="/opt/authority-nanos/bin/kernel.img"
+ENV AUTHORITY_NANOS_LIBAK="/opt/authority-nanos/lib/libak.so"
+
+# Default working directory
+WORKDIR /workspace
+
+# ============================================================================
+# Create entrypoint script with helpful usage information
+# ============================================================================
+RUN cat > /entrypoint.sh << 'ENTRYPOINT_EOF'
+#!/bin/bash
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+BOLD='\033[1m'
+
+print_banner() {
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${BOLD}     Authority Nanos - Quickstart Environment${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+}
+
+print_environment() {
+    echo -e "${BLUE}Environment:${NC}"
+    echo -e "  ${GREEN}Kernel:${NC}    $AUTHORITY_NANOS_KERNEL"
+    echo -e "  ${GREEN}LibAK:${NC}     $AUTHORITY_NANOS_LIBAK"
+    echo -e "  ${GREEN}Python:${NC}    $(python3 --version)"
+    echo -e "  ${GREEN}SDK:${NC}       $(python3 -c 'import authority_nanos; print(authority_nanos.__version__)' 2>/dev/null || echo 'not installed')"
+    echo ""
+}
+
+print_examples() {
+    echo -e "${BLUE}Available Examples:${NC}"
+    echo ""
+    for f in /opt/authority-nanos/examples/*.py; do
+        if [ -f "$f" ]; then
+            name=$(basename "$f")
+            # Extract first line of docstring if available
+            desc=$(head -5 "$f" | grep -E '^\s*(#|"""|\047\047\047)' | head -1 | sed 's/^[#"'\'']*\s*//' | sed 's/["\047]*$//')
+            if [ -z "$desc" ]; then
+                desc="Python example"
+            fi
+            echo -e "  ${YELLOW}$name${NC}"
+            echo -e "    $desc"
+        fi
+    done
+    echo ""
+}
+
+print_quickstart() {
+    echo -e "${BLUE}Quick Start Commands:${NC}"
+    echo ""
+    echo -e "  ${CYAN}# Run a Python example${NC}"
+    echo -e "  python3 /opt/authority-nanos/examples/test-python.py"
+    echo ""
+    echo -e "  ${CYAN}# Run example with minops (in Nanos kernel)${NC}"
+    echo -e "  minops run /opt/authority-nanos/examples/test-python.py -m 512"
+    echo ""
+    echo -e "  ${CYAN}# Interactive Python with Authority SDK${NC}"
+    echo -e "  python3"
+    echo -e "  >>> from authority_nanos import AuthorityKernel"
+    echo -e "  >>> ak = AuthorityKernel()"
+    echo ""
+    echo -e "  ${CYAN}# List available examples${NC}"
+    echo -e "  ls /opt/authority-nanos/examples/"
+    echo ""
+    echo -e "  ${CYAN}# Check SDK installation${NC}"
+    echo -e "  python3 -c 'import authority_nanos; print(authority_nanos.__version__)'"
+    echo ""
+}
+
+print_help() {
+    echo -e "${BLUE}Usage:${NC}"
+    echo ""
+    echo -e "  ${YELLOW}docker run -it authority-nanos-quickstart${NC}"
+    echo -e "    Start interactive shell with Authority Nanos environment"
+    echo ""
+    echo -e "  ${YELLOW}docker run authority-nanos-quickstart python3 script.py${NC}"
+    echo -e "    Run a Python script directly"
+    echo ""
+    echo -e "  ${YELLOW}docker run authority-nanos-quickstart minops run example.py${NC}"
+    echo -e "    Run a script inside Nanos unikernel"
+    echo ""
+    echo -e "  ${YELLOW}docker run -v \$(pwd):/workspace authority-nanos-quickstart${NC}"
+    echo -e "    Mount current directory for development"
+    echo ""
+}
+
+# Main entrypoint logic
+case "${1:-}" in
+    --help|-h|help)
+        print_banner
+        print_environment
+        print_help
+        print_examples
+        ;;
+    --version|-v)
+        echo "Authority Nanos Quickstart v0.1.0"
+        python3 -c 'import authority_nanos; print(f"SDK: {authority_nanos.__version__}")'
+        ;;
+    "")
+        # No arguments - start interactive shell with welcome message
+        print_banner
+        print_environment
+        print_quickstart
+        echo -e "${CYAN}============================================================${NC}"
+        echo -e "${GREEN}Starting interactive shell...${NC}"
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        exec /bin/bash
+        ;;
+    *)
+        # Execute the provided command
+        exec "$@"
+        ;;
+esac
+ENTRYPOINT_EOF
+
+RUN chmod +x /entrypoint.sh
+
+# ============================================================================
+# Health check
+# ============================================================================
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python3 -c "import authority_nanos; print('OK')" || exit 1
+
+# ============================================================================
+# Default entrypoint and command
+# ============================================================================
+ENTRYPOINT ["/entrypoint.sh"]
+CMD []

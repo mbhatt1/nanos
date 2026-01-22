@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "description": "E2E Test Policy - Restrictive policy for testing Authority Kernel enforcement",
+
+  "fs": {
+    "read": [
+      "/tmp/**",
+      "/proc/self/**",
+      "/etc/passwd",
+      "/etc/hosts",
+      "/usr/lib/**",
+      "/lib/**"
+    ],
+    "write": [
+      "/tmp/**"
+    ],
+    "exec": [
+      "/test_basic"
+    ]
+  },
+
+  "net": {
+    "connect": [],
+    "listen": [],
+    "dns": []
+  },
+
+  "budgets": {
+    "heap_objects": 10000,
+    "heap_bytes": 104857600,
+    "tool_calls": 0,
+    "tokens": 0,
+    "wall_time_ms": 60000
+  },
+
+  "tools": [],
+
+  "profiles": []
+}
