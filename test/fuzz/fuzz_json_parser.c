@@ -115,7 +115,7 @@ static const u8 *parse_string(const u8 *p, const u8 *end, char *out, u64 max_len
     p++;
 
     u64 i = 0;
-    while (p < end && *p != '"') {
+    while (p && p < end && *p != '"') {
         if (*p == '\\' && p + 1 < end) {
             p++;
             if (*p == '"' || *p == '\\') {
@@ -126,7 +126,7 @@ static const u8 *parse_string(const u8 *p, const u8 *end, char *out, u64 max_len
         }
         p++;
     }
-    if (p < end && *p == '"') p++;
+    if (p && p < end && *p == '"') p++;
     out[i] = '\0';
     return p;
 }
@@ -134,11 +134,11 @@ static const u8 *parse_string(const u8 *p, const u8 *end, char *out, u64 max_len
 /* Parse a JSON number (u64 only) */
 static const u8 *parse_number(const u8 *p, const u8 *end, u64 *out) {
     *out = 0;
-    while (p < end && *p >= '0' && *p <= '9') {
+    while (p && p < end && *p >= '0' && *p <= '9') {
         /* Check for overflow */
         if (*out > 0xFFFFFFFFFFFFFFFFULL / 10) {
             *out = 0xFFFFFFFFFFFFFFFFULL;
-            while (p < end && *p >= '0' && *p <= '9') p++;
+            while (p && p < end && *p >= '0' && *p <= '9') p++;
             return p;
         }
         *out = (*out * 10) + (*p - '0');
@@ -154,7 +154,7 @@ static const u8 *skip_value(const u8 *p, const u8 *end) {
 
     if (*p == '"') {
         p++;
-        while (p < end && *p != '"') {
+        while (p && p < end && *p != '"') {
             if (*p == '\\' && p + 1 < end) p++;
             p++;
         }
@@ -167,7 +167,7 @@ static const u8 *skip_value(const u8 *p, const u8 *end) {
             else if (*p == '}') depth--;
             else if (*p == '"') {
                 p++;
-                while (p < end && *p != '"') {
+                while (p && p < end && *p != '"') {
                     if (*p == '\\' && p + 1 < end) p++;
                     p++;
                 }
@@ -183,7 +183,7 @@ static const u8 *skip_value(const u8 *p, const u8 *end) {
             else if (*p == ']') depth--;
             else if (*p == '"') {
                 p++;
-                while (p < end && *p != '"') {
+                while (p && p < end && *p != '"') {
                     if (*p == '\\' && p + 1 < end) p++;
                     p++;
                 }
@@ -323,7 +323,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
                 if (!p) return false;
 
                 p = skip_ws(p, end);
-                if (p < end && *p == ',') p++;
+                if (p && p < end && *p == ',') p++;
             }
         }
         else if (local_strncmp(key, "net", 3) == 0) {
@@ -353,7 +353,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
                 if (!p) return false;
 
                 p = skip_ws(p, end);
-                if (p < end && *p == ',') p++;
+                if (p && p < end && *p == ',') p++;
             }
         }
         else if (local_strncmp(key, "tools", 5) == 0) {
@@ -383,7 +383,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
                 if (!p) return false;
 
                 p = skip_ws(p, end);
-                if (p < end && *p == ',') p++;
+                if (p && p < end && *p == ',') p++;
             }
         }
         else if (local_strncmp(key, "budgets", 7) == 0) {
@@ -420,7 +420,7 @@ static boolean parse_json_policy(const u8 *json, u64 len) {
 
     next:
         p = skip_ws(p, end);
-        if (p < end && *p == ',') p++;
+        if (p && p && p < end && *p == ',') p++;
     }
 
     return true;
