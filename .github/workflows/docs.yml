@@ -64,10 +64,41 @@ jobs:
           echo "=== Index Page ==="
           wc -l docs/.vitepress/dist/index.html
 
-      - name: Check links (basic)
+      - name: Check internal links
         run: |
-          echo "=== Checking for broken links ==="
-          grep -r "href=" docs/.vitepress/dist/ | grep -o 'href="[^"]*"' | sort -u | head -20 || true
+          echo "=== Checking for broken internal links ==="
+          FAILED=0
+          cd docs/.vitepress/dist
+
+          # Find all HTML files and check internal links
+          for html in $(find . -name "*.html"); do
+            # Extract internal href links (not starting with http/https/mailto/#)
+            for link in $(grep -oP 'href="(?!http|mailto|#)[^"]*"' "$html" | sed 's/href="//;s/"$//' | grep -v '^$'); do
+              # Normalize the link path
+              linkpath="${link%%#*}"  # Remove anchor
+              linkpath="${linkpath%%\?*}"  # Remove query string
+
+              if [ -n "$linkpath" ]; then
+                # Check if the linked file exists (handle .html extension)
+                dir=$(dirname "$html")
+                target="$dir/$linkpath"
+
+                if [ ! -f "$target" ] && [ ! -f "${target}.html" ] && [ ! -d "$target" ]; then
+                  # Only report if it's truly missing
+                  if [ ! -f "${target%/}/index.html" ]; then
+                    echo "⚠ Broken link in $html: $link"
+                    FAILED=1
+                  fi
+                fi
+              fi
+            done
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "⚠ Some internal links may be broken (non-blocking)"
+          else
+            echo "✓ All internal links appear valid"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
