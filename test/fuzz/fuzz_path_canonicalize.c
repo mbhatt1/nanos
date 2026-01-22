@@ -378,23 +378,29 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             return 0;
         }
 
-        /* Build sockaddr from fuzz data */
-        struct sockaddr addr;
-        memset(&addr, 0, sizeof(addr));
+        /*
+         * Use a larger buffer that can hold both IPv4 and IPv6 addresses.
+         * struct sockaddr is only 16 bytes, but sockaddr_in6 is 28 bytes.
+         * We use a fixed 32-byte buffer to accommodate both.
+         */
+        uint8_t addr_buf[32];
+        memset(addr_buf, 0, sizeof(addr_buf));
+
+        /* Copy fuzz data into buffer (up to buffer size) */
+        size_t copy_len = size < sizeof(addr_buf) ? size : sizeof(addr_buf);
+        memcpy(addr_buf, data, copy_len);
 
         /* Set address family based on size */
+        struct sockaddr *addr = (struct sockaddr *)addr_buf;
         if (size >= 28) {
-            addr.sa_family = AF_INET6;
-            memcpy(&addr, data, size < sizeof(addr) ? size : sizeof(addr));
-            addr.sa_family = AF_INET6;  /* Ensure family is set */
+            addr->sa_family = AF_INET6;
         } else {
-            addr.sa_family = AF_INET;
-            memcpy(&addr, data, size < sizeof(addr) ? size : sizeof(addr));
-            addr.sa_family = AF_INET;  /* Ensure family is set */
+            addr->sa_family = AF_INET;
         }
 
+        /* Pass the actual copy length as the sockaddr length */
         char out[128];
-        int result = ak_canonicalize_sockaddr(&addr, size, out, sizeof(out));
+        int result = ak_canonicalize_sockaddr(addr, copy_len, out, sizeof(out));
 
         /* Verify output is valid if success */
         if (result == 0) {
