@@ -688,6 +688,30 @@ func createImage(imagePath, appPath string, kernelPath string, config *Config, v
 	if _, err := os.Stat(pythonRoot + "/lib/libak.so"); err == nil {
 		manifest.WriteString("            libak.so:(contents:(host:" + pythonRoot + "/lib/libak.so))\n")
 	}
+	// Include libz.so.1 (required for Python compression/SSL)
+	if _, err := os.Stat(pythonRoot + "/lib/libz.so.1"); err == nil {
+		manifest.WriteString("            libz.so.1:(contents:(host:" + pythonRoot + "/lib/libz.so.1))\n")
+	}
+	manifest.WriteString("        ))\n")
+
+	// Bundle /etc directory (SSL certificates, resolv.conf, etc.)
+	manifest.WriteString("        etc:(children:(\n")
+	// Include resolv.conf for DNS
+	if _, err := os.Stat(pythonRoot + "/etc/resolv.conf"); err == nil {
+		manifest.WriteString("            resolv.conf:(contents:(host:" + pythonRoot + "/etc/resolv.conf))\n")
+	}
+	// Include SSL certificates
+	if _, err := os.Stat(pythonRoot + "/etc/ssl/cert.pem"); err == nil {
+		manifest.WriteString("            ssl:(children:(\n")
+		manifest.WriteString("                cert.pem:(contents:(host:" + pythonRoot + "/etc/ssl/cert.pem))\n")
+		// Bundle ca-certificates.crt which contains all CAs
+		if _, err := os.Stat(pythonRoot + "/etc/ssl/certs/ca-certificates.crt"); err == nil {
+			manifest.WriteString("                certs:(children:(\n")
+			manifest.WriteString("                    ca-certificates.crt:(contents:(host:" + pythonRoot + "/etc/ssl/certs/ca-certificates.crt))\n")
+			manifest.WriteString("                ))\n")
+		}
+		manifest.WriteString("            ))\n")
+	}
 	manifest.WriteString("        ))\n")
 
 	// Include Authority Kernel policy file at /ak/policy.json
@@ -899,6 +923,9 @@ func launchQEMU(kernelPath, imagePath string, config *Config, memory int, verbos
 		"-display", "none",
 		"-serial", "stdio",
 		"-hda", imagePath,
+		// Enable user-mode networking with virtio NIC and DNS
+		"-netdev", "user,id=n0,hostfwd=tcp::8080-:80",
+		"-device", "virtio-net-pci,netdev=n0",
 	}
 
 	if verbose {
