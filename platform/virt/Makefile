@@ -330,7 +330,7 @@ $(BOOTIMG): mbr.hex
 $(UEFI_OBJDIR)/aarch64/uefi-crt0.o:	$(SRCDIR)/aarch64/uefi-crt0.s
 	@$(MKDIR) $(dir $@)
 	@echo "AS	$@"
-	$(Q)aarch64-elf-as $(AFLAGS) $(AFLAGS-$(<F)) -I$(ARCHDIR) -I$(OBJDIR) $< -o $@
+	$(Q)$(AS) $(AFLAGS) $(AFLAGS-$(<F)) -I$(ARCHDIR) -I$(OBJDIR) $< -o $@
 
 $(UEFI_OBJDIR)/%.o: $(SRCDIR)/%.c $(GENHEADERS)
 	@$(MKDIR) $(dir $@)

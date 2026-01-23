@@ -348,57 +348,6 @@ jobs:
           retention-days: 30
 
   # ============================================================================
-  # Windows x86_64 (cross-compile from Linux)
-  # ============================================================================
-  build-windows:
-    name: 🪟 Windows x86_64
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.18'
-
-      - name: Install cross-compilation tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y nasm build-essential mingw-w64 wget
-
-      - name: Build kernel (Windows x86_64)
-        run: |
-          make clean
-          make -j$(nproc) PLATFORM=pc CC=x86_64-w64-mingw32-gcc
-          ls -lh output/platform/pc/bin/kernel.img
-
-      - name: Create distribution
-        run: |
-          mkdir -p dist/authority-nanos-windows-x86_64
-          cp output/platform/pc/bin/kernel.img dist/authority-nanos-windows-x86_64/kernel.exe
-          cp README.md dist/authority-nanos-windows-x86_64/
-          cp LICENSE dist/authority-nanos-windows-x86_64/
-
-      - name: Create archive (ZIP)
-        run: |
-          cd dist
-          sudo apt-get install -y zip
-          zip -r authority-nanos-windows-x86_64.zip authority-nanos-windows-x86_64/
-          sha256sum authority-nanos-windows-x86_64.zip > authority-nanos-windows-x86_64.zip.sha256
-          ls -lh authority-nanos-windows-x86_64*
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: authority-nanos-windows-x86_64
-          path: dist/authority-nanos-windows-x86_64.zip*
-          retention-days: 30
-
-  # ============================================================================
   # Build Python Wheels for PyPI (macOS x86_64)
   # ============================================================================
   build-wheel-macos-x86:
@@ -438,11 +387,11 @@ jobs:
           mkdir -p sdk/python/authority_nanos/_binaries/macos_x86_64
 
           # Copy kernel.img
-          cp kernel-artifacts/authority-nanos-macos-x86_64/authority-nanos-macos-x86_64/kernel.img \
+          cp kernel-artifacts/authority-nanos-macos-x86_64/kernel.img \
              sdk/python/authority_nanos/_binaries/macos_x86_64/kernel.img
 
           # Copy libak.dylib
-          cp kernel-artifacts/authority-nanos-macos-x86_64/authority-nanos-macos-x86_64/libak.dylib \
+          cp kernel-artifacts/authority-nanos-macos-x86_64/libak.dylib \
              sdk/python/authority_nanos/_binaries/macos_x86_64/libak.dylib
 
           ls -lah sdk/python/authority_nanos/_binaries/macos_x86_64/
@@ -500,11 +449,11 @@ jobs:
           mkdir -p sdk/python/authority_nanos/_binaries/macos_arm64
 
           # Copy kernel.img
-          cp kernel-artifacts/authority-nanos-macos-arm64/authority-nanos-macos-arm64/kernel.img \
+          cp kernel-artifacts/authority-nanos-macos-arm64/kernel.img \
              sdk/python/authority_nanos/_binaries/macos_arm64/kernel.img
 
           # Copy libak.dylib
-          cp kernel-artifacts/authority-nanos-macos-arm64/authority-nanos-macos-arm64/libak.dylib \
+          cp kernel-artifacts/authority-nanos-macos-arm64/libak.dylib \
              sdk/python/authority_nanos/_binaries/macos_arm64/libak.dylib
 
           ls -lah sdk/python/authority_nanos/_binaries/macos_arm64/
@@ -562,11 +511,11 @@ jobs:
           mkdir -p sdk/python/authority_nanos/_binaries/linux_x86_64
 
           # Copy kernel.img
-          cp kernel-artifacts/authority-nanos-linux-x86_64/authority-nanos-linux-x86_64/kernel.img \
+          cp kernel-artifacts/authority-nanos-linux-x86_64/kernel.img \
              sdk/python/authority_nanos/_binaries/linux_x86_64/kernel.img
 
           # Copy libak.so
-          cp kernel-artifacts/authority-nanos-linux-x86_64/authority-nanos-linux-x86_64/libak.so \
+          cp kernel-artifacts/authority-nanos-linux-x86_64/libak.so \
              sdk/python/authority_nanos/_binaries/linux_x86_64/libak.so
 
           ls -lah sdk/python/authority_nanos/_binaries/linux_x86_64/
@@ -624,11 +573,11 @@ jobs:
           mkdir -p sdk/python/authority_nanos/_binaries/linux_arm64
 
           # Copy kernel.img
-          cp kernel-artifacts/authority-nanos-linux-arm64/authority-nanos-linux-arm64/kernel.img \
+          cp kernel-artifacts/authority-nanos-linux-arm64/kernel.img \
              sdk/python/authority_nanos/_binaries/linux_arm64/kernel.img
 
           # Copy libak.so
-          cp kernel-artifacts/authority-nanos-linux-arm64/authority-nanos-linux-arm64/libak.so \
+          cp kernel-artifacts/authority-nanos-linux-arm64/libak.so \
              sdk/python/authority_nanos/_binaries/linux_arm64/libak.so
 
           ls -lah sdk/python/authority_nanos/_binaries/linux_arm64/
@@ -714,7 +663,7 @@ jobs:
   # ============================================================================
   create-release:
     name: 📦 Create Release
-    needs: [build-macos-x86, build-macos-arm64, build-linux-x86, build-linux-arm64, build-linux-riscv64, build-windows, publish-wheels-pypi]
+    needs: [build-macos-x86, build-macos-arm64, build-linux-x86, build-linux-arm64, build-linux-riscv64, publish-wheels-pypi]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -753,8 +702,6 @@ jobs:
             artifacts/authority-nanos-linux-arm64/authority-nanos-linux-arm64.tar.gz.sha256
             artifacts/authority-nanos-linux-riscv64/authority-nanos-linux-riscv64.tar.gz
             artifacts/authority-nanos-linux-riscv64/authority-nanos-linux-riscv64.tar.gz.sha256
-            artifacts/authority-nanos-windows-x86_64/authority-nanos-windows-x86_64.zip
-            artifacts/authority-nanos-windows-x86_64/authority-nanos-windows-x86_64.zip.sha256
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, 'rc') || contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
