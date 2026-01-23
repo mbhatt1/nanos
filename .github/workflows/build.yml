@@ -78,7 +78,7 @@ jobs:
   # ============================================================================
   build-macos-arm64:
     name: 🍎 macOS ARM64
-    runs-on: macos-15-arm64
+    runs-on: macos-14
     timeout-minutes: 45
     steps:
       - name: Checkout code
@@ -415,7 +415,7 @@ jobs:
   build-wheel-macos-arm64:
     name: 🐍 Build Wheel macOS ARM64
     needs: [build-macos-arm64]
-    runs-on: macos-15-arm64
+    runs-on: macos-14
     timeout-minutes: 30
     steps:
       - name: Checkout code
