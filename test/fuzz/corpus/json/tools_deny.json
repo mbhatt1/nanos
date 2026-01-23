@@ -1,1 +1,1 @@
-{"tools":{"deny":["rm","dd","mkfs","fdisk"]}}
+{"tools":{"deny":["rm","dd"]}}

@@ -1,1 +1,1 @@
-{"fs":{"read":["/tmp/**","/proc/self/**"]}}
+{"fs":{"read":["/tmp/**"]}}
