@@ -213,6 +213,7 @@ INCLUDES=\
 	-I$(SRCDIR)/agentic \
 	-I$(ACPICA_DIR)/source/include \
 	-I$(LWIPDIR)/src/include \
+	-I$(ROOTDIR)/klib \
 
 AFLAGS+=-I$(ARCHDIR)/
 

@@ -124,11 +124,20 @@ jobs:
           echo "=== Running E2E Tests in QEMU ==="
           cd test/e2e/authority
 
+          # Check if KVM is available
+          ACCEL_OPTS=""
+          if [ -w /dev/kvm ]; then
+            echo "KVM available, using hardware acceleration"
+            ACCEL_OPTS="-enable-kvm"
+          else
+            echo "KVM not available, using software emulation (slower)"
+            ACCEL_OPTS="-cpu max"
+          fi
+
           # Run QEMU with timeout
           set +e
           timeout ${{ env.QEMU_TIMEOUT }} qemu-system-x86_64 \
             -machine q35 \
-            -cpu max \
             -m 512M \
             -display none \
             -serial stdio \
@@ -137,7 +146,7 @@ jobs:
             -device scsi-hd,bus=scsi0.0,drive=hd0 \
             -device isa-debug-exit \
             -no-reboot \
-            -enable-kvm 2>&1 | tee e2e_output.log
+            $ACCEL_OPTS 2>&1 | tee e2e_output.log
 
           QEMU_EXIT=$?
           set -e

@@ -173,6 +173,7 @@ INCLUDES=\
 	-I$(LWIPDIR)/src/include \
 	-I$(VDSO_OBJDIR) \
 	-I$(SRCDIR)/agentic \
+	-I$(ROOTDIR)/klib \
 
 AFLAGS+=-I$(ARCHDIR) -march=rv64gc -mabi=lp64d
 
