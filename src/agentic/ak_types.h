@@ -17,13 +17,14 @@
 #ifndef AK_TYPES_H
 #define AK_TYPES_H
 
-/* Include runtime.h instead of kernel.h to avoid duplicate definitions.
+/* Include runtime.h FIRST to get base types (u64, boolean, etc.)
  * The agentic code primarily needs buffer, heap, and basic types from runtime.
+ * This must come before ak_compat.h and ak_assert.h which depend on these types.
  */
-#include "ak_assert.h"
-#include "ak_compat.h"
-#include "ak_config.h"
 #include <runtime.h>
+#include "ak_config.h"
+#include "ak_compat.h"
+#include "ak_assert.h"
 
 /* Base syscall number for AK syscalls */
 #define AK_SYS_BASE 1024
