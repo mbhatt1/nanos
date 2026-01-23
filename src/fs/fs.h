@@ -211,8 +211,12 @@ u64 fs_unlink(table files, tuple n);
 
 extern const sstring gitversion;
 
+#ifndef NAME_MAX
 #define NAME_MAX 255
+#endif
+#ifndef PATH_MAX
 #define PATH_MAX 4096
+#endif
 
 static inline buffer linktarget(tuple x)
 {
