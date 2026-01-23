@@ -66,6 +66,12 @@ jobs:
             qemu-system-x86 \
             wget
 
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Build kernel and tools
         run: |
           echo "=== Building Authority Nanos Kernel ==="
@@ -124,20 +130,11 @@ jobs:
           echo "=== Running E2E Tests in QEMU ==="
           cd test/e2e/authority
 
-          # Check if KVM is available
-          ACCEL_OPTS=""
-          if [ -w /dev/kvm ]; then
-            echo "KVM available, using hardware acceleration"
-            ACCEL_OPTS="-enable-kvm"
-          else
-            echo "KVM not available, using software emulation (slower)"
-            ACCEL_OPTS="-cpu max"
-          fi
-
-          # Run QEMU with timeout
+          # Run QEMU with KVM acceleration
           set +e
           timeout ${{ env.QEMU_TIMEOUT }} qemu-system-x86_64 \
             -machine q35 \
+            -cpu host \
             -m 512M \
             -display none \
             -serial stdio \
@@ -146,7 +143,7 @@ jobs:
             -device scsi-hd,bus=scsi0.0,drive=hd0 \
             -device isa-debug-exit \
             -no-reboot \
-            $ACCEL_OPTS 2>&1 | tee e2e_output.log
+            -enable-kvm 2>&1 | tee e2e_output.log
 
           QEMU_EXIT=$?
           set -e
