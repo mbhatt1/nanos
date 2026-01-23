@@ -5,22 +5,14 @@ Example 7: CrewAI Multi-Agent with Authority Kernel
 Demonstrates a complete CrewAI multi-agent system with Authority Kernel
 for policy-controlled collaboration and authorization.
 
-By default, runs in simulation mode (no kernel or CrewAI required).
-Use --real or --kernel to run against the actual Authority Kernel with real LLM.
-
 Key Features:
 - Multiple agents collaborating through Authority Kernel
 - Policy-controlled LLM inference for each agent
 - Authorization checks for inter-agent communication
 - Audit logging of all agent actions
-- Works without CrewAI installed (simulation mode)
-
-Usage:
-  python examples/07_crewai_agent.py            # Simulation mode
-  python examples/07_crewai_agent.py --real     # Real mode (requires LLM API key)
+- Requires akproxy daemon running with LLM configured
 """
 
-import argparse
 import json
 import sys
 from dataclasses import dataclass
@@ -55,7 +47,7 @@ class AuthorityAgent:
     4. Works in both simulation and real kernel modes
 
     Example:
-        with AuthorityKernel(simulate=True) as ak:
+        with AuthorityKernel() as ak:
             researcher = AuthorityAgent(
                 kernel=ak,
                 role="Researcher",
@@ -219,7 +211,7 @@ class AuthorityCrew:
     4. Logs all crew activities to audit
 
     Example:
-        with AuthorityKernel(simulate=True) as ak:
+        with AuthorityKernel() as ak:
             researcher = AuthorityAgent(ak, "Researcher", ...)
             writer = AuthorityAgent(ak, "Writer", ...)
 
@@ -329,15 +321,13 @@ class CrewOutput:
 # MAIN EXAMPLE
 # ============================================================================
 
-def run_crewai_example(simulate: bool = True):
+def run_crewai_example():
     """Run the CrewAI multi-agent example."""
-    mode = "SIMULATION" if simulate else "REAL KERNEL"
-    print(f"\n=== CrewAI Multi-Agent Example ({mode} mode) ===\n")
+    print("\n=== CrewAI Multi-Agent Example ===\n")
 
     try:
-        with AuthorityKernel(simulate=simulate) as ak:
+        with AuthorityKernel() as ak:
             print("[+] Connected to Authority Kernel")
-            print(f"[+] Simulated: {ak.is_simulated()}")
 
             # Create agents
             print("\n--- Creating Agent Team ---")
@@ -455,20 +445,7 @@ def run_crewai_example(simulate: bool = True):
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="CrewAI Multi-Agent with Authority Kernel"
-    )
-    parser.add_argument("--real", "--kernel", action="store_true",
-                        help="Use real kernel instead of simulation")
-    args = parser.parse_args()
-
-    simulate = not args.real
-
-    success = run_crewai_example(simulate)
-
-    if simulate:
-        print("\n[i] Running in simulation mode. Use --real for actual kernel.")
-
+    success = run_crewai_example()
     return 0 if success else 1
 
 

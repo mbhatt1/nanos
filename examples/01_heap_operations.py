@@ -4,12 +4,8 @@ Example 1: Basic Heap Operations
 
 Demonstrates typed heap allocation, reading, and modification using JSON Patch.
 This example shows the core memory management capabilities of Authority Kernel.
-
-By default, runs in simulation mode (no kernel required).
-Use --real or --kernel to run against the actual Authority Kernel.
 """
 
-import argparse
 import json
 import sys
 
@@ -18,20 +14,11 @@ from authority_nanos import AuthorityKernel, AuthorityKernelError
 
 def main():
     """Basic heap operations example."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Heap operations example")
-    parser.add_argument("--real", "--kernel", action="store_true",
-                        help="Use real kernel instead of simulation")
-    args = parser.parse_args()
-
-    # Determine mode
-    simulate = not args.real
-    mode = "SIMULATION" if simulate else "REAL KERNEL"
-    print(f"=== Heap Operations Example ({mode} mode) ===\n")
+    print("=== Heap Operations Example ===\n")
 
     try:
         # Initialize Authority Kernel context
-        with AuthorityKernel(simulate=simulate) as ak:
+        with AuthorityKernel() as ak:
             print("[+] Connected to Authority Kernel")
 
             # Allocate a counter object in typed heap

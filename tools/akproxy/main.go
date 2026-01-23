@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -36,18 +37,23 @@ import (
 
 // Request from kernel
 type Request struct {
-	ID      string            `json:"id"`
-	Op      string            `json:"op"`
-	URL     string            `json:"url,omitempty"`
-	Method  string            `json:"method,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Body    string            `json:"body,omitempty"`
-	Path    string            `json:"path,omitempty"`
-	Data    string            `json:"data,omitempty"`
-	Model   string            `json:"model,omitempty"`
-	Prompt  string            `json:"prompt,omitempty"`
-	Messages []Message        `json:"messages,omitempty"`
-	MaxTokens int             `json:"max_tokens,omitempty"`
+	ID        string            `json:"id"`
+	Op        string            `json:"op"`
+	URL       string            `json:"url,omitempty"`
+	Method    string            `json:"method,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Body      string            `json:"body,omitempty"`
+	Path      string            `json:"path,omitempty"`
+	Data      string            `json:"data,omitempty"`
+	Model     string            `json:"model,omitempty"`
+	Prompt    string            `json:"prompt,omitempty"`
+	Messages  []Message         `json:"messages,omitempty"`
+	MaxTokens int               `json:"max_tokens,omitempty"`
+	// TCP fields
+	Host   string `json:"host,omitempty"`
+	Port   int    `json:"port,omitempty"`
+	ConnID uint64 `json:"conn_id,omitempty"`
+	Size   int    `json:"size,omitempty"` // For recv buffer size
 }
 
 // Message for chat completions
@@ -94,6 +100,19 @@ type LLMResponse struct {
 	} `json:"usage"`
 }
 
+// TCPConnection for tcp_connect response
+type TCPConnection struct {
+	ConnID     uint64 `json:"conn_id"`
+	LocalAddr  string `json:"local_addr"`
+	RemoteAddr string `json:"remote_addr"`
+}
+
+// TCPRecvResponse for tcp_recv response
+type TCPRecvResponse struct {
+	Data   string `json:"data"`   // Base64 encoded
+	Length int    `json:"length"` // Actual bytes received
+}
+
 // Proxy handles all operations
 type Proxy struct {
 	httpClient  *http.Client
@@ -102,6 +121,10 @@ type Proxy struct {
 	llmAPIKey   string
 	llmProvider string // "openai", "anthropic", "ollama"
 	mu          sync.Mutex
+	// TCP connection management
+	tcpConns   map[uint64]net.Conn
+	tcpMu      sync.RWMutex
+	nextConnID uint64
 }
 
 func NewProxy(config *Config) *Proxy {
@@ -113,6 +136,8 @@ func NewProxy(config *Config) *Proxy {
 		llmEndpoint: config.LLMEndpoint,
 		llmAPIKey:   config.LLMAPIKey,
 		llmProvider: config.LLMProvider,
+		tcpConns:    make(map[uint64]net.Conn),
+		nextConnID:  1,
 	}
 }
 
@@ -144,6 +169,14 @@ func (p *Proxy) Handle(req *Request) *Response {
 		return p.handleLLMComplete(req)
 	case "llm_chat":
 		return p.handleLLMChat(req)
+	case "tcp_connect":
+		return p.handleTCPConnect(req)
+	case "tcp_send":
+		return p.handleTCPSend(req)
+	case "tcp_recv":
+		return p.handleTCPRecv(req)
+	case "tcp_close":
+		return p.handleTCPClose(req)
 	case "ping":
 		return &Response{ID: req.ID, OK: true, Data: map[string]string{"pong": "ok"}}
 	default:
@@ -874,6 +907,167 @@ func (p *Proxy) ollamaChat(req *Request) *Response {
 			Model:        result.Model,
 			FinishReason: finishReason,
 		},
+	}
+}
+
+// TCP Operations
+
+func (p *Proxy) handleTCPConnect(req *Request) *Response {
+	if req.Host == "" {
+		return &Response{ID: req.ID, OK: false, Error: "host required", Code: -2}
+	}
+	if req.Port <= 0 || req.Port > 65535 {
+		return &Response{ID: req.ID, OK: false, Error: "invalid port", Code: -2}
+	}
+
+	addr := fmt.Sprintf("%s:%d", req.Host, req.Port)
+	dialer := net.Dialer{Timeout: 30 * time.Second}
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return &Response{ID: req.ID, OK: false, Error: err.Error(), Code: -3}
+	}
+
+	// Generate connection ID and store
+	p.tcpMu.Lock()
+	connID := p.nextConnID
+	p.nextConnID++
+	p.tcpConns[connID] = conn
+	p.tcpMu.Unlock()
+
+	localAddr := ""
+	remoteAddr := ""
+	if conn.LocalAddr() != nil {
+		localAddr = conn.LocalAddr().String()
+	}
+	if conn.RemoteAddr() != nil {
+		remoteAddr = conn.RemoteAddr().String()
+	}
+
+	return &Response{
+		ID: req.ID,
+		OK: true,
+		Data: TCPConnection{
+			ConnID:     connID,
+			LocalAddr:  localAddr,
+			RemoteAddr: remoteAddr,
+		},
+	}
+}
+
+func (p *Proxy) handleTCPSend(req *Request) *Response {
+	p.tcpMu.RLock()
+	conn, ok := p.tcpConns[req.ConnID]
+	p.tcpMu.RUnlock()
+
+	if !ok {
+		return &Response{ID: req.ID, OK: false, Error: "connection not found", Code: -10}
+	}
+
+	// Data is base64 encoded
+	data, err := base64.StdEncoding.DecodeString(req.Data)
+	if err != nil {
+		// Try raw string if not base64
+		data = []byte(req.Data)
+	}
+
+	// Set write deadline
+	conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	n, err := conn.Write(data)
+	conn.SetWriteDeadline(time.Time{}) // Clear deadline
+
+	if err != nil {
+		return &Response{ID: req.ID, OK: false, Error: err.Error(), Code: -3}
+	}
+
+	return &Response{
+		ID:   req.ID,
+		OK:   true,
+		Data: map[string]int{"bytes_sent": n},
+	}
+}
+
+func (p *Proxy) handleTCPRecv(req *Request) *Response {
+	p.tcpMu.RLock()
+	conn, ok := p.tcpConns[req.ConnID]
+	p.tcpMu.RUnlock()
+
+	if !ok {
+		return &Response{ID: req.ID, OK: false, Error: "connection not found", Code: -10}
+	}
+
+	bufSize := req.Size
+	if bufSize <= 0 {
+		bufSize = 4096 // Default buffer size
+	}
+	if bufSize > 10*1024*1024 {
+		bufSize = 10 * 1024 * 1024 // Max 10MB
+	}
+
+	buf := make([]byte, bufSize)
+
+	// Set read deadline
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	n, err := conn.Read(buf)
+	conn.SetReadDeadline(time.Time{}) // Clear deadline
+
+	if err != nil {
+		if err == io.EOF {
+			// Connection closed by peer
+			return &Response{
+				ID: req.ID,
+				OK: true,
+				Data: TCPRecvResponse{
+					Data:   "",
+					Length: 0,
+				},
+			}
+		}
+		// Check for timeout (not an error, just no data)
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return &Response{
+				ID: req.ID,
+				OK: true,
+				Data: TCPRecvResponse{
+					Data:   "",
+					Length: 0,
+				},
+			}
+		}
+		return &Response{ID: req.ID, OK: false, Error: err.Error(), Code: -3}
+	}
+
+	// Return data as base64
+	return &Response{
+		ID: req.ID,
+		OK: true,
+		Data: TCPRecvResponse{
+			Data:   base64.StdEncoding.EncodeToString(buf[:n]),
+			Length: n,
+		},
+	}
+}
+
+func (p *Proxy) handleTCPClose(req *Request) *Response {
+	p.tcpMu.Lock()
+	conn, ok := p.tcpConns[req.ConnID]
+	if ok {
+		delete(p.tcpConns, req.ConnID)
+	}
+	p.tcpMu.Unlock()
+
+	if !ok {
+		return &Response{ID: req.ID, OK: false, Error: "connection not found", Code: -10}
+	}
+
+	err := conn.Close()
+	if err != nil {
+		return &Response{ID: req.ID, OK: false, Error: err.Error(), Code: -3}
+	}
+
+	return &Response{
+		ID:   req.ID,
+		OK:   true,
+		Data: map[string]bool{"closed": true},
 	}
 }
 

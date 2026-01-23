@@ -3,16 +3,9 @@
 Example 4: LLM Inference
 
 Demonstrates sending inference requests to an LLM through the Authority Kernel's
-policy-controlled gateway.
-
-By default, runs in simulation mode (no kernel required).
-Use --real or --kernel to run against the actual Authority Kernel.
-
-In simulation mode, inference requests return a simulated response that
-echoes part of the prompt. Real inference requires LLM configuration.
+policy-controlled gateway. Requires akproxy daemon running with LLM configured.
 """
 
-import argparse
 import json
 import sys
 
@@ -21,19 +14,10 @@ from authority_nanos import AuthorityKernel, AuthorityKernelError
 
 def main():
     """LLM inference example."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="LLM inference example")
-    parser.add_argument("--real", "--kernel", action="store_true",
-                        help="Use real kernel instead of simulation")
-    args = parser.parse_args()
-
-    # Determine mode
-    simulate = not args.real
-    mode = "SIMULATION" if simulate else "REAL KERNEL"
-    print(f"=== LLM Inference Example ({mode} mode) ===\n")
+    print("=== LLM Inference Example ===\n")
 
     try:
-        with AuthorityKernel(simulate=simulate) as ak:
+        with AuthorityKernel() as ak:
             print("[+] Connected to Authority Kernel")
 
             # Send inference request
@@ -57,12 +41,8 @@ def main():
                 print(f"[+] Response:")
                 print(json.dumps(result, indent=2))
 
-                if result.get("simulated"):
-                    print("\n[i] Note: This is a simulated response")
-                    print("[i] Real inference requires LLM configuration")
-
             except Exception as e:
-                print(f"[i] Inference (expected if LLM not configured): {e}")
+                print(f"[i] Inference error (ensure akproxy is running with LLM configured): {e}")
 
             # Try another inference with different format
             print("\n--- Second Inference Request ---")

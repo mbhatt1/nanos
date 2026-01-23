@@ -5,21 +5,13 @@ Example 6: LangChain Agent with Authority Kernel
 Demonstrates a complete LangChain agent integration with Authority Kernel
 for policy-controlled LLM access and authorization.
 
-By default, runs in simulation mode (no kernel or LangChain required).
-Use --real or --kernel to run against the actual Authority Kernel with real LLM.
-
 Key Features:
 - Policy-controlled LLM inference through Authority Kernel
 - Authorization checks before tool execution
 - Audit logging of all agent actions
-- Works without LangChain installed (simulation mode)
-
-Usage:
-  python examples/06_langchain_agent.py            # Simulation mode
-  python examples/06_langchain_agent.py --real     # Real mode (requires LLM API key)
+- Requires akproxy daemon running with LLM configured
 """
 
-import argparse
 import json
 import sys
 from typing import Any, Dict, List, Optional
@@ -42,7 +34,7 @@ class AuthorityLLM:
     4. Works in both simulation and real kernel modes
 
     Example:
-        with AuthorityKernel(simulate=True) as ak:
+        with AuthorityKernel() as ak:
             llm = AuthorityLLM(ak, model="gpt-4")
             response = llm.invoke("What is the capital of France?")
             print(response.content)
@@ -54,7 +46,7 @@ class AuthorityLLM:
         Initialize Authority-wrapped LLM.
 
         Args:
-            kernel: AuthorityKernel instance (simulated or real)
+            kernel: AuthorityKernel instance
             model: Model identifier (e.g., "gpt-4", "claude-3")
             temperature: Sampling temperature (0.0 - 1.0)
             max_tokens: Maximum tokens to generate
@@ -123,8 +115,7 @@ class AuthorityLLM:
         # Log the response
         self.kernel.audit_log("llm_response", {
             "model": self.model,
-            "content_length": len(content),
-            "simulated": result.get("simulated", False)
+            "content_length": len(content)
         })
 
         return LLMResponse(content=content, raw=result)
@@ -198,7 +189,7 @@ class SimpleAgent:
     3. All actions are logged to audit
 
     Example:
-        with AuthorityKernel(simulate=True) as ak:
+        with AuthorityKernel() as ak:
             agent = SimpleAgent(ak)
             result = agent.run("What is 2 + 2?")
     """
@@ -303,15 +294,13 @@ Otherwise, provide your answer directly."""
 # MAIN EXAMPLE
 # ============================================================================
 
-def run_langchain_agent_example(simulate: bool = True):
+def run_langchain_agent_example():
     """Run the LangChain agent example."""
-    mode = "SIMULATION" if simulate else "REAL KERNEL"
-    print(f"\n=== LangChain Agent Example ({mode} mode) ===\n")
+    print("\n=== LangChain Agent Example ===\n")
 
     try:
-        with AuthorityKernel(simulate=simulate) as ak:
+        with AuthorityKernel() as ak:
             print("[+] Connected to Authority Kernel")
-            print(f"[+] Simulated: {ak.is_simulated()}")
 
             # Create agent
             print("\n--- Creating Agent ---")
@@ -382,20 +371,7 @@ def run_langchain_agent_example(simulate: bool = True):
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="LangChain Agent with Authority Kernel"
-    )
-    parser.add_argument("--real", "--kernel", action="store_true",
-                        help="Use real kernel instead of simulation")
-    args = parser.parse_args()
-
-    simulate = not args.real
-
-    success = run_langchain_agent_example(simulate)
-
-    if simulate:
-        print("\n[i] Running in simulation mode. Use --real for actual kernel.")
-
+    success = run_langchain_agent_example()
     return 0 if success else 1
 
 

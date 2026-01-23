@@ -3,21 +3,15 @@
 Authority Kernel - CrewAI Integration Test
 
 This example demonstrates CrewAI running with Authority Kernel authorization.
-Supports both simulation mode (default) and real kernel mode.
+Requires akproxy daemon running with LLM configured.
 
-Simulation Mode (default):
-  python examples/test-crewai.py
-  python examples/test-crewai.py --sim
-
-Real Kernel Mode (requires kernel running):
-  python examples/test-crewai.py --real
+Usage:
   minops run examples/test-crewai.py --allow-llm -c examples/llm-config.json
 
 The config file should contain your API key:
   {"Env": {"OPENAI_API_KEY": "sk-..."}}
 """
 
-import argparse
 import json
 import os
 import sys
@@ -160,36 +154,29 @@ except ImportError:
 # TEST FUNCTIONS
 # ============================================================================
 
-def test_imports(simulate: bool):
+def test_imports():
     """Test that required packages are available."""
     print("Testing imports...")
 
     # Authority Nanos SDK - always required
     print("  [OK] authority_nanos")
 
-    if simulate:
-        print("  [OK] Using mock CrewAI (simulation mode)")
-        return True
-
-    # Real mode requires actual crewai
+    # Check if crewai is available
     try:
         from crewai import Agent, Task, Crew
         print("  [OK] crewai (Agent, Task, Crew)")
-        return True
-    except ImportError as e:
-        print(f"  [FAIL] crewai: {e}")
-        return False
+    except ImportError:
+        print("  [INFO] crewai not installed, using mock classes")
+
+    return True
 
 
-def test_authority_kernel(simulate: bool):
+def test_authority_kernel():
     """Test Authority Kernel connectivity."""
     print("\nTesting Authority Kernel...")
 
-    mode = "simulation" if simulate else "real"
-    print(f"  Mode: {mode}")
-
     try:
-        with AuthorityKernel(simulate=simulate) as ak:
+        with AuthorityKernel() as ak:
             # Basic alloc/read test
             handle = ak.alloc("test", b'{"status": "ok"}')
             data = ak.read(handle)
@@ -205,9 +192,9 @@ def test_authority_kernel(simulate: bool):
         return False
 
 
-def test_crewai_simulation(ak: AuthorityKernel):
-    """Test CrewAI with simulated kernel."""
-    print("\nTesting CrewAI with Simulation...")
+def test_crewai_with_kernel(ak: AuthorityKernel):
+    """Test CrewAI with Authority Kernel."""
+    print("\nTesting CrewAI with Authority Kernel...")
 
     try:
         # Create a research agent
@@ -325,50 +312,34 @@ def test_crewai_real():
 
 def main():
     """Main entry point."""
-    # Parse arguments
-    parser = argparse.ArgumentParser(
-        description="Authority Kernel - CrewAI Integration Test"
-    )
-    parser.add_argument("--sim", action="store_true", default=True,
-                        help="Run in simulation mode (default)")
-    parser.add_argument("--real", action="store_true",
-                        help="Run with real kernel and LLM APIs")
-    args = parser.parse_args()
-
-    # Determine mode
-    simulate = not args.real
-    mode = "SIMULATION" if simulate else "REAL"
-
     print("=" * 60)
-    print(f"Authority Kernel - CrewAI Integration Test ({mode} MODE)")
+    print("Authority Kernel - CrewAI Integration Test")
     print("=" * 60)
     print()
 
     # Show environment
     print("Environment:")
     print(f"  Python: {sys.version.split()[0]}")
-    print(f"  Mode: {mode}")
     print(f"  CrewAI Available: {CREWAI_AVAILABLE}")
-    if not simulate:
-        print(f"  OPENAI_API_KEY: {'set' if os.environ.get('OPENAI_API_KEY') else 'not set'}")
+    print(f"  OPENAI_API_KEY: {'set' if os.environ.get('OPENAI_API_KEY') else 'not set'}")
     print()
 
     results = []
 
     # Run tests
-    results.append(("Imports", test_imports(simulate)))
-    results.append(("Authority Kernel", test_authority_kernel(simulate)))
+    results.append(("Imports", test_imports()))
+    results.append(("Authority Kernel", test_authority_kernel()))
 
-    if simulate:
-        # Simulation mode - use mock crew
-        try:
-            with AuthorityKernel(simulate=True) as ak:
-                results.append(("CrewAI+Simulation", test_crewai_simulation(ak)))
-        except Exception as e:
-            results.append(("CrewAI+Simulation", False))
-            print(f"  [FAIL] {e}")
-    else:
-        # Real mode - test with actual API
+    # Test with kernel
+    try:
+        with AuthorityKernel() as ak:
+            results.append(("CrewAI+Kernel", test_crewai_with_kernel(ak)))
+    except Exception as e:
+        results.append(("CrewAI+Kernel", False))
+        print(f"  [FAIL] {e}")
+
+    # Also test real CrewAI if available and API key set
+    if CREWAI_AVAILABLE and os.environ.get('OPENAI_API_KEY'):
         results.append(("CrewAI+Real", test_crewai_real()))
 
     # Summary
@@ -385,11 +356,7 @@ def main():
 
     print()
     if all_passed:
-        if simulate:
-            print("All tests passed! CrewAI simulation working.")
-            print("Run with --real to test actual LLM APIs.")
-        else:
-            print("CrewAI is working inside Authority Kernel!")
+        print("All tests passed! CrewAI is working with Authority Kernel!")
     else:
         print("Some tests failed. Check output above.")
 

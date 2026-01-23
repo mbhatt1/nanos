@@ -4,15 +4,8 @@ Example 3: WASM Tool Execution
 
 Demonstrates executing WASM-compiled tools in a sandboxed environment
 with capability-based access control.
-
-By default, runs in simulation mode (no kernel required).
-Use --real or --kernel to run against the actual Authority Kernel.
-
-In simulation mode, basic tools like "add" and "concat" are simulated.
-Other tools return a success message indicating simulation.
 """
 
-import argparse
 import json
 import sys
 
@@ -21,22 +14,13 @@ from authority_nanos import AuthorityKernel, AuthorityKernelError
 
 def main():
     """Tool execution example."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Tool execution example")
-    parser.add_argument("--real", "--kernel", action="store_true",
-                        help="Use real kernel instead of simulation")
-    args = parser.parse_args()
-
-    # Determine mode
-    simulate = not args.real
-    mode = "SIMULATION" if simulate else "REAL KERNEL"
-    print(f"=== Tool Execution Example ({mode} mode) ===\n")
+    print("=== Tool Execution Example ===\n")
 
     try:
-        with AuthorityKernel(simulate=simulate) as ak:
+        with AuthorityKernel() as ak:
             print("[+] Connected to Authority Kernel")
 
-            # Execute an "add" tool (simulated in simulation mode)
+            # Execute an "add" tool
             print("\n--- Math Tool: add ---")
             tool_name = "add"
             tool_args = json.dumps({"a": 5, "b": 3}).encode()
@@ -65,7 +49,7 @@ def main():
             except Exception as e:
                 print(f"[i] Tool execution: {e}")
 
-            # Execute a custom tool (will be simulated)
+            # Execute a custom tool
             print("\n--- Custom Tool ---")
             tool_name = "my_custom_tool"
             tool_args = json.dumps({
@@ -78,8 +62,6 @@ def main():
                 result_data = json.loads(result.decode('utf-8'))
                 print(f"[+] Tool '{tool_name}' executed")
                 print(f"[+] Result: {result_data}")
-                if result_data.get("simulated"):
-                    print("[i] (This tool was simulated)")
             except Exception as e:
                 print(f"[i] Tool execution (expected if tool not deployed): {e}")
 

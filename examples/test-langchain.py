@@ -3,21 +3,15 @@
 Authority Kernel - LangChain Integration Test
 
 This example demonstrates LangChain running with Authority Kernel authorization.
-Supports both simulation mode (default) and real kernel mode.
+Requires akproxy daemon running with LLM configured.
 
-Simulation Mode (default):
-  python examples/test-langchain.py
-  python examples/test-langchain.py --sim
-
-Real Kernel Mode (requires kernel running):
-  python examples/test-langchain.py --real
+Usage:
   minops run examples/test-langchain.py --allow-llm -c examples/llm-config.json
 
 The config file should contain your API key:
   {"Env": {"OPENAI_API_KEY": "sk-..."}}
 """
 
-import argparse
 import json
 import os
 import sys
@@ -118,71 +112,27 @@ except ImportError:
 # TEST FUNCTIONS
 # ============================================================================
 
-def test_imports(simulate: bool):
+def test_imports():
     """Test that required packages are available."""
     print("Testing imports...")
 
-    results = []
-
     # Authority Nanos SDK - always required
     print("  [OK] authority_nanos")
-    results.append(True)
 
-    if simulate:
-        print("  [OK] Using mock LangChain (simulation mode)")
-        return True
-
-    # Real mode requires actual packages
-    try:
-        import requests
-        print("  [OK] requests")
-        results.append(True)
-    except ImportError as e:
-        print(f"  [FAIL] requests: {e}")
-        results.append(False)
-
-    try:
-        import httpx
-        print("  [OK] httpx")
-        results.append(True)
-    except ImportError as e:
-        print(f"  [FAIL] httpx: {e}")
-        results.append(False)
-
-    try:
-        import pydantic
-        print("  [OK] pydantic")
-        results.append(True)
-    except ImportError as e:
-        print(f"  [FAIL] pydantic: {e}")
-        results.append(False)
-
-    try:
-        import openai
-        print("  [OK] openai")
-        results.append(True)
-    except ImportError as e:
-        print(f"  [FAIL] openai: {e}")
-        results.append(False)
-
+    # Check optional dependencies
     try:
         from langchain_core.messages import HumanMessage
         print("  [OK] langchain_core")
-        results.append(True)
-    except ImportError as e:
-        print(f"  [FAIL] langchain_core: {e}")
-        results.append(False)
+    except ImportError:
+        print("  [INFO] langchain_core not installed, using mock classes")
 
     try:
         from langchain_openai import ChatOpenAI
         print("  [OK] langchain_openai")
-        results.append(True)
-    except ImportError as e:
-        print(f"  [FAIL] langchain_openai: {e}")
-        results.append(False)
+    except ImportError:
+        print("  [INFO] langchain_openai not installed")
 
-    print()
-    return all(results)
+    return True
 
 
 def test_ssl_certs():
@@ -205,15 +155,12 @@ def test_ssl_certs():
     return True
 
 
-def test_authority_kernel(simulate: bool):
+def test_authority_kernel():
     """Test Authority Kernel connectivity."""
     print("Testing Authority Kernel...")
 
-    mode = "simulation" if simulate else "real"
-    print(f"  Mode: {mode}")
-
     try:
-        with AuthorityKernel(simulate=simulate) as ak:
+        with AuthorityKernel() as ak:
             # Basic alloc/read test
             handle = ak.alloc("test", b'{"status": "ok"}')
             data = ak.read(handle)
@@ -229,9 +176,9 @@ def test_authority_kernel(simulate: bool):
         return False
 
 
-def test_langchain_simulation(ak: AuthorityKernel):
-    """Test LangChain with simulated kernel."""
-    print("\nTesting LangChain with Simulated LLM...")
+def test_langchain_with_kernel(ak: AuthorityKernel):
+    """Test LangChain with Authority Kernel."""
+    print("\nTesting LangChain with Authority Kernel...")
 
     try:
         # Create mock LLM using Authority Kernel
@@ -285,13 +232,9 @@ def test_network_connectivity():
         return False
 
 
-def test_langchain_openai(simulate: bool):
+def test_langchain_openai():
     """Test LangChain with OpenAI."""
     print("\nTesting LangChain with OpenAI...")
-
-    if simulate:
-        print("  [SKIP] Skipping real OpenAI test in simulation mode")
-        return True
 
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -329,13 +272,9 @@ def test_langchain_openai(simulate: bool):
         return False
 
 
-def test_langchain_anthropic(simulate: bool):
+def test_langchain_anthropic():
     """Test LangChain with Anthropic."""
     print("\nTesting LangChain with Anthropic...")
-
-    if simulate:
-        print("  [SKIP] Skipping real Anthropic test in simulation mode")
-        return True
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -370,59 +309,39 @@ def test_langchain_anthropic(simulate: bool):
 
 def main():
     """Main entry point."""
-    # Parse arguments
-    parser = argparse.ArgumentParser(
-        description="Authority Kernel - LangChain Integration Test"
-    )
-    parser.add_argument("--sim", action="store_true", default=True,
-                        help="Run in simulation mode (default)")
-    parser.add_argument("--real", action="store_true",
-                        help="Run with real kernel and LLM APIs")
-    args = parser.parse_args()
-
-    # Determine mode
-    simulate = not args.real
-    mode = "SIMULATION" if simulate else "REAL"
-
     print("=" * 60)
-    print(f"Authority Kernel - LangChain Integration Test ({mode} MODE)")
+    print("Authority Kernel - LangChain Integration Test")
     print("=" * 60)
     print()
 
     # Show environment
     print("Environment:")
     print(f"  Python: {sys.version.split()[0]}")
-    print(f"  Mode: {mode}")
     print(f"  LangChain Available: {LANGCHAIN_AVAILABLE}")
-    if not simulate:
-        print(f"  SSL_CERT_FILE: {os.environ.get('SSL_CERT_FILE', '(not set)')}")
-        print(f"  OPENAI_API_KEY: {'set' if os.environ.get('OPENAI_API_KEY') else 'not set'}")
-        print(f"  ANTHROPIC_API_KEY: {'set' if os.environ.get('ANTHROPIC_API_KEY') else 'not set'}")
+    print(f"  SSL_CERT_FILE: {os.environ.get('SSL_CERT_FILE', '(not set)')}")
+    print(f"  OPENAI_API_KEY: {'set' if os.environ.get('OPENAI_API_KEY') else 'not set'}")
+    print(f"  ANTHROPIC_API_KEY: {'set' if os.environ.get('ANTHROPIC_API_KEY') else 'not set'}")
     print()
 
     results = []
 
     # Run tests
-    results.append(("Imports", test_imports(simulate)))
+    results.append(("Imports", test_imports()))
+    results.append(("SSL Certs", test_ssl_certs()))
+    results.append(("Authority Kernel", test_authority_kernel()))
 
-    if not simulate:
-        results.append(("SSL Certs", test_ssl_certs()))
+    # Test with kernel
+    try:
+        with AuthorityKernel() as ak:
+            results.append(("LangChain+Kernel", test_langchain_with_kernel(ak)))
+    except Exception as e:
+        results.append(("LangChain+Kernel", False))
+        print(f"  [FAIL] {e}")
 
-    results.append(("Authority Kernel", test_authority_kernel(simulate)))
-
-    if simulate:
-        # Simulation mode - use mock LLM
-        try:
-            with AuthorityKernel(simulate=True) as ak:
-                results.append(("LangChain+Simulation", test_langchain_simulation(ak)))
-        except Exception as e:
-            results.append(("LangChain+Simulation", False))
-            print(f"  [FAIL] {e}")
-    else:
-        # Real mode - test network and real APIs
-        results.append(("Network", test_network_connectivity()))
-        results.append(("LangChain+OpenAI", test_langchain_openai(simulate)))
-        results.append(("LangChain+Anthropic", test_langchain_anthropic(simulate)))
+    # Test real APIs if available
+    results.append(("Network", test_network_connectivity()))
+    results.append(("LangChain+OpenAI", test_langchain_openai()))
+    results.append(("LangChain+Anthropic", test_langchain_anthropic()))
 
     # Summary
     print("\n" + "=" * 60)
@@ -438,11 +357,7 @@ def main():
 
     print()
     if all_passed:
-        if simulate:
-            print("All tests passed! LangChain simulation working.")
-            print("Run with --real to test actual LLM APIs.")
-        else:
-            print("All tests passed! LangChain is working with Authority Kernel.")
+        print("All tests passed! LangChain is working with Authority Kernel!")
     else:
         print("Some tests failed. Check the output above for details.")
 

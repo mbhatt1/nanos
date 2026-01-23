@@ -4,15 +4,8 @@ Example 5: Audit Logging
 
 Demonstrates reading audit logs from the Authority Kernel's tamper-proof
 append-only log.
-
-By default, runs in simulation mode (no kernel required).
-Use --real or --kernel to run against the actual Authority Kernel.
-
-In simulation mode, audit logs are stored in memory and fully functional.
-Operations performed in this session will appear in the audit log.
 """
 
-import argparse
 import json
 import sys
 
@@ -21,19 +14,10 @@ from authority_nanos import AuthorityKernel, AuthorityKernelError
 
 def main():
     """Audit logging example."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Audit logging example")
-    parser.add_argument("--real", "--kernel", action="store_true",
-                        help="Use real kernel instead of simulation")
-    args = parser.parse_args()
-
-    # Determine mode
-    simulate = not args.real
-    mode = "SIMULATION" if simulate else "REAL KERNEL"
-    print(f"=== Audit Logging Example ({mode} mode) ===\n")
+    print("=== Audit Logging Example ===\n")
 
     try:
-        with AuthorityKernel(simulate=simulate) as ak:
+        with AuthorityKernel() as ak:
             print("[+] Connected to Authority Kernel")
 
             # First, do some operations to generate audit entries

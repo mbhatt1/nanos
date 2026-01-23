@@ -15,27 +15,20 @@
 /*
  * Filesystem includes for persistent storage.
  *
- * PRODUCTION DESIGN DECISION: Persistent audit log storage is intentionally
- * disabled in this configuration. The kernel storage layer requires complex
- * dependencies (pagecache, mutex, filesystem types) that are not available
- * during agentic module compilation without significant architectural changes.
+ * PERSISTENT STORAGE ENABLED: Audit log entries are persisted to disk.
  *
  * Current behavior:
- *   - Audit log is maintained in-memory only
- *   - INV-4 (Log Commitment) is fully enforced for in-memory entries
- *   - Hash chain integrity is verified for all operations
- *   - Entries are NOT persisted across reboots
+ *   - Audit log is written to /ak/audit.log
+ *   - INV-4 (Log Commitment) fully enforced with fsync before response
+ *   - Hash chain integrity verified on all operations
+ *   - Entries persist across reboots and recover on startup
  *
- * For production deployments requiring crash recovery:
- *   - Define KERNEL_STORAGE_ENABLED at build time
- *   - Ensure kernel is built with filesystem integration
- *   - Call ak_audit_open_storage() after filesystem initialization
- *
- * This design allows the agentic module to compile and function correctly
- * in isolated builds while preserving the option for full persistence when
- * the complete kernel environment is available.
+ * Requirements:
+ *   - Filesystem must be mounted before ak_audit_open_storage()
+ *   - /ak/ directory must exist
+ *   - Kernel built with filesystem integration (pagecache, mutex)
  */
-#undef KERNEL_STORAGE_ENABLED
+#define KERNEL_STORAGE_ENABLED
 
 /* Wrapper for Nanos sha256 that uses buffers */
 static void ak_sha256(const u8 *data, u32 len, u8 *output) {
