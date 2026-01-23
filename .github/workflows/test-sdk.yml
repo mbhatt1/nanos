@@ -85,7 +85,7 @@ jobs:
             python: '3.11'
           - os: ubuntu-22.04
             python: '3.12'
-          - os: macos-15-large
+          - os: macos-15-intel
             python: '3.11'
           - os: macos-14
             python: '3.11'
