@@ -214,7 +214,6 @@ INCLUDES=\
 	-I$(ACPICA_DIR)/source/include \
 	-I$(LWIPDIR)/src/include \
 	-I$(ROOTDIR)/klib \
-	-I$(VENDORDIR)/mbedtls/include \
 
 AFLAGS+=-I$(ARCHDIR)/
 
