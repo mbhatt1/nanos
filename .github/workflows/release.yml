@@ -172,6 +172,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nasm build-essential gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-arm wget
+          # Create symlinks for aarch64-elf-* toolchain (UEFI boot requires bare-metal assembler)
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-as /usr/local/bin/aarch64-elf-as
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-ld /usr/local/bin/aarch64-elf-ld
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-objcopy /usr/local/bin/aarch64-elf-objcopy
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-objdump /usr/local/bin/aarch64-elf-objdump
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-elf-gcc
 
       - name: Extract version
         id: version
