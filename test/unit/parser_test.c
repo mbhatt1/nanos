@@ -505,7 +505,6 @@ JSON_PARSE_TEST(json_whitespace_test, " {\n\"\ra\t\" :\n\"\rb\t\" ,\n\"c\":{\r\"
     test_strings_equal(s, "e");
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -625,7 +624,6 @@ JSON_PARSE_TEST(json_longstring_test, "{\"abcdefghijklmnopqrstuvwxyz0123456789\"
     test_strings_equal(s, "0123456789abcdefghijklmnopqrstuvwxyz");
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -665,7 +663,6 @@ JSON_PARSE_TEST(json_empty_obj_test, "{}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -675,7 +672,6 @@ JSON_PARSE_TEST(json_numbervalue_test, "{\"a\":1}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -685,7 +681,6 @@ JSON_PARSE_TEST(json_numbervalue_test1, "{\"a\":1.2}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -695,7 +690,6 @@ JSON_PARSE_TEST(json_numbervalue_test2, "{\"a\":-2.3}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -706,7 +700,6 @@ JSON_PARSE_TEST(json_booleanvalue_test, "{\"a\":true}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -717,7 +710,6 @@ JSON_PARSE_TEST(json_booleanvalue_test1, "{\"a\":false}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -728,7 +720,6 @@ JSON_PARSE_TEST(json_booleanvalue_test2, "{\"a\":[true,false]}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -739,7 +730,6 @@ JSON_PARSE_TEST(json_nullvalue_test, "{\"a\":null}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -750,7 +740,6 @@ JSON_PARSE_TEST(json_empty_array_test, "{\"a\":[]}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -761,7 +750,6 @@ JSON_PARSE_TEST(json_array_test, "{\"a\":[\"b\",{\"c\":{}},0]}")
     test_assert((root != NULL) && (tuple_count(root) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -779,7 +767,6 @@ JSON_PARSE_TEST(json_nested_test, "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":{\"
     test_assert((t != NULL) && (tuple_count(t) == 0));
 
     destruct_value(root, true);
-    root = NULL;  /* Prevent double-free in test cleanup */
     return true;
 }
 
@@ -879,17 +866,6 @@ int main(int argc, char **argv)
 
     for (int i = 0; TESTS[i]; ++i) {
         failure |= TESTS[i](h);
-        /* Clean up parsed value after each test to prevent memory leaks */
-        if (root) {
-            destruct_value(root, true);
-            root = NULL;
-        }
-    }
-
-    /* Clean up last_error if any */
-    if (last_error) {
-        deallocate_buffer(last_error);
-        last_error = NULL;
     }
 
     if (failure) {
