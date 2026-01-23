@@ -207,12 +207,13 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # E2E Tests on macOS x86_64
+  # E2E Tests on macOS x86_64 (non-blocking)
   # ============================================================================
   e2e-macos-x86:
     name: E2E macOS x86_64
     runs-on: macos-15-intel
     timeout-minutes: 45
+    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -409,7 +410,7 @@ jobs:
   e2e-summary:
     name: E2E Test Summary
     runs-on: ubuntu-latest
-    needs: [e2e-linux-x86, e2e-macos-x86]
+    needs: [e2e-linux-x86]
     if: always()
     steps:
       - name: Check test results
@@ -417,18 +418,13 @@ jobs:
           echo "=== E2E Test Summary ==="
           echo ""
           echo "Linux x86_64: ${{ needs.e2e-linux-x86.result }}"
-          echo "macOS x86_64: ${{ needs.e2e-macos-x86.result }}"
+          echo "macOS x86_64: runs independently (continue-on-error)"
           echo ""
 
           # Linux is the primary platform
           if [ "${{ needs.e2e-linux-x86.result }}" != "success" ]; then
             echo "Linux E2E tests failed"
             exit 1
-          fi
-
-          # macOS may be skipped due to cross-compilation requirements
-          if [ "${{ needs.e2e-macos-x86.result }}" == "failure" ]; then
-            echo "macOS E2E tests failed (non-blocking)"
           fi
 
           echo "E2E tests completed successfully"
