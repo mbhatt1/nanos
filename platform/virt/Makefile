@@ -213,6 +213,7 @@ INCLUDES=\
 	-I$(VDSO_OBJDIR) \
 	-I$(SRCDIR)/agentic \
 	-I$(ROOTDIR)/klib \
+	-I$(VENDORDIR)/mbedtls/include \
 
 AFLAGS+=-I$(ARCHDIR)
 
