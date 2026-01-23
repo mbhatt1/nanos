@@ -122,7 +122,7 @@ jobs:
 
   build-kernel-macos-x86_64:
     name: Build Kernel (macOS x86_64)
-    runs-on: macos-13
+    runs-on: macos-15-large
     timeout-minutes: 45
     steps:
       - name: Checkout code
@@ -293,7 +293,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-13
+          - os: macos-15-large
             arch: x86_64
             platform_tag: macos_x86_64
             kernel_artifact: kernel-macos-x86_64
@@ -404,7 +404,7 @@ jobs:
           - os: ubuntu-22.04
             python: '3.11'
             wheel_artifact: wheels-linux-x86_64
-          - os: macos-13
+          - os: macos-15-large
             python: '3.11'
             wheel_artifact: wheels-macos-x86_64
           - os: macos-14

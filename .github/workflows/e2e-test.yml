@@ -204,7 +204,7 @@ jobs:
   # ============================================================================
   e2e-macos-x86:
     name: E2E macOS x86_64
-    runs-on: macos-13
+    runs-on: macos-15-large
     timeout-minutes: 45
     steps:
       - name: Checkout code

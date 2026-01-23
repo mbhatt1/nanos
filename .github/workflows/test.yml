@@ -294,7 +294,7 @@ jobs:
   # ============================================================================
   macos-build-test:
     name: 🍎 macOS Build Test
-    runs-on: macos-13
+    runs-on: macos-15-large
     timeout-minutes: 45
     steps:
       - name: Checkout code
