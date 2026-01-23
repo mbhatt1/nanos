@@ -15,21 +15,18 @@ Basic Usage:
     from authority_nanos.integrations import AuthorityLLM, AuthorityAgent
 
     # LangChain integration
-    with AuthorityKernel(simulate=True) as ak:
+    with AuthorityKernel() as ak:
         llm = AuthorityLLM(ak, model="gpt-4")
         response = llm.invoke("What is the capital of France?")
 
     # CrewAI integration
-    with AuthorityKernel(simulate=True) as ak:
+    with AuthorityKernel() as ak:
         agent = AuthorityAgent(
             kernel=ak,
             role="Researcher",
             goal="Find accurate information"
         )
         result = agent.execute("Research quantum computing")
-
-These integrations work in both simulation mode (for testing without
-real LLM APIs) and real mode (with actual Authority Kernel).
 """
 
 from authority_nanos.integrations.langchain import (

@@ -15,7 +15,7 @@ This package provides comprehensive Python support for Authority Kernel operatio
 - **LangChain integration** (via authority_nanos.integrations)
 - **CrewAI integration** (via authority_nanos.integrations)
 
-Typical usage with real kernel:
+Typical usage:
 
     from authority_nanos import AuthorityKernel
     import json
@@ -36,41 +36,12 @@ Typical usage with real kernel:
         if ak.authorize("read", "/etc/config.json"):
             config = ak.file_read("/etc/config.json")
 
-Simulation mode (no kernel required):
-
-    from authority_nanos import AuthorityKernel
-    import json
-
-    # Use simulate=True to run without a real kernel
-    with AuthorityKernel(simulate=True) as ak:
-        # All operations work with in-memory simulation
-        handle = ak.alloc("counter", b'{"value": 0}')
-        data = ak.read(handle)
-
-        # Configure policy for testing
-        ak.deny_operation("write")  # Deny all writes
-        ak.deny_target("/secret/*")  # Deny access to secrets
-
-        # Check if in simulation mode
-        if ak.is_simulated():
-            print("Running in simulation mode")
-
-Or use SimulatedKernel directly for more control:
-
-    from authority_nanos import SimulatedKernel
-
-    with SimulatedKernel() as ak:
-        handle = ak.alloc("counter", b'{"value": 0}')
-        # Simulation-specific methods available directly
-        ak.deny_operation("read")
-        ak.deny_target("/etc/passwd")
-
 LangChain Integration:
 
     from authority_nanos import AuthorityKernel
     from authority_nanos.integrations import AuthorityLLM
 
-    with AuthorityKernel(simulate=True) as ak:
+    with AuthorityKernel() as ak:
         llm = AuthorityLLM(ak, model="gpt-4")
         response = llm.invoke("What is the capital of France?")
         print(response.content)
@@ -80,7 +51,7 @@ CrewAI Integration:
     from authority_nanos import AuthorityKernel
     from authority_nanos.integrations import AuthorityAgent, AuthorityTask, AuthorityCrew
 
-    with AuthorityKernel(simulate=True) as ak:
+    with AuthorityKernel() as ak:
         researcher = AuthorityAgent(
             kernel=ak,
             role="Researcher",
@@ -109,7 +80,6 @@ For more details, see the documentation at https://authority-systems.github.io/n
 from authority_nanos.core import (
     # Core classes
     AuthorityKernel,
-    SimulatedKernel,
     LibakLoader,
     # Data structures
     Handle,
@@ -183,7 +153,6 @@ __all__ = [
     "__license__",
     # Core classes
     "AuthorityKernel",
-    "SimulatedKernel",
     "LibakLoader",
     # Data structures
     "Handle",

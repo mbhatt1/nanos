@@ -13,8 +13,7 @@ Example Usage:
     from authority_nanos import AuthorityKernel
     from authority_nanos.integrations.langchain import AuthorityLLM
 
-    # Basic usage with simulation
-    with AuthorityKernel(simulate=True) as ak:
+    with AuthorityKernel() as ak:
         llm = AuthorityLLM(ak, model="gpt-4")
 
         # Simple string prompt
@@ -29,17 +28,11 @@ Example Usage:
         ])
         print(response.content)
 
-    # With real kernel
-    with AuthorityKernel() as ak:  # Real kernel
-        llm = AuthorityLLM(ak, model="gpt-4")
-        response = llm.invoke("Hello!")
-
 Features:
 - Routes all LLM calls through Authority Kernel
 - Automatic audit logging of requests and responses
 - Works with LangChain message types (HumanMessage, AIMessage, etc.)
 - Graceful degradation when LangChain is not installed
-- Compatible with both simulation and real kernel modes
 """
 
 import json
@@ -111,7 +104,7 @@ class AuthorityLLM:
         from authority_nanos import AuthorityKernel
         from authority_nanos.integrations.langchain import AuthorityLLM
 
-        with AuthorityKernel(simulate=True) as ak:
+        with AuthorityKernel() as ak:
             llm = AuthorityLLM(ak, model="gpt-4", temperature=0.7)
 
             # Simple invocation
@@ -123,10 +116,6 @@ class AuthorityLLM:
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "What is 2 + 2?"}
             ])
-
-            # Check if response was simulated
-            if response.raw.get("simulated"):
-                print("This was a simulated response")
     """
 
     def __init__(
@@ -367,7 +356,7 @@ try:
             from authority_nanos import AuthorityKernel
             from authority_nanos.integrations.langchain import AuthorityLangChainLLM
 
-            with AuthorityKernel(simulate=True) as ak:
+            with AuthorityKernel() as ak:
                 llm = AuthorityLangChainLLM(kernel=ak, model="gpt-4")
 
                 # Use as standard LangChain LLM

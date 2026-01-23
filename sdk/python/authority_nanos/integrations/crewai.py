@@ -17,7 +17,7 @@ Example Usage:
         AuthorityAgent, AuthorityTask, AuthorityCrew
     )
 
-    with AuthorityKernel(simulate=True) as ak:
+    with AuthorityKernel() as ak:
         # Create agents
         researcher = AuthorityAgent(
             kernel=ak,
@@ -61,7 +61,6 @@ Features:
 - Policy-controlled agent communication
 - Automatic audit logging of all actions
 - Works with or without CrewAI installed
-- Compatible with both simulation and real kernel modes
 """
 
 import json
@@ -143,7 +142,7 @@ class AuthorityAgent:
         memory: Agent's conversation memory
 
     Example:
-        with AuthorityKernel(simulate=True) as ak:
+        with AuthorityKernel() as ak:
             researcher = AuthorityAgent(
                 kernel=ak,
                 role="Research Analyst",
@@ -420,7 +419,7 @@ class AuthorityCrew:
         verbose: Print progress information
 
     Example:
-        with AuthorityKernel(simulate=True) as ak:
+        with AuthorityKernel() as ak:
             # Create agents
             researcher = AuthorityAgent(ak, "Researcher", ...)
             writer = AuthorityAgent(ak, "Writer", ...)
