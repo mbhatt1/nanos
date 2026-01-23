@@ -293,6 +293,19 @@ closure_function(2, 1, void, bwrite,
 
 static buffer get_file_contents(heap h, const char *target_root, value v)
 {
+    /* Handle inline string contents directly */
+    if (is_string(v)) {
+        buffer src = (buffer)v;
+        buffer dest = allocate_buffer(h, buffer_length(src));
+        if (!push_buffer(dest, src))
+            halt("couldn't copy string contents\n");
+        return dest;
+    }
+
+    /* Only process tuples - check before calling table_find */
+    if (!is_tuple(v))
+        return 0;
+
     value path = table_find((table)v, sym(host));
     if (path) {
         // seems like it wouldn't be to hard to arrange
