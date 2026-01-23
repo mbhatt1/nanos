@@ -41,12 +41,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install nasm go wget qemu
+          brew install nasm go wget qemu x86_64-elf-gcc x86_64-elf-binutils
 
       - name: Build kernel and libak (x86_64)
         run: |
           make clean
-          make -j$(sysctl -n hw.ncpu) PLATFORM=pc all-binaries
+          make -j$(sysctl -n hw.ncpu) PLATFORM=pc CROSS_COMPILE=x86_64-elf- all-binaries
           ls -lh output/platform/pc/bin/kernel.img
           ls -lh output/platform/pc/lib/libak.dylib
 
@@ -98,12 +98,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install nasm go wget qemu aarch64-elf-binutils
+          brew install nasm go wget qemu aarch64-elf-gcc aarch64-elf-binutils
 
       - name: Build kernel and libak (ARM64)
         run: |
           make clean
-          make -j$(sysctl -n hw.ncpu) PLATFORM=virt all-binaries
+          make -j$(sysctl -n hw.ncpu) PLATFORM=virt CROSS_COMPILE=aarch64-elf- all-binaries
           ls -lh output/platform/virt/bin/kernel.img
           ls -lh output/platform/virt/lib/libak.dylib
 

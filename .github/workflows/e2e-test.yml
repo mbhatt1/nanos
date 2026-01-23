@@ -224,12 +224,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install nasm go wget qemu
+          brew install nasm go wget qemu x86_64-elf-gcc x86_64-elf-binutils
 
       - name: Build kernel
         run: |
           echo "=== Building Authority Nanos Kernel ==="
-          make -j$(sysctl -n hw.ncpu) PLATFORM=pc
+          make -j$(sysctl -n hw.ncpu) PLATFORM=pc CROSS_COMPILE=x86_64-elf-
           ls -lh output/platform/pc/bin/kernel.img
           ls -lh output/platform/pc/boot/boot.img
           ls -lh output/tools/bin/mkfs

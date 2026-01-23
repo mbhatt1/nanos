@@ -303,7 +303,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install nasm wget qemu
+          brew install nasm wget qemu x86_64-elf-gcc x86_64-elf-binutils
 
       - name: Extract version
         id: version
@@ -319,7 +319,7 @@ jobs:
       - name: Build kernel, libak, and tools
         run: |
           make clean
-          make -j$(sysctl -n hw.ncpu) PLATFORM=pc all-binaries
+          make -j$(sysctl -n hw.ncpu) PLATFORM=pc CROSS_COMPILE=x86_64-elf- all-binaries
           make -j$(sysctl -n hw.ncpu) -C tools mkfs
 
           # Build minops if it exists
@@ -427,7 +427,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install nasm wget qemu aarch64-elf-binutils
+          brew install nasm wget qemu aarch64-elf-gcc aarch64-elf-binutils
 
       - name: Extract version
         id: version
@@ -443,7 +443,7 @@ jobs:
       - name: Build kernel, libak, and tools
         run: |
           make clean
-          make -j$(sysctl -n hw.ncpu) PLATFORM=virt all-binaries
+          make -j$(sysctl -n hw.ncpu) PLATFORM=virt CROSS_COMPILE=aarch64-elf- all-binaries
           make -j$(sysctl -n hw.ncpu) -C tools mkfs
 
           # Build minops if it exists

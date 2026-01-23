@@ -302,12 +302,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install nasm golang wget qemu
+          brew install nasm golang wget qemu x86_64-elf-gcc x86_64-elf-binutils
 
       - name: Build kernel (x86_64)
         run: |
           make clean
-          make -j$(sysctl -n hw.ncpu) PLATFORM=pc
+          make -j$(sysctl -n hw.ncpu) PLATFORM=pc CROSS_COMPILE=x86_64-elf-
 
       - name: Verify build output
         run: |
