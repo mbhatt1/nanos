@@ -108,6 +108,27 @@ from authority_nanos.core import (
 # Exception base classes (canonical location)
 from authority_nanos.exceptions import BudgetExceededError
 
+# Budget tracking
+from authority_nanos.budget import (
+    BudgetTracker,
+    BudgetStatus,
+    BudgetSnapshot,
+    BudgetBreakdown,
+)
+
+# LLM Adapters
+from authority_nanos.llm_adapters import (
+    LLMAdapter,
+    OpenAIAdapter,
+    AnthropicAdapter,
+    GeminiAdapter,
+    AdapterFactory,
+    TokenUsage,
+    LLMResponse,
+    get_adapter,
+    list_available_providers,
+)
+
 # Policy tools
 from authority_nanos.policy import (
     PolicyWizard,
@@ -177,6 +198,21 @@ __all__ = [
     "OutOfMemoryError",
     "LibakError",
     "BudgetExceededError",
+    # Budget tracking
+    "BudgetTracker",
+    "BudgetStatus",
+    "BudgetSnapshot",
+    "BudgetBreakdown",
+    # LLM Adapters
+    "LLMAdapter",
+    "OpenAIAdapter",
+    "AnthropicAdapter",
+    "GeminiAdapter",
+    "AdapterFactory",
+    "TokenUsage",
+    "LLMResponse",
+    "get_adapter",
+    "list_available_providers",
     # Policy tools
     "PolicyWizard",
     "PolicyValidator",

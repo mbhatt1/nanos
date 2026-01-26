@@ -1,0 +1,3 @@
+[console_scripts]
+authority-hello = authority_nanos.cli:hello
+authority-nanos = authority_nanos.cli:main

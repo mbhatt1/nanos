@@ -59,6 +59,11 @@
 /* Category: COGNITIVE - LLM gateway */
 #define AK_SYS_INFERENCE 1037 /* LLM inference request */
 
+/* Category: BUDGET - Resource consumption tracking */
+#define AK_SYS_BUDGET_STATUS 1038    /* Get current budget status */
+#define AK_SYS_BUDGET_HISTORY 1039   /* Get historical snapshots */
+#define AK_SYS_BUDGET_BREAKDOWN 1040 /* Get detailed breakdown */
+
 #define AK_SYS_MIN 1024
 #define AK_SYS_MAX 1100
 

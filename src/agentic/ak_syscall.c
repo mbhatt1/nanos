@@ -14,6 +14,7 @@
 #include "ak_inference.h"
 #include "ak_sanitize.h"
 #include "ak_wasm.h"
+#include "ak_budget.h"
 
 /* ============================================================
  * GLOBAL STATE
@@ -431,6 +432,15 @@ ak_response_t *ak_dispatch(ak_agent_context_t *ctx, ak_request_t *req) {
     break;
   case AK_SYS_INFERENCE:
     res = ak_handle_inference(ctx, req);
+    break;
+  case AK_SYS_BUDGET_STATUS:
+    res = ak_handle_budget_status(ctx, req);
+    break;
+  case AK_SYS_BUDGET_HISTORY:
+    res = ak_handle_budget_history(ctx, req);
+    break;
+  case AK_SYS_BUDGET_BREAKDOWN:
+    res = ak_handle_budget_breakdown(ctx, req);
     break;
   default:
     res = ak_response_error(ctx->heap, req, -ENOSYS);
@@ -1820,6 +1830,101 @@ ak_response_t *ak_handle_assert(ak_agent_context_t *ctx, ak_request_t *req) {
   return ak_response_success(ctx->heap, req, result);
 }
 
+ak_response_t *ak_handle_budget_status(ak_agent_context_t *ctx, ak_request_t *req) {
+  /*
+   * BUDGET_STATUS: Get current budget consumption status
+   * Returns JSON with tokens, tool_calls, wall_time, bytes usage and limits
+   */
+  (void)req;
+
+  if (!ctx->budget) {
+    return ak_response_error(ctx->heap, req, -EINVAL);
+  }
+
+  /* Allocate buffer for JSON response */
+  buffer result = allocate_buffer(ctx->heap, 512);
+  if (!result) {
+    return ak_response_error(ctx->heap, req, -ENOMEM);
+  }
+
+  /* Format budget status as JSON */
+  ak_budget_format_json(ctx->budget, result);
+
+  return ak_response_success(ctx->heap, req, result);
+}
+
+ak_response_t *ak_handle_budget_history(ak_agent_context_t *ctx, ak_request_t *req) {
+  /*
+   * BUDGET_HISTORY: Get historical budget snapshots
+   * Input: count (number of snapshots to retrieve, max 60)
+   * Returns JSON array of snapshots in chronological order
+   */
+  if (!ctx->budget) {
+    return ak_response_error(ctx->heap, req, -EINVAL);
+  }
+
+  /* Parse count parameter from request (default to 60) */
+  u32 count = AK_BUDGET_HISTORY_SIZE;
+  if (req->params && buffer_length(req->params) > 0) {
+    /* Simple parse: expect {"count": N} */
+    const char *data = buffer_ref(req->params, 0);
+    u64 len = buffer_length(req->params);
+    for (u64 i = 0; i < len - 6; i++) {
+      if (runtime_memcmp(data + i, "count", 5) == 0) {
+        /* Found "count", look for number after ':' */
+        for (u64 j = i + 5; j < len; j++) {
+          if (data[j] >= '0' && data[j] <= '9') {
+            count = 0;
+            while (j < len && data[j] >= '0' && data[j] <= '9') {
+              count = count * 10 + (data[j] - '0');
+              j++;
+            }
+            if (count > AK_BUDGET_HISTORY_SIZE) {
+              count = AK_BUDGET_HISTORY_SIZE;
+            }
+            break;
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  /* Allocate buffer for JSON response (estimate ~100 bytes per snapshot) */
+  buffer result = allocate_buffer(ctx->heap, 128 + count * 100);
+  if (!result) {
+    return ak_response_error(ctx->heap, req, -ENOMEM);
+  }
+
+  /* Format history as JSON */
+  ak_budget_format_history_json(ctx->budget, count, result);
+
+  return ak_response_success(ctx->heap, req, result);
+}
+
+ak_response_t *ak_handle_budget_breakdown(ak_agent_context_t *ctx, ak_request_t *req) {
+  /*
+   * BUDGET_BREAKDOWN: Get detailed breakdown of budget consumption
+   * Returns JSON with per-operation and per-tool consumption details
+   */
+  (void)req;
+
+  if (!ctx->budget) {
+    return ak_response_error(ctx->heap, req, -EINVAL);
+  }
+
+  /* Allocate buffer for JSON response */
+  buffer result = allocate_buffer(ctx->heap, 2048);
+  if (!result) {
+    return ak_response_error(ctx->heap, req, -ENOMEM);
+  }
+
+  /* Format breakdown as JSON */
+  ak_budget_format_breakdown_json(ctx->budget, result);
+
+  return ak_response_success(ctx->heap, req, result);
+}
+
 /* ============================================================
  * RESPONSE HELPERS
  * ============================================================ */
@@ -2192,6 +2297,15 @@ sysreturn ak_syscall_handler(u64 call, u64 arg0, u64 arg1, u64 arg2, u64 arg3,
     break;
   case AK_SYS_INFERENCE:
     resp = ak_handle_inference(current_ctx, &req);
+    break;
+  case AK_SYS_BUDGET_STATUS:
+    resp = ak_handle_budget_status(current_ctx, &req);
+    break;
+  case AK_SYS_BUDGET_HISTORY:
+    resp = ak_handle_budget_history(current_ctx, &req);
+    break;
+  case AK_SYS_BUDGET_BREAKDOWN:
+    resp = ak_handle_budget_breakdown(current_ctx, &req);
     break;
   default:
     return -ENOSYS;
