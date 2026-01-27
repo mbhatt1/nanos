@@ -1,3 +1,6 @@
+#ifndef __RANGE_H__
+#define __RANGE_H__
+
 typedef struct rangemap {
     heap h;
     struct rbtree t;
@@ -168,3 +171,5 @@ static inline range range_add(range r, s64 delta)
              ((n) != INVALID_ADDRESS &&                                 \
               range_span(range_intersection((k)->r, (n)->r)) > 0);      \
          (n) = __next)
+
+#endif /* __RANGE_H__ */

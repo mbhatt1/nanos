@@ -1,3 +1,6 @@
+#ifndef __FS_H__
+#define __FS_H__
+
 typedef struct filesystem *filesystem;
 
 typedef u64 inode;
@@ -301,3 +304,5 @@ void fs_notify_release(tuple t, boolean unmounted);
 #endif
 
 boolean fs_file_is_busy(filesystem fs, tuple md);
+
+#endif /* __FS_H__ */

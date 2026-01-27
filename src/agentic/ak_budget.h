@@ -246,4 +246,51 @@ void ak_budget_format_history_json(ak_budget_tracker_t *tracker,
 void ak_budget_format_breakdown_json(ak_budget_tracker_t *tracker,
                                     buffer output);
 
+/* Forward declaration for compatibility wrapper */
+typedef struct ak_policy ak_policy_t;
+
+/**
+ * Create budget tracker with policy (compatibility wrapper).
+ *
+ * @param h Heap for allocation
+ * @param run_id Run identifier (optional)
+ * @param policy Policy with budget limits (optional)
+ * @return Allocated budget tracker or NULL on error
+ */
+ak_budget_tracker_t *ak_budget_create(heap h, u8 *run_id, ak_policy_t *policy);
+
+/**
+ * Destroy budget tracker (compatibility wrapper).
+ */
+void ak_budget_destroy(heap h, ak_budget_tracker_t *tracker);
+
+/**
+ * Check if budget is available for resource.
+ */
+boolean ak_budget_check(ak_budget_tracker_t *tracker, ak_resource_type_t type, u64 amount);
+
+/**
+ * Commit resource consumption to budget.
+ */
+void ak_budget_commit(ak_budget_tracker_t *tracker, ak_resource_type_t type, u64 amount);
+
+/* ============================================================
+ * BUDGET REQUEST HANDLERS
+ * ============================================================ */
+
+/**
+ * Handle BUDGET_STATUS request - get current budget consumption.
+ */
+ak_response_t *ak_handle_budget_status(ak_agent_context_t *ctx, ak_request_t *req);
+
+/**
+ * Handle BUDGET_HISTORY request - get historical budget snapshots.
+ */
+ak_response_t *ak_handle_budget_history(ak_agent_context_t *ctx, ak_request_t *req);
+
+/**
+ * Handle BUDGET_BREAKDOWN request - get detailed budget breakdown.
+ */
+ak_response_t *ak_handle_budget_breakdown(ak_agent_context_t *ctx, ak_request_t *req);
+
 #endif /* AK_BUDGET_H */

@@ -1,3 +1,6 @@
+#ifndef __CLOSURE_H__
+#define __CLOSURE_H__
+
 #define NUM_ARGS(...)   _NUM_ARGS(_dummy, ## __VA_ARGS__, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
 #define _NUM_ARGS(...)  NTH_ARG(__VA_ARGS__)
 #define NTH_ARG(_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, N, ...) N
@@ -100,3 +103,5 @@ struct _closure_common {
 #define struct_from_closure(__type, __field)    struct_from_field(__self, __type, __field)
 
 #include <closure_templates.h>
+
+#endif /* __CLOSURE_H__ */

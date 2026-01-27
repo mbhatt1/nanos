@@ -51,6 +51,16 @@
  *   - Set AK_ENABLE_REMOTE_ANCHOR=0 in ak_config.h
  */
 
+/* Filesystem integration includes for state persistence */
+#include <unix_internal.h>
+#include <filesystem.h>
+#include <kernel/pagecache.h>
+#include <fs/fs.h>
+#include <runtime/sg.h>
+#include <runtime/range.h>
+#include <runtime/closure.h>
+#include <runtime/status.h>
+
 #include "ak_state.h"
 #include "ak_audit.h"
 #include "ak_compat.h"
@@ -159,42 +169,42 @@ static void compute_merkle_root(u8 *hashes, u32 count, u8 *root_out) {
   /* Copy input to first buffer */
   runtime_memcpy(buf_a, hashes, count * AK_HASH_SIZE);
 
-  u8 *current = buf_a;
-  u8 *next = buf_b;
-  u32 current_count = count;
+  u8 *curr_buf = buf_a;
+  u8 *next_buf = buf_b;
+  u32 curr_count = count;
 
-  while (current_count > 1) {
-    u32 pairs = (current_count + 1) / 2;
+  while (curr_count > 1) {
+    u32 pairs = (curr_count + 1) / 2;
     for (u32 i = 0; i < pairs; i++) {
       u8 combined[AK_HASH_SIZE * 2];
-      runtime_memcpy(combined, &current[i * 2 * AK_HASH_SIZE], AK_HASH_SIZE);
+      runtime_memcpy(combined, &curr_buf[i * 2 * AK_HASH_SIZE], AK_HASH_SIZE);
 
-      if (i * 2 + 1 < current_count) {
+      if (i * 2 + 1 < curr_count) {
         runtime_memcpy(&combined[AK_HASH_SIZE],
-                       &current[(i * 2 + 1) * AK_HASH_SIZE], AK_HASH_SIZE);
+                       &curr_buf[(i * 2 + 1) * AK_HASH_SIZE], AK_HASH_SIZE);
       } else {
         /* Odd node: duplicate */
-        runtime_memcpy(&combined[AK_HASH_SIZE], &current[i * 2 * AK_HASH_SIZE],
+        runtime_memcpy(&combined[AK_HASH_SIZE], &curr_buf[i * 2 * AK_HASH_SIZE],
                        AK_HASH_SIZE);
       }
 
       /* Hash the pair into the next buffer (not current) */
       buffer pair_buf = alloca_wrap_buffer(combined, AK_HASH_SIZE * 2);
       if (pair_buf && pair_buf != INVALID_ADDRESS) {
-        compute_hash(pair_buf, &next[i * AK_HASH_SIZE]);
+        compute_hash(pair_buf, &next_buf[i * AK_HASH_SIZE]);
       } else {
-        runtime_memset(&next[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
+        runtime_memset(&next_buf[i * AK_HASH_SIZE], 0, AK_HASH_SIZE);
       }
     }
-    current_count = pairs;
+    curr_count = pairs;
 
     /* Swap buffers for next iteration */
-    u8 *tmp = current;
-    current = next;
-    next = tmp;
+    u8 *tmp = curr_buf;
+    curr_buf = next_buf;
+    next_buf = tmp;
   }
 
-  runtime_memcpy(root_out, current, AK_HASH_SIZE);
+  runtime_memcpy(root_out, curr_buf, AK_HASH_SIZE);
 
   /* Free allocated buffers */
   deallocate(ak_state.h, buf_a, max_level_size);

@@ -11,7 +11,6 @@ endif
 PROGRAMS= \
 	ak_approval_test \
 	ak_audit_test \
-	ak_budget_test \
 	ak_capability_test \
 	ak_crypto_test \
 	ak_effects_test \

@@ -18,6 +18,7 @@
 
 #include "ak_inference.h"
 #include "ak_audit.h"
+#include "ak_budget.h"
 #include "ak_compat.h"
 #include "ak_policy.h"
 #include "ak_stream.h"

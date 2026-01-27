@@ -9,6 +9,8 @@
  * Response is NEVER sent before fsync.
  */
 
+#include <unix_internal.h>
+#include <filesystem.h>
 #include "ak_audit.h"
 #include "ak_types.h"
 
@@ -113,7 +115,7 @@ static struct {
 
 /* Path to audit log file (used when storage is enabled) */
 #ifdef KERNEL_STORAGE_ENABLED
-static const char *AK_AUDIT_LOG_PATH = "/ak/audit.log";
+#define AK_AUDIT_LOG_PATH "/ak/audit.log"
 #endif
 
 /* Forward declarations for storage helpers */
@@ -246,7 +248,7 @@ s64 ak_audit_load(void) {
 
   u64 offset = 0;
   u64 file_size = ak_log.file_offset;
-  u64 valid_entries = 0;
+  u64 valid_entries __attribute__((unused)) = 0;
   u8 prev_hash[AK_HASH_SIZE];
   u8 last_valid_hash[AK_HASH_SIZE];
   u64 last_valid_seq = 0;
@@ -258,7 +260,7 @@ s64 ak_audit_load(void) {
   /* Step 1: Read and verify file header if present */
   if (file_size >= sizeof(ak_audit_file_header_t)) {
     ak_audit_file_header_t file_header;
-    runtime_memset(&file_header, 0, sizeof(file_header));
+    runtime_memset((u8 *)&file_header, 0, sizeof(file_header));
 
     sg_list sg = allocate_sg_list();
     if (!sg || sg == INVALID_ADDRESS) {
@@ -302,8 +304,8 @@ s64 ak_audit_load(void) {
 
     /* Verify header CRC32 (CRC is computed over header excluding the crc32
      * field itself) */
-    u32 header_crc = ak_audit_crc32((const u8 *)&file_header,
-                                    offsetof(ak_audit_file_header_t, crc32));
+    /* Offset calculation: magic(4) + version(4) + entry_count(8) + last_seq(8) + last_hash(32) + file_size(8) = 64 */
+    u32 header_crc = ak_audit_crc32((const u8 *)&file_header, 64);
     if (header_crc != file_header.crc32) {
       ak_warn("ak_audit: file header CRC mismatch");
       return AK_E_LOG_CORRUPT;
@@ -327,7 +329,7 @@ s64 ak_audit_load(void) {
   while (offset + sizeof(ak_audit_entry_header_t) <= file_size) {
     /* Read entry header from disk */
     ak_audit_entry_header_t entry_header;
-    runtime_memset(&entry_header, 0, sizeof(entry_header));
+    runtime_memset((u8 *)&entry_header, 0, sizeof(entry_header));
     {
       sg_list sg = allocate_sg_list();
       if (!sg || sg == INVALID_ADDRESS) {

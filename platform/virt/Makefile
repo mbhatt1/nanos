@@ -2,6 +2,7 @@ include ../../vars.mk
 
 # On macOS, use ELF tools to avoid Apple ld/objcopy/strip incompatibilities
 ifeq ($(UNAME_s),Darwin)
+override AS             := /opt/homebrew/bin/aarch64-elf-as
 override LD             := /opt/homebrew/bin/aarch64-elf-ld
 override OBJCOPY       := /opt/homebrew/bin/aarch64-elf-objcopy
 override OBJDUMP       := /opt/homebrew/bin/aarch64-elf-objdump
@@ -139,6 +140,7 @@ SRCS-kernel.elf= \
 SRCS-agentic= \
 	$(SRCDIR)/agentic/ak_capability.c \
 	$(SRCDIR)/agentic/ak_audit.c \
+	$(SRCDIR)/agentic/ak_budget.c \
 	$(SRCDIR)/agentic/ak_heap.c \
 	$(SRCDIR)/agentic/ak_ipc.c \
 	$(SRCDIR)/agentic/ak_policy.c \

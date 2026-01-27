@@ -54,6 +54,26 @@
 #endif
 
 /* ============================================================
+ * ASSERTION AND VALIDATION MACROS
+ * ============================================================ */
+
+/* Argument validation macro - validates function preconditions */
+#ifndef AK_ASSERT_ARG
+#if AK_ASSERT_LEVEL > 0
+#define AK_ASSERT_ARG(cond)                                                    \
+  do {                                                                         \
+    if (unlikely(!(cond))) {                                                   \
+      ak_error("argument validation failed: %s at %s:%d", #cond, __func__,     \
+               __LINE__);                                                      \
+      return;                                                                  \
+    }                                                                          \
+  } while (0)
+#else
+#define AK_ASSERT_ARG(cond) ((void)0)
+#endif
+#endif
+
+/* ============================================================
  * NULL AND LIMITS COMPATIBILITY
  * ============================================================ */
 
@@ -446,6 +466,15 @@ static inline int ak_buffer_byte(buffer b, bytes i) {
 
 #ifndef CLAMP
 #define CLAMP(val, lo, hi) MIN(MAX((val), (lo)), (hi))
+#endif
+
+/* AK-specific min/max for generic use without __compare dependency */
+#ifndef AK_MIN
+#define AK_MIN(x, y) ((x) < (y) ? (x) : (y))
+#endif
+
+#ifndef AK_MAX
+#define AK_MAX(x, y) ((x) > (y) ? (x) : (y))
 #endif
 
 /* ============================================================

@@ -1,3 +1,6 @@
+#ifndef __PAGECACHE_H__
+#define __PAGECACHE_H__
+
 typedef struct pagecache_volume *pagecache_volume;
 
 typedef struct pagecache_node *pagecache_node;
@@ -59,3 +62,5 @@ pagecache_volume pagecache_allocate_volume(u64 length, int block_order);
 void pagecache_dealloc_volume(pagecache_volume pv);
 
 void init_pagecache(heap general, heap contiguous, u64 pagesize);
+
+#endif /* __PAGECACHE_H__ */

@@ -1,3 +1,6 @@
+#ifndef __SG_H__
+#define __SG_H__
+
 /* A scatter gather operation is a transaction that is divided into
    smaller transactions - each with two phases: request and
    completion. To begin, a transaction activation record and handle is
@@ -106,3 +109,5 @@ boolean sg_fault_in(sg_list sg, u64 n);
 #else
 #define sg_fault_in(sg, n)  true
 #endif
+
+#endif /* __SG_H__ */

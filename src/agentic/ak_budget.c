@@ -12,6 +12,19 @@
 #include "ak_assert.h"
 #include <runtime.h>
 
+/* Define missing macros if not already defined */
+#ifndef AK_ASSERT_ARG
+#if AK_ASSERT_LEVEL > 0
+#define AK_ASSERT_ARG(cond) AK_ASSERT(cond)
+#else
+#define AK_ASSERT_ARG(cond) ((void)0)
+#endif
+#endif
+
+#ifndef AK_MIN
+#define AK_MIN(x, y) ((x) < (y) ? (x) : (y))
+#endif
+
 /* Get current timestamp in milliseconds */
 static u64 ak_budget_timestamp_ms(void)
 {
@@ -21,8 +34,11 @@ static u64 ak_budget_timestamp_ms(void)
 /* Find tool index in breakdown by name */
 static int ak_budget_find_tool(ak_budget_breakdown_t *breakdown, const char *tool_name)
 {
+    if (!tool_name) return -1;
+    bytes tool_len = runtime_strlen(tool_name);
     for (u32 i = 0; i < breakdown->tool_type_count; i++) {
-        if (runtime_strcmp(breakdown->tool_names[i], tool_name) == 0) {
+        bytes name_len = runtime_strlen(breakdown->tool_names[i]);
+        if (name_len == tool_len && runtime_memcmp(breakdown->tool_names[i], tool_name, tool_len) == 0) {
             return i;
         }
     }
@@ -54,8 +70,8 @@ ak_budget_tracker_t *ak_budget_tracker_init(heap h)
     if (tracker == INVALID_ADDRESS) {
         return NULL;
     }
-    
-    runtime_memset(tracker, 0, sizeof(ak_budget_tracker_t));
+
+    runtime_memset((u8*)tracker, 0, sizeof(ak_budget_tracker_t));
     tracker->h = h;
     tracker->start_timestamp_ms = ak_budget_timestamp_ms();
     tracker->last_update_ms = tracker->start_timestamp_ms;
@@ -81,8 +97,25 @@ void ak_budget_tracker_destroy(ak_budget_tracker_t *tracker)
     if (tracker == NULL || tracker == INVALID_ADDRESS) {
         return;
     }
-    
+
     deallocate(tracker->h, tracker, sizeof(ak_budget_tracker_t));
+}
+
+/* Compatibility wrapper for old API that takes policy */
+ak_budget_tracker_t *ak_budget_create(heap h, u8 *run_id, ak_policy_t *policy)
+{
+    ak_budget_tracker_t *tracker = ak_budget_tracker_init(h);
+    if (tracker == NULL) {
+        return NULL;
+    }
+
+    /* Store run_id in budget structure if policy is provided */
+    if (run_id && policy) {
+        /* Note: run_id and limits would be set from policy here */
+        /* This is a placeholder for the new architecture */
+    }
+
+    return tracker;
 }
 
 void ak_budget_set_limit(ak_budget_tracker_t *tracker,
@@ -127,13 +160,13 @@ void ak_budget_record_operation(ak_budget_tracker_t *tracker,
     AK_ASSERT_ARG(operation != NULL);
     
     tracker->last_update_ms = ak_budget_timestamp_ms();
-    
+
     /* Track operation-specific details */
-    if (runtime_strcmp(operation, "inference") == 0) {
+    if (runtime_strlen(operation) == 9 && runtime_memcmp(operation, "inference", 9) == 0) {
         tracker->breakdown.tokens_inference += amount;
-    } else if (runtime_strcmp(operation, "tool_response") == 0) {
+    } else if (runtime_strlen(operation) == 13 && runtime_memcmp(operation, "tool_response", 13) == 0) {
         tracker->breakdown.tokens_tool_responses += amount;
-    } else if (runtime_strcmp(operation, "tool_call") == 0 && detail != NULL) {
+    } else if (runtime_strlen(operation) == 9 && runtime_memcmp(operation, "tool_call", 9) == 0 && detail != NULL) {
         /* Track tool calls by name */
         int idx = ak_budget_find_tool(&tracker->breakdown, detail);
         if (idx < 0) {
@@ -177,8 +210,8 @@ void ak_budget_get_status(ak_budget_tracker_t *tracker,
 {
     AK_ASSERT_ARG(tracker != NULL);
     AK_ASSERT_ARG(status != NULL);
-    
-    runtime_memset(status, 0, sizeof(ak_budget_status_t));
+
+    runtime_memset((u8*)status, 0, sizeof(ak_budget_status_t));
     
     /* Token consumption (combine input and output) */
     status->tokens_used = tracker->budget.used[AK_RESOURCE_LLM_TOKENS_IN] +
@@ -391,6 +424,58 @@ void ak_budget_format_breakdown_json(ak_budget_tracker_t *tracker,
     
     /* Model breakdown (placeholder for future expansion) */
     bprintf(output, "\"tokens_by_model\":{}");
-    
+
     bprintf(output, "}");
 }
+
+/* ============================================================
+ * COMPATIBILITY API (Old budget functions)
+ * ============================================================ */
+
+/**
+ * Destroy a budget tracker and free resources.
+ */
+void ak_budget_destroy(heap h, ak_budget_tracker_t *tracker)
+{
+    if (tracker == NULL || tracker == INVALID_ADDRESS) {
+        return;
+    }
+    deallocate(h, tracker, sizeof(ak_budget_tracker_t));
+}
+
+/**
+ * Check if a resource budget is available.
+ * Returns true if the request fits within budget limits.
+ */
+boolean ak_budget_check(ak_budget_tracker_t *tracker, ak_resource_type_t type,
+                       u64 amount)
+{
+    if (!tracker) {
+        return false;
+    }
+
+    if (type >= AK_RESOURCE_COUNT) {
+        return false;
+    }
+
+    u64 used = tracker->budget.used[type];
+    u64 limit = tracker->budget.limits[type];
+
+    return (used + amount <= limit);
+}
+
+/**
+ * Commit a resource budget consumption.
+ * Marks the resource as consumed.
+ */
+void ak_budget_commit(ak_budget_tracker_t *tracker, ak_resource_type_t type,
+                     u64 amount)
+{
+    if (!tracker || type >= AK_RESOURCE_COUNT) {
+        return;
+    }
+
+    tracker->budget.used[type] += amount;
+    tracker->last_update_ms = ak_budget_timestamp_ms();
+}
+

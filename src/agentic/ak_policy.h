@@ -20,6 +20,7 @@
 #define AK_POLICY_H
 
 #include "ak_types.h"
+#include "ak_budget.h"
 
 /* ============================================================
  * POLICY STRUCTURE
@@ -283,28 +284,7 @@ u32 ak_policy_version_count(ak_policy_t *policy);
  * BUDGET CHECKING (INV-3)
  * ============================================================ */
 
-/* Runtime budget tracker (typedef in ak_types.h) */
-struct ak_budget_tracker {
-  u8 run_id[AK_TOKEN_ID_SIZE];
-
-  /* Committed costs */
-  u64 tokens_used;
-  u64 calls_made;
-  u64 inference_ms_used;
-  u64 file_bytes_used;
-  u64 network_bytes_used;
-  u64 spawns_used;
-  u64 heap_objects_used;
-  u64 heap_bytes_used;
-
-  /* In-flight costs (reserved but not committed) */
-  u64 tokens_reserved;
-  u64 calls_reserved;
-  u64 inference_ms_reserved;
-
-  /* Limits from policy */
-  ak_budget_limits_t limits;
-};
+/* Runtime budget tracker - see ak_budget.h for complete definition */
 
 /*
  * Create budget tracker for a run.

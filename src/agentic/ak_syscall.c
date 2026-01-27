@@ -1312,7 +1312,7 @@ ak_response_t *ak_handle_call(ak_agent_context_t *ctx, ak_request_t *req) {
     return ak_response_error(ctx->heap, req, AK_E_POLICY_DENIED);
 
   /* Check call budget */
-  if (!ak_budget_check(ctx->budget, AK_RESOURCE_CALLS, 1))
+  if (!ak_budget_check(ctx->budget, AK_RESOURCE_TOOL_CALLS, 1))
     return ak_response_error(ctx->heap, req, AK_E_BUDGET_EXCEEDED);
 
   /* Execute tool via WASM runtime */
@@ -1320,7 +1320,7 @@ ak_response_t *ak_handle_call(ak_agent_context_t *ctx, ak_request_t *req) {
       ak_wasm_execute_tool(ctx, tool_name, req->args, req->cap);
   if (wasm_result) {
     /* FIX(BUG-053): Only commit budget on successful execution */
-    ak_budget_commit(ctx->budget, AK_RESOURCE_CALLS, 1);
+    ak_budget_commit(ctx->budget, AK_RESOURCE_TOOL_CALLS, 1);
     return wasm_result;
   }
 
@@ -1865,10 +1865,10 @@ ak_response_t *ak_handle_budget_history(ak_agent_context_t *ctx, ak_request_t *r
 
   /* Parse count parameter from request (default to 60) */
   u32 count = AK_BUDGET_HISTORY_SIZE;
-  if (req->params && buffer_length(req->params) > 0) {
+  if (req->args && buffer_length(req->args) > 0) {
     /* Simple parse: expect {"count": N} */
-    const char *data = buffer_ref(req->params, 0);
-    u64 len = buffer_length(req->params);
+    const char *data = buffer_ref(req->args, 0);
+    u64 len = buffer_length(req->args);
     for (u64 i = 0; i < len - 6; i++) {
       if (runtime_memcmp(data + i, "count", 5) == 0) {
         /* Found "count", look for number after ':' */

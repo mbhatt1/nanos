@@ -48,6 +48,7 @@ AK_HDRS := \
 	ak_agentic.h \
 	ak_approval.h \
 	ak_audit.h \
+	ak_budget.h \
 	ak_capability.h \
 	ak_compat.h \
 	ak_compress.h \

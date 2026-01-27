@@ -1,3 +1,6 @@
+#ifndef __STATUS_H__
+#define __STATUS_H__
+
 #define STATUS_OK ((tuple)0)
 
 typedef tuple status;
@@ -56,3 +59,5 @@ static inline boolean is_ok(status s)
 {
     return (s == STATUS_OK);
 }
+
+#endif /* __STATUS_H__ */
