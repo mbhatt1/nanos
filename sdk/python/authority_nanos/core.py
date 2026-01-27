@@ -40,6 +40,12 @@ except ImportError:
     find_kernel_image = None
     LibakNotFoundError = None
 
+# Import budget tracker
+try:
+    from authority_nanos.budget import BudgetTracker
+except ImportError:
+    BudgetTracker = None
+
 
 # ============================================================================
 # SYSCALL NUMBERS (1024-1100)
@@ -492,6 +498,9 @@ class AuthorityKernel:
 
         self.libak = LibakLoader.load(libak_path)
         self._setup_function_signatures()
+        
+        # Initialize budget tracker
+        self.budget = BudgetTracker(self)
 
     def __enter__(self) -> "AuthorityKernel":
         """Enter context manager."""

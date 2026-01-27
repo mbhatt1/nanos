@@ -11,6 +11,7 @@ endif
 PROGRAMS= \
 	ak_approval_test \
 	ak_audit_test \
+	ak_budget_test \
 	ak_capability_test \
 	ak_crypto_test \
 	ak_effects_test \
@@ -56,6 +57,9 @@ SRCS-ak_approval_test= \
 
 SRCS-ak_audit_test= \
 	$(CURDIR)/ak_audit_test.c
+
+SRCS-ak_budget_test= \
+	$(CURDIR)/ak_budget_test.c
 
 SRCS-ak_capability_test= \
 	$(CURDIR)/ak_capability_test.c

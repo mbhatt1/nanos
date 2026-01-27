@@ -20,6 +20,7 @@ AK_SRCS := \
 	ak_agentic.c \
 	ak_capability.c \
 	ak_audit.c \
+	ak_budget.c \
 	ak_context.c \
 	ak_deny_ux.c \
 	ak_ed25519.c \
@@ -178,10 +179,11 @@ distclean: clean
 ak_agentic.o: ak_agentic.c ak_agentic.h ak_types.h ak_effects.h ak_wasm.h ak_inference.h ak_policy_v2.h ak_compat.h
 ak_capability.o: ak_capability.c ak_capability.h ak_types.h
 ak_audit.o: ak_audit.c ak_audit.h ak_types.h
+ak_budget.o: ak_budget.c ak_budget.h ak_types.h ak_compat.h
 ak_heap.o: ak_heap.c ak_heap.h ak_types.h ak_audit.h
 ak_ipc.o: ak_ipc.c ak_ipc.h ak_types.h ak_capability.h
 ak_policy.o: ak_policy.c ak_policy.h ak_types.h ak_capability.h
-ak_syscall.o: ak_syscall.c ak_syscall.h ak_types.h ak_capability.h ak_audit.h ak_heap.h ak_policy.h ak_ipc.h
+ak_syscall.o: ak_syscall.c ak_syscall.h ak_types.h ak_capability.h ak_audit.h ak_heap.h ak_policy.h ak_ipc.h ak_budget.h
 ak_nanos.o: ak_nanos.c ak_syscall.h
 ak_posix_route.o: ak_posix_route.c ak_posix_route.h ak_effects.h ak_context.h ak_compat.h
 

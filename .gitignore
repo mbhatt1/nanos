@@ -36,3 +36,7 @@ latest.txt
 .vscode
 *.swo
 *.swp
+
+# Environment files with secrets
+.env
+.env.local
